@@ -1,0 +1,747 @@
+@import "tailwindcss";
+
+/* Theme tokens — replaces V1's constants.py styling. */
+:root {
+  --bg: #1a1b1e;
+  --bg-elev: #232428;
+  --border: #34363b;
+  --text: #e8e9ed;
+  --text-dim: #9aa0a8;
+  --accent: #6ea8fe;
+  --accent-dim: #3b5b8a;
+  --danger: #f6685e;
+  --ok: #4caf72;
+  --radius: 10px;
+  --font-ui: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* Motion system — subtle & snappy. See "Motion" block below. */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
+  --zen-mouse-x: 50%;
+  --zen-mouse-y: 50%;
+  --zen-contour-scale: 0.82;
+  --zen-contour-lift: 0.28;
+  --zen-triage-pressure: 0.28;
+  --zen-eclipse-opacity: 0.36;
+  --zen-split-point: 22%;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* App-wide scrollbars: thin, theme-colored, fading in on hover. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(154, 160, 168, 0.28) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(154, 160, 168, 0.28);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(154, 160, 168, 0.5);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Motion system — shared keyframes, enter/exit utilities, press feedback,
+   list stagger, skeletons. Tokens live in :root (--motion-*, --ease-*).
+   Subtle & snappy: short durations, single decelerate curve.
+   ───────────────────────────────────────────────────────────────────────── */
+@keyframes zen-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes zen-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes zen-pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes zen-pop-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+@keyframes zen-slide-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes zen-slide-right-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(16px); }
+}
+@keyframes zen-shimmer {
+  from { background-position: -150% 0; }
+  to { background-position: 150% 0; }
+}
+
+.zen-anim-fade { animation: zen-fade var(--motion-base) var(--ease-out) both; }
+.zen-anim-rise { animation: zen-rise var(--motion-base) var(--ease-out) both; }
+.zen-anim-pop { animation: zen-pop var(--motion-base) var(--ease-out) both; }
+.zen-anim-slide-right { animation: zen-slide-right var(--motion-base) var(--ease-out) both; }
+
+/* Exit variants — paired with usePresence (element stays mounted until done). */
+.zen-exit-pop { animation: zen-pop-out var(--motion-fast) var(--ease-std) both; }
+.zen-exit-slide-right { animation: zen-slide-right-out var(--motion-fast) var(--ease-std) both; }
+
+/* Press feedback for buttons/controls. */
+.zen-pressable {
+  transition: transform var(--motion-fast) var(--ease-out),
+    filter var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+.zen-pressable:active { transform: scale(0.97); }
+
+/* List entrance stagger — children rise in with a small ramped delay (cap 10). */
+.zen-stagger > * { animation: zen-rise var(--motion-base) var(--ease-out) both; }
+.zen-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.zen-stagger > *:nth-child(2) { animation-delay: 30ms; }
+.zen-stagger > *:nth-child(3) { animation-delay: 60ms; }
+.zen-stagger > *:nth-child(4) { animation-delay: 90ms; }
+.zen-stagger > *:nth-child(5) { animation-delay: 120ms; }
+.zen-stagger > *:nth-child(6) { animation-delay: 150ms; }
+.zen-stagger > *:nth-child(7) { animation-delay: 180ms; }
+.zen-stagger > *:nth-child(8) { animation-delay: 210ms; }
+.zen-stagger > *:nth-child(9) { animation-delay: 240ms; }
+.zen-stagger > *:nth-child(n+10) { animation-delay: 270ms; }
+
+/* Skeleton loader shimmer. */
+.zen-skeleton {
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.09) 37%,
+    rgba(255, 255, 255, 0.04) 63%
+  );
+  background-size: 300% 100%;
+  animation: zen-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Honor OS reduce-motion: collapse all motion to near-instant. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.zen-shell {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.03), transparent 36%),
+    linear-gradient(180deg, #17181b 0%, #1a1b1e 42%, #18191c 100%);
+}
+
+.zen-shell-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.zen-bg-split,
+.zen-bg-eclipse,
+.zen-bg-dots,
+.zen-bg-contours,
+.zen-bg-orbit {
+  position: absolute;
+  inset: 0;
+  transition: opacity var(--motion-slow) var(--ease-std), transform var(--motion-slow) var(--ease-std), filter var(--motion-slow) var(--ease-std);
+}
+
+.zen-bg-split {
+  background: linear-gradient(
+    90deg,
+    #17181b 0%,
+    #17181b var(--zen-split-point),
+    #1d1f23 var(--zen-split-point),
+    #1d1f23 100%
+  );
+  opacity: 0.64;
+}
+
+.zen-bg-eclipse {
+  inset: -14% 18% 12% 18%;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(96, 165, 250, 0.42) 0%, rgba(96, 165, 250, 0.16) 18%, transparent 54%),
+    radial-gradient(circle at 54% 48%, rgba(176, 115, 224, 0.2) 0%, transparent 52%);
+  opacity: calc(var(--zen-eclipse-opacity) * 0.72);
+  filter: blur(24px);
+  transform: scale(1);
+}
+
+.zen-bg-dots {
+  opacity: calc(0.07 + var(--zen-triage-pressure) * 0.05);
+  background-image:
+    radial-gradient(circle at var(--zen-mouse-x) var(--zen-mouse-y), rgba(255, 244, 214, 0.08) 0, rgba(255, 244, 214, 0.03) 100px, transparent 170px),
+    radial-gradient(circle, rgba(232, 233, 237, 0.06) 0.8px, transparent 0.9px);
+  background-size: auto, 22px 22px;
+  background-position: 0 0, -11px -11px;
+}
+
+.zen-bg-contours {
+  inset: auto -6% -8% -6%;
+  height: 40%;
+  opacity: calc(0.06 + var(--zen-contour-lift) * 0.08);
+  transform: scaleY(var(--zen-contour-scale)) translateY(calc(var(--zen-contour-lift) * -10%));
+  background:
+    radial-gradient(140% 120% at 8% 118%, transparent 56%, rgba(96, 165, 250, 0.18) 56.2%, transparent 56.7%),
+    radial-gradient(130% 112% at 38% 120%, transparent 60%, rgba(176, 115, 224, 0.14) 60.2%, transparent 60.7%),
+    radial-gradient(128% 110% at 70% 122%, transparent 64%, rgba(63, 182, 192, 0.12) 64.2%, transparent 64.7%),
+    radial-gradient(136% 116% at 96% 120%, transparent 68%, rgba(143, 176, 74, 0.12) 68.2%, transparent 68.7%);
+}
+
+.zen-bg-orbit {
+  inset: auto auto -76vmax 52%;
+  width: 118vmax;
+  height: 118vmax;
+  border: 1px solid rgba(232, 233, 237, 0.04);
+  border-radius: 999px;
+  opacity: 0.22;
+}
+
+.zen-bg-orbit-node {
+  position: absolute;
+  inset: 0;
+  animation: zen-orbit 86400s linear infinite;
+}
+
+.zen-bg-orbit-node::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 4px);
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(191, 219, 254, 0.92);
+  box-shadow: 0 0 18px rgba(96, 165, 250, 0.65);
+}
+
+.zen-shell.is-admin .zen-bg-eclipse {
+  background:
+    radial-gradient(circle at 55% 42%, rgba(63, 182, 192, 0.28) 0%, rgba(63, 182, 192, 0.12) 20%, transparent 56%),
+    radial-gradient(circle at 45% 48%, rgba(217, 154, 58, 0.16) 0%, transparent 48%);
+}
+
+.zen-shell.is-deep-work .zen-bg-eclipse {
+  opacity: 0.62;
+  transform: scale(1.06);
+  filter: blur(12px);
+}
+
+.zen-shell.is-deep-work .zen-bg-dots {
+  opacity: 0.08;
+}
+
+.zen-shell.is-deep-work .zen-bg-split {
+  opacity: 0.44;
+}
+
+.zen-shell.is-admin .zen-bg-split {
+  opacity: 0.72;
+}
+
+.zen-home-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.62fr) minmax(0, 1.92fr) minmax(236px, 0.72fr);
+  gap: 18px;
+  height: 100%;
+  min-height: 0;
+  align-items: stretch;
+  transition: grid-template-columns var(--motion-slow) var(--ease-std);
+}
+
+.zen-home-center,
+.zen-home-side {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.zen-home-side {
+  transition: transform var(--motion-slow) var(--ease-out), opacity var(--motion-slow) var(--ease-out);
+}
+
+.zen-rail-surface {
+  background: rgba(35, 36, 40, 0.62);
+  box-shadow: none;
+}
+
+.zen-home-side-left {
+  opacity: 0.76;
+}
+
+.zen-home-side-left:hover,
+.zen-home-side-left:focus-within {
+  opacity: 1;
+}
+
+.zen-timeline-item {
+  min-height: 58px;
+}
+
+.zen-timeline-meta,
+.zen-timeline-flags {
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: opacity var(--motion-base) var(--ease-out), max-height var(--motion-base) var(--ease-out);
+}
+
+.zen-timeline-title {
+  opacity: 0.82;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+
+.zen-home-side-left:hover .zen-timeline-meta,
+.zen-home-side-left:hover .zen-timeline-flags,
+.zen-home-side-left:focus-within .zen-timeline-meta,
+.zen-home-side-left:focus-within .zen-timeline-flags,
+.zen-timeline-item:focus-visible .zen-timeline-meta,
+.zen-timeline-item:focus-visible .zen-timeline-flags,
+.zen-timeline-item[aria-current="true"] .zen-timeline-meta,
+.zen-timeline-item[aria-current="true"] .zen-timeline-flags {
+  opacity: 1;
+  max-height: 2.4rem;
+}
+
+.zen-home-side-left:hover .zen-timeline-title,
+.zen-home-side-left:focus-within .zen-timeline-title,
+.zen-timeline-item:focus-visible .zen-timeline-title {
+  opacity: 1;
+}
+
+.zen-triage-item {
+  opacity: 0.72;
+}
+
+.zen-triage-item:hover,
+.zen-triage-item:focus-visible,
+.zen-triage-item.is-unread {
+  opacity: 1;
+}
+
+.zen-triage-accent {
+  opacity: 0.55;
+}
+
+.zen-triage-accent.is-unread {
+  opacity: 1;
+}
+
+.zen-home-grid.is-deep-work {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.zen-home-grid.is-deep-work .zen-home-side-left {
+  opacity: 0;
+  transform: translateX(-28px);
+}
+
+.zen-home-grid.is-deep-work .zen-home-side-right {
+  opacity: 0;
+  transform: translateX(28px);
+}
+
+.zen-focus-surface {
+  min-height: 0;
+  height: 100%;
+}
+
+.zen-shell.is-deep-work .zen-focus-surface {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.zen-shell.is-deep-work {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.zen-meta {
+  color: rgba(232, 233, 237, 0.42);
+}
+
+.zen-secondary-copy {
+  color: rgba(232, 233, 237, 0.58);
+  line-height: 1.58;
+  text-wrap: pretty;
+}
+
+.zen-primary-copy {
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.zen-panel-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.zen-clamp-1,
+.zen-clamp-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.zen-clamp-1 {
+  -webkit-line-clamp: 1;
+}
+
+.zen-clamp-2 {
+  -webkit-line-clamp: 2;
+}
+
+.zen-flat-feed-group + .zen-flat-feed-group {
+  border-top: 1px solid rgba(232, 233, 237, 0.08);
+  padding-top: 14px;
+}
+
+@media (max-width: 1279px) {
+  .zen-home-grid {
+    grid-template-columns: minmax(216px, 0.72fr) minmax(0, 1.28fr);
+    height: 100%;
+  }
+
+  .zen-home-side-right {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .zen-home-grid,
+  .zen-home-grid.is-deep-work {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .zen-home-side,
+  .zen-home-grid.is-deep-work .zen-home-side-left,
+  .zen-home-grid.is-deep-work .zen-home-side-right {
+    opacity: 1;
+    transform: none;
+  }
+
+  .zen-focus-surface {
+    min-height: auto;
+  }
+
+  .zen-bg-orbit {
+    inset: auto auto -82vmax 34%;
+  }
+}
+
+@keyframes zen-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* TipTap editor surface — restore typography that Tailwind preflight resets */
+.zen-editor :where(p, h1, h2, h3, ul, ol) { margin: 0.5em 0; }
+.zen-editor h1 { font-size: 1.6rem; font-weight: 700; line-height: 1.2; }
+.zen-editor h2 { font-size: 1.3rem; font-weight: 700; line-height: 1.25; }
+.zen-editor h3 { font-size: 1.1rem; font-weight: 700; }
+.zen-editor ul { list-style: disc; padding-left: 1.4em; }
+.zen-editor ol { list-style: decimal; padding-left: 1.4em; }
+.zen-editor li { margin: 0.15em 0; }
+.zen-editor li > p { margin: 0; }
+.zen-editor strong { font-weight: 700; }
+.zen-editor em { font-style: italic; }
+.zen-editor code {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+  font-size: 0.9em;
+}
+.zen-editor blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.8em;
+  color: var(--text-dim);
+}
+.zen-editor:focus { outline: none; }
+
+/* Tables (TipTap resizable) */
+.zen-editor .tableWrapper {
+  margin: 0.6em 0;
+  overflow-x: auto;
+}
+.zen-editor table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: max-content; /* columns keep their width; adding one grows the table */
+  max-width: 100%;
+  margin: 0;
+}
+.zen-editor th, .zen-editor td {
+  min-width: 6em; /* default column width; drag the edge to resize */
+  border: 1px solid var(--border);
+  padding: 0.35em 0.5em;
+  vertical-align: top;
+  box-sizing: border-box;
+  position: relative;
+}
+.zen-editor th { background: var(--bg-elev); font-weight: 700; text-align: left; }
+/* Drag the right edge of a cell to resize the column */
+.zen-editor .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.zen-editor.resize-cursor,
+.zen-editor .resize-cursor { cursor: col-resize; }
+/* Selected cells while dragging across them */
+.zen-editor .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--accent-dim);
+  opacity: 0.4;
+  pointer-events: none;
+}
+.zen-editor hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+
+/* Wiki links */
+.zen-wikilink {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent-dim);
+  cursor: pointer;
+}
+.zen-wikilink:hover { border-bottom-style: solid; }
+
+/* Block drag handle */
+.zen-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.4rem;
+  color: var(--text-dim);
+  cursor: grab;
+  border-radius: 4px;
+  user-select: none;
+}
+.zen-drag-handle:hover { background: var(--bg-elev); color: var(--text); }
+.zen-drag-handle:active { cursor: grabbing; }
+
+/* Slash / wiki suggestion menu */
+.zen-slash {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.zen-slash-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.zen-slash-item.is-sel { background: var(--accent-dim); }
+.zen-slash-title { font-size: 0.9rem; }
+.zen-slash-hint { font-size: 0.72rem; color: var(--text-dim); }
+.zen-slash-empty { padding: 6px 8px; color: var(--text-dim); font-size: 0.85rem; }
+
+/* Math nodes (MathLive) */
+.zen-math-block {
+  display: flex;
+  justify-content: center;
+  margin: 0.6em 0;
+}
+.zen-math-block.is-selected,
+.zen-math-inline.is-selected {
+  outline: 2px solid var(--accent-dim);
+  border-radius: 6px;
+}
+.zen-math-inline { display: inline-block; vertical-align: middle; }
+math-field {
+  /* MathLive theming vars — these pierce the shadow DOM (plain CSS can't). */
+  --primary: var(--accent);
+  --caret-color: var(--accent);
+  --selection-background-color: var(--accent-dim);
+  --selection-color: var(--text);
+  /* the light "you're editing inside this group" box that clashed on dark bg */
+  --contains-highlight-background-color: rgba(110, 168, 254, 0.12);
+  --placeholder-color: var(--text-dim);
+  --smart-fence-color: var(--text-dim);
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.zen-math-block math-field { font-size: 1.4rem; min-width: 6em; min-height: 2em; padding: 6px 12px; }
+.zen-math-inline math-field { min-width: 2.5em; }
+math-field { cursor: text; }
+math-field:focus-within { border-color: var(--accent); }
+/* empty fields are otherwise near-zero width and hard to hit */
+.zen-math-block { cursor: text; padding: 2px 0; }
+
+/* Geometry / graph block */
+.zen-geometry {
+  margin: 0.6em 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.zen-geometry.is-selected { outline: 2px solid var(--accent-dim); }
+.zen-geo-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.zen-geo-tool {
+  padding: 4px 9px;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.zen-geo-tool:hover { color: var(--text); }
+.zen-geo-tool.is-active { border-color: var(--accent); color: var(--accent); }
+.zen-geo-tool.is-finish { border-color: var(--ok); color: var(--ok); margin-left: auto; }
+
+.zen-geometry-grid {
+  display: grid;
+  grid-template-columns: 1fr 230px;
+  min-height: 340px;
+}
+.zen-geometry-board {
+  width: 100%;
+  height: 340px;
+  background: #fff; /* JSXGraph reads best on light; keeps axes legible */
+}
+.zen-geometry-side {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  min-height: 0;
+}
+.zen-geo-hint {
+  padding: 6px 8px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.zen-geo-objects { flex: 1; overflow-y: auto; padding: 4px; min-height: 0; }
+.zen-geo-empty { padding: 6px 8px; font-size: 0.78rem; color: var(--text-dim); }
+.zen-geo-obj {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  font-size: 0.78rem;
+  font-family: ui-monospace, monospace;
+  border-radius: 4px;
+}
+.zen-geo-obj:hover { background: var(--bg); }
+.zen-geo-del { color: var(--text-dim); cursor: pointer; }
+.zen-geo-del:hover { color: var(--danger); }
+.zen-geo-clear {
+  margin: 6px;
+  padding: 4px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.zen-geo-clear:hover { color: var(--danger); border-color: var(--danger); }
+
+/* AI markdown bubbles */
+.zen-md > :first-child { margin-top: 0; }
+.zen-md > :last-child { margin-bottom: 0; }
+.zen-md p { margin: 0.4em 0; }
+.zen-md h1, .zen-md h2, .zen-md h3 { font-weight: 700; margin: 0.5em 0 0.3em; }
+.zen-md h1 { font-size: 1.2rem; }
+.zen-md h2 { font-size: 1.1rem; }
+.zen-md ul { list-style: disc; padding-left: 1.3em; margin: 0.3em 0; }
+.zen-md ol { list-style: decimal; padding-left: 1.3em; margin: 0.3em 0; }
+.zen-md code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  font-size: 0.85em;
+}
+.zen-md pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+  margin: 0.4em 0;
+}
+.zen-md pre code { border: none; padding: 0; background: none; }
+.zen-md a { color: var(--accent); }
+.zen-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-dim);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

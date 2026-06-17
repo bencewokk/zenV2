@@ -1,0 +1,97 @@
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Placeholder from "@tiptap/extension-placeholder";
+import Table from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableHeader from "@tiptap/extension-table-header";
+import TableCell from "@tiptap/extension-table-cell";
+import DragHandle from "@tiptap/extension-drag-handle-react";
+import { useEffect, useRef, useState } from "react";
+import { useNotes } from "@/features/notes/store";
+import { SlashCommand } from "@/features/notes/extensions/slashCommand";
+import { WikiLink } from "@/features/notes/extensions/wikiLink";
+import { MathBlock, MathInline } from "@/features/math/math-nodes";
+import { TrailingNode } from "@/features/notes/extensions/trailingNode";
+import { Geometry } from "@/features/geometry/geometry-node";
+import { TableToolbar } from "@/features/notes/TableToolbar";
+import { AIBubbleMenu } from "@/features/ai/AIBubbleMenu";
+
+export function Editor({ noteId }: { noteId: string }) {
+  const note = useNotes((s) => s.notes[noteId]);
+  const saveContent = useNotes((s) => s.saveContent);
+  const markDirty = useNotes((s) => s.patch);
+  const rename = useNotes((s) => s.rename);
+  const saveTimer = useRef<number | null>(null);
+  const [inTable, setInTable] = useState(false);
+
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit,
+        Placeholder.configure({ placeholder: "Start writing — press / for commands…" }),
+        Table.configure({ resizable: true }),
+        TableRow,
+        TableHeader,
+        TableCell,
+        SlashCommand,
+        WikiLink,
+        MathBlock,
+        MathInline,
+        Geometry,
+        TrailingNode,
+      ],
+      content: note?.content ?? "",
+      editorProps: { attributes: { class: "zen-editor min-h-[60vh] pl-8 leading-relaxed" } },
+      onUpdate: ({ editor }) => {
+        markDirty(noteId, {});
+        if (saveTimer.current) window.clearTimeout(saveTimer.current);
+        saveTimer.current = window.setTimeout(() => {
+          void saveContent(noteId, editor.getJSON());
+        }, 700);
+      },
+      onSelectionUpdate: ({ editor }) => setInTable(editor.isActive("table")),
+    },
+    [noteId]
+  );
+
+  // Flush pending save when switching notes / unmounting.
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current && editor) {
+        window.clearTimeout(saveTimer.current);
+        void saveContent(noteId, editor.getJSON());
+      }
+    };
+  }, [noteId, editor, saveContent]);
+
+  if (import.meta.env.DEV && editor) (window as unknown as { __zenEditor?: unknown }).__zenEditor = editor;
+
+  if (!editor) return null;
+
+  return (
+    <div>
+      {/* Title — explicit, editable */}
+      <input
+        value={note?.title === "Untitled" ? "" : note?.title ?? ""}
+        onChange={(e) => void rename(noteId, e.target.value)}
+        placeholder="Untitled"
+        className="mb-2 w-full bg-transparent text-3xl font-bold outline-none placeholder:text-[var(--text-dim)]"
+      />
+
+      {/* Stable wrapper so toggling the toolbar never reshuffles siblings
+          around the BubbleMenu (which relocates its own DOM into a popup). */}
+      <div>{inTable && <TableToolbar editor={editor} />}</div>
+
+      {/* Editor has pl-8 so the drag handle sits inside its hover area */}
+      <div className="relative">
+        <DragHandle editor={editor}>
+          <div className="zen-drag-handle" title="Drag to move block">⠿</div>
+        </DragHandle>
+        <EditorContent editor={editor} />
+      </div>
+
+      {/* Rendered last: BubbleMenu detaches into a tippy popup. */}
+      <AIBubbleMenu editor={editor} />
+    </div>
+  );
+}
