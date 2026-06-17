@@ -17,10 +17,17 @@ export function ChatPanel() {
   const refreshModels = useAI((s) => s.refreshModels);
   const send = useAI((s) => s.send);
   const stop = useAI((s) => s.stop);
-  const clear = useAI((s) => s.clear);
   const toggle = useAI((s) => s.toggle);
-  const pendingConfirm = useAI((s) => s.pendingConfirm);
-  const answerConfirm = useAI((s) => s.answerConfirm);
+  const proposals = useAI((s) => s.proposals);
+  const runProposal = useAI((s) => s.runProposal);
+  const dismissProposal = useAI((s) => s.dismissProposal);
+  const pendingQuestion = useAI((s) => s.pendingQuestion);
+  const answerQuestion = useAI((s) => s.answerQuestion);
+  const conversations = useAI((s) => s.conversations);
+  const activeId = useAI((s) => s.activeId);
+  const newConversation = useAI((s) => s.newConversation);
+  const switchConversation = useAI((s) => s.switchConversation);
+  const deleteConversation = useAI((s) => s.deleteConversation);
   const memStatus = useMemoryStatus();
 
   const [input, setInput] = useState("");
@@ -33,7 +40,7 @@ export function ChatPanel() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [turns, pendingConfirm]);
+  }, [turns, proposals, pendingQuestion]);
 
   const { mounted, state } = usePresence(open, 200);
   if (!mounted) return null;
@@ -58,12 +65,43 @@ export function ChatPanel() {
 
   return (
     <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
-      <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
-        <span className="text-sm font-semibold">AI</span>
+      {/* Primary row: conversation + new + close */}
+      <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-3 py-2">
+        <select
+          value={activeId}
+          onChange={(e) => switchConversation(e.target.value)}
+          className="min-w-0 flex-1 truncate rounded bg-transparent py-1 text-sm font-medium outline-none hover:bg-[var(--bg-elev)]"
+          title="Conversation"
+        >
+          {conversations
+            .slice()
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .map((c) => (
+              <option key={c.id} value={c.id}>{c.title || "New chat"}</option>
+            ))}
+        </select>
+        <button
+          className="zen-pressable shrink-0 rounded px-1.5 text-base leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
+          onClick={newConversation}
+          title="New conversation"
+        >
+          ＋
+        </button>
+        <button
+          className="zen-pressable shrink-0 rounded px-1.5 text-sm leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
+          onClick={toggle}
+          title="Close panel"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Secondary row: model + memory · profile / delete (all muted) */}
+      <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-1 text-[11px] text-[var(--text-dim)]">
         <select
           value={model}
           onChange={(e) => setModel(e.target.value)}
-          className="rounded bg-[var(--bg-elev)] px-1.5 py-1 text-xs outline-none"
+          className="min-w-0 max-w-[40%] truncate rounded bg-transparent py-0.5 text-[11px] outline-none hover:text-[var(--text)]"
           title="Model"
         >
           {(models.length ? models : [model]).map((m) => (
@@ -71,10 +109,7 @@ export function ChatPanel() {
           ))}
         </select>
         {memStatus !== "idle" && (
-          <span
-            className="ml-auto flex items-center gap-1 text-[10px] text-[var(--text-dim)]"
-            title={`Embedding model: ${memStatus}`}
-          >
+          <span className="flex items-center gap-1" title={`Embedding model: ${memStatus}`}>
             <span
               className="inline-block h-1.5 w-1.5 rounded-full"
               style={{
@@ -82,30 +117,16 @@ export function ChatPanel() {
                   memStatus === "ready" ? "var(--ok)" : memStatus === "error" ? "var(--danger)" : "var(--accent)",
               }}
             />
-            {memStatus === "loading" ? "memory…" : "memory"}
           </span>
         )}
-        <button
-          className={`text-xs text-[var(--text-dim)] hover:text-[var(--text)] ${memStatus === "idle" ? "ml-auto" : ""}`}
-          onClick={() => setShowProfile(true)}
-          title="Profile memory"
-        >
-          ⚙
-        </button>
-        <button
-          className="text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
-          onClick={clear}
-          title="Clear conversation"
-        >
-          Clear
-        </button>
-        <button
-          className="text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
-          onClick={toggle}
-          title="Close panel"
-        >
-          ✕
-        </button>
+        <div className="ml-auto flex items-center gap-3">
+          <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowProfile(true)} title="Profile memory">
+            Profile
+          </button>
+          <button className="zen-pressable hover:text-[var(--danger)]" onClick={() => deleteConversation(activeId)} title="Delete this conversation">
+            Delete
+          </button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
@@ -139,31 +160,66 @@ export function ChatPanel() {
             </div>
           )
         )}
-        {pendingConfirm && (
-          <div className="rounded-[var(--radius)] border border-[var(--danger)] bg-[var(--bg-elev)] p-3 text-sm">
-            <div className="mb-2">
-              Allow <span className="font-semibold">{pendingConfirm.name}</span>?
+        {proposals
+          .filter((p) => p.status !== "dismissed")
+          .map((p) => (
+            <div
+              key={p.id}
+              className={`zen-anim-rise rounded-[var(--radius)] border bg-[var(--bg-elev)] p-3 text-sm ${
+                p.danger ? "border-[var(--danger)]" : "border-[var(--border)]"
+              }`}
+            >
+              <div className="mb-1 flex items-center gap-1.5">
+                <span>{p.danger ? "⚠️" : "🔧"}</span>
+                <span className="font-semibold">{p.title}</span>
+              </div>
+              {p.detail && <div className="mb-2 truncate text-[var(--text-dim)]">{p.detail}</div>}
+              <details className="mb-2">
+                <summary className="cursor-pointer text-xs text-[var(--text-dim)]">Details</summary>
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--bg)] p-2 text-xs">
+                  {JSON.stringify(p.args, null, 2)}
+                </pre>
+              </details>
+              {p.status === "pending" ? (
+                <div className="flex gap-2">
+                  <button
+                    className="zen-pressable rounded bg-[var(--accent)] px-3 py-1 text-xs text-black"
+                    onClick={() => void runProposal(p.id)}
+                  >
+                    Run
+                  </button>
+                  <button
+                    className="zen-pressable rounded border border-[var(--border)] px-3 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
+                    onClick={() => dismissProposal(p.id)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              ) : (
+                <div className={`text-xs ${p.status === "error" ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}>
+                  {p.status === "running" ? "Running…" : p.status === "done" ? `✓ ${p.result ?? "Done"}` : `✕ ${p.result ?? "Failed"}`}
+                </div>
+              )}
             </div>
-            <pre className="mb-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--bg)] p-2 text-xs">
-              {pendingConfirm.args || "{}"}
-            </pre>
-            <div className="flex gap-2">
-              <button
-                className="rounded bg-[var(--ok)] px-3 py-1 text-xs text-black"
-                onClick={() => answerConfirm(true)}
-              >
-                Approve
-              </button>
-              <button
-                className="rounded bg-[var(--danger)] px-3 py-1 text-xs text-white"
-                onClick={() => answerConfirm(false)}
-              >
-                Deny
-              </button>
+          ))}
+
+        {pendingQuestion && (
+          <div className="zen-anim-rise rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--bg-elev)] p-3 text-sm">
+            <div className="mb-2 font-medium">{pendingQuestion.question}</div>
+            <div className="flex flex-col gap-1.5">
+              {pendingQuestion.options.map((opt, i) => (
+                <button
+                  key={i}
+                  className="zen-pressable rounded border border-[var(--border)] px-3 py-1.5 text-left text-xs hover:bg-[var(--bg)] hover:text-[var(--text)]"
+                  onClick={() => answerQuestion(opt)}
+                >
+                  {opt}
+                </button>
+              ))}
             </div>
           </div>
         )}
-        {streaming && !pendingConfirm && <div className="text-xs text-[var(--text-dim)]">Working…</div>}
+        {streaming && !pendingQuestion && <div className="text-xs text-[var(--text-dim)]">Working…</div>}
       </div>
 
       <div className="border-t border-[var(--border)] p-2">

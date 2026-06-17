@@ -1,6 +1,10 @@
 import type { JSONContent } from "@tiptap/react";
 import type { ToolDef } from "./types";
 import { useNotes } from "@/features/notes/store";
+import { useHome, type HomeTarget } from "@/features/home/store";
+import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { useWorkspace } from "@/shared/stores/workspace";
+import { allTags, facetValues } from "@/features/filtering/filter";
 import { flattenTree } from "@/features/notes/tree";
 import { docToText } from "@/shared/lib/docText";
 import {
@@ -67,6 +71,17 @@ function needGoogle(): string | null {
 }
 
 const TOOLS: ToolImpl[] = [
+  // ---- Interaction ----
+  tool(
+    "ask_user",
+    "Ask the user a clarifying question and offer a few concrete options to pick from. " +
+      "Use this when you need a decision or are unsure how to proceed, instead of guessing. " +
+      "The user's choice is returned to you. Keep options short (2–4).",
+    obj({ question: str("the question to ask"), options: arr("2-4 short options to choose from") }, ["question", "options"]),
+    // Handled specially by the agent loop (renders an interactive card); never run directly.
+    async () => "",
+  ),
+
   // ---- Notes ----
   tool(
     "search_notes",
@@ -511,12 +526,230 @@ const TOOLS: ToolImpl[] = [
       return "Marked as read.";
     }
   ),
+
+  // ---- Deep Work ----
+  tool(
+    "deepwork_add",
+    "Add a note, calendar event, or email to the Deep Work canvas and open it. " +
+      "type is one of note|event|mail; id is the note id / event id / thread id.",
+    obj({ type: str("note | event | mail"), id: str("the item id") }, ["type", "id"]),
+    async (a) => {
+      const type = String(a.type);
+      if (!["note", "event", "mail"].includes(type)) return "type must be note, event, or mail.";
+      useHome.getState().launchDeepWork({ type: type as HomeTarget["type"], id: String(a.id) });
+      return "Added to Deep Work.";
+    }
+  ),
+  tool(
+    "deepwork_remove",
+    "Remove an item from the Deep Work canvas. type is note|event|mail.",
+    obj({ type: str("note | event | mail"), id: str("the item id") }, ["type", "id"]),
+    async (a) => {
+      useDeepWork.getState().removeItem({ type: String(a.type) as HomeTarget["type"], id: String(a.id) });
+      return "Removed from Deep Work.";
+    }
+  ),
+  tool(
+    "deepwork_set_intent",
+    "Set the Deep Work session goal/intent (the 'what do you want to do?' statement).",
+    obj({ intent: str("the session goal") }, ["intent"]),
+    async (a) => {
+      useDeepWork.getState().setIntent(String(a.intent));
+      return "Deep Work intent set.";
+    }
+  ),
+  tool(
+    "add_email_label",
+    "Add a custom topic label the AI will use when auto-labeling incoming emails.",
+    obj({ label: str("the topic label, e.g. 'Logiscool Python'") }, ["label"]),
+    async (a) => {
+      useHome.getState().addCustomLabel(String(a.label));
+      return `Added email label "${a.label}".`;
+    }
+  ),
+  tool(
+    "remove_email_label",
+    "Remove a custom email topic label.",
+    obj({ label: str("the topic label to remove") }, ["label"]),
+    async (a) => {
+      useHome.getState().removeCustomLabel(String(a.label));
+      return `Removed email label "${a.label}".`;
+    }
+  ),
+
+  // ---- Filtering & navigation ----
+  tool(
+    "apply_filter",
+    "Filter the notes sidebar by any combination of facets. Only provided fields apply.",
+    obj({
+      query: str("free-text query (optional)"),
+      space: str("space (optional)"),
+      subject: str("subject (optional)"),
+      unit: str("unit (optional)"),
+      tags: arr("tags — notes must have ALL (optional)"),
+      inboxOnly: bool("only inbox notes (optional)"),
+    }),
+    async (a) => {
+      const patch: Record<string, unknown> = {};
+      for (const k of ["query", "space", "subject", "unit"] as const) if (a[k] !== undefined) patch[k] = String(a[k]);
+      if (Array.isArray(a.tags)) patch.tags = a.tags.map(String);
+      if (typeof a.inboxOnly === "boolean") patch.inboxOnly = a.inboxOnly;
+      if (!Object.keys(patch).length) return "No filter facets provided.";
+      useNotes.getState().setFilter(patch);
+      return "Filter applied.";
+    }
+  ),
+  tool(
+    "clear_filter",
+    "Clear all active note filters.",
+    obj({}),
+    async () => {
+      useNotes.getState().resetFilter();
+      return "Filters cleared.";
+    }
+  ),
+  tool(
+    "list_tags",
+    "List all distinct tags across the user's notes.",
+    obj({}),
+    async () => {
+      const tags = allTags(Object.values(useNotes.getState().notes));
+      return tags.length ? tags.join(", ") : "No tags.";
+    }
+  ),
+  tool(
+    "list_facets",
+    "List the distinct values for note metadata facets (space, subject, unit).",
+    obj({}),
+    async () => {
+      const notes = Object.values(useNotes.getState().notes);
+      const line = (k: "space" | "subject" | "unit") => {
+        const vals = facetValues(notes, k);
+        return `${k}: ${vals.length ? vals.join(", ") : "(none)"}`;
+      };
+      return [line("space"), line("subject"), line("unit")].join("\n");
+    }
+  ),
+  tool(
+    "open_view",
+    "Switch the app to a top-level view: home | deepwork | calendar | mail.",
+    obj({ view: str("home | deepwork | calendar | mail") }, ["view"]),
+    async (a) => {
+      const view = String(a.view);
+      const notes = useNotes.getState();
+      const home = useHome.getState();
+      const ws = useWorkspace.getState();
+      switch (view) {
+        case "home": notes.select(null); ws.set({ surface: "home" }); home.setManualDeepWork(false); break;
+        case "deepwork": notes.select(null); ws.set({ surface: "home" }); home.setManualDeepWork(true); break;
+        case "calendar": notes.select(null); ws.set({ surface: "admin", adminFocus: "calendar" }); break;
+        case "mail": notes.select(null); ws.set({ surface: "admin", adminFocus: "mail" }); break;
+        default: return "view must be home, deepwork, calendar, or mail.";
+      }
+      return `Opened ${view}.`;
+    }
+  ),
 ];
 
 export const TOOL_DEFS: ToolDef[] = TOOLS.map((t) => t.def);
 
-/** Tool names that require user confirmation before executing. */
+/** Tool names that require user confirmation before executing (destructive/outbound). */
 export const CONFIRM_TOOLS = new Set(TOOLS.filter((t) => t.confirm).map((t) => t.def.function.name));
+
+/**
+ * Read-only tools: pure lookups the assistant runs automatically. Everything
+ * else mutates app state / sends outbound and is surfaced as a proposal card.
+ */
+export const READ_TOOLS = new Set([
+  "search_notes", "read_note", "get_tree", "recall", "list_memories",
+  "list_events", "find_free_slots", "search_mail", "read_mail",
+  "list_tags", "list_facets", // added in phase 3
+]);
+
+export function isReadTool(name: string): boolean {
+  return READ_TOOLS.has(name);
+}
+
+export function isMutationTool(name: string): boolean {
+  return !READ_TOOLS.has(name) && name !== "ask_user";
+}
+
+// ── Human-readable descriptions for proposal / confirm cards ──────────────────
+
+function noteTitle(id: string): string {
+  return useNotes.getState().notes[id]?.title || "Untitled note";
+}
+function eventSummary(id: string): string {
+  return useHome.getState().events.find((e) => e.id === id)?.summary || "event";
+}
+function threadSubject(id: string): string {
+  return useHome.getState().threads.find((t) => t.id === id)?.subject || "thread";
+}
+function memoryTitle(id: string): string {
+  return loadMemories().find((m) => m.id === id)?.title || "memory";
+}
+
+export interface ToolCallDescription {
+  title: string; // human action label, e.g. "Delete note"
+  detail: string; // the target / specifics, e.g. the note title
+  danger: boolean; // destructive or outbound → emphasize
+}
+
+/** Turn a tool call into a friendly label + detail (resolving ids to names). */
+export function describeToolCall(name: string, args: Record<string, unknown>): ToolCallDescription {
+  const a = args ?? {};
+  const danger = CONFIRM_TOOLS.has(name);
+  const s = (k: string) => (a[k] != null ? String(a[k]) : "");
+  const d = (title: string, detail: string): ToolCallDescription => ({ title, detail, danger });
+
+  switch (name) {
+    // Notes
+    case "create_note": return d("Create note", s("title"));
+    case "update_note": return d("Replace note body", noteTitle(s("id")));
+    case "append_note": return d("Append to note", noteTitle(s("id")));
+    case "open_note": return d("Open note", noteTitle(s("id")));
+    case "delete_note": return d("Delete note", noteTitle(s("id")));
+    case "move_note": return d("Move note", noteTitle(s("id")));
+    case "set_metadata": return d("Update note metadata", noteTitle(s("id")));
+    case "insert_math": return d("Insert math into note", noteTitle(s("id")));
+    case "insert_table": return d("Insert table into note", noteTitle(s("id")));
+    case "link_notes": return d("Link notes", `${noteTitle(s("id"))} → ${noteTitle(s("targetId"))}`);
+    // Memory
+    case "update_profile": return d("Update your profile", Object.keys(a).join(", "));
+    case "save_memory": return d("Save memory", s("title"));
+    case "forget_memory": return d("Forget memory", memoryTitle(s("id")));
+    // Calendar
+    case "create_event": return d("Create event", s("summary"));
+    case "update_event": return d("Update event", eventSummary(s("id")));
+    case "delete_event": return d("Delete event", eventSummary(s("id")));
+    // Gmail
+    case "draft_email": return d("Draft email", `To ${s("to")} — ${s("subject")}`);
+    case "send_email": return d("Send email", `To ${s("to")} — ${s("subject")}`);
+    case "reply_in_thread": return d("Reply in thread", threadSubject(s("threadId")));
+    case "archive_thread": return d("Archive thread", threadSubject(s("threadId")));
+    case "mark_read": return d("Mark thread read", threadSubject(s("threadId")));
+    // Deep Work
+    case "deepwork_add": {
+      const type = s("type");
+      const id = s("id");
+      const detail = type === "note" ? noteTitle(id) : type === "event" ? eventSummary(id) : type === "mail" ? threadSubject(id) : id;
+      return d("Add to Deep Work", detail);
+    }
+    case "deepwork_remove": return d("Remove from Deep Work", s("id"));
+    case "deepwork_set_intent": return d("Set Deep Work intent", s("intent"));
+    case "add_email_label": return d("Add email label", s("label"));
+    case "remove_email_label": return d("Remove email label", s("label"));
+    // Filtering & navigation
+    case "apply_filter": {
+      const parts = Object.entries(a).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join("/") : v}`);
+      return d("Apply filter", parts.join(", "));
+    }
+    case "clear_filter": return d("Clear filters", "");
+    case "open_view": return d("Open view", s("view"));
+    default:
+      return d(name.replace(/_/g, " "), Object.entries(a).map(([k, v]) => `${k}: ${v}`).join(", "));
+  }
+}
 
 export async function runTool(name: string, args: Record<string, unknown>): Promise<string> {
   const t = TOOLS.find((x) => x.def.function.name === name);
