@@ -3,6 +3,7 @@ import type { ToolDef } from "./types";
 import { useNotes } from "@/features/notes/store";
 import { useHome, type HomeTarget } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { usePdfs } from "@/features/pdfs/store";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { allTags, facetValues } from "@/features/filtering/filter";
 import { flattenTree } from "@/features/notes/tree";
@@ -530,14 +531,27 @@ const TOOLS: ToolImpl[] = [
   // ---- Deep Work ----
   tool(
     "deepwork_add",
-    "Add a note, calendar event, or email to the Deep Work canvas and open it. " +
-      "type is one of note|event|mail; id is the note id / event id / thread id.",
-    obj({ type: str("note | event | mail"), id: str("the item id") }, ["type", "id"]),
+    "Add a note, calendar event, email, or PDF to the Deep Work canvas and open it. " +
+      "type is one of note|event|mail|pdf; id is the note id / event id / thread id / pdf id.",
+    obj({ type: str("note | event | mail | pdf"), id: str("the item id") }, ["type", "id"]),
     async (a) => {
       const type = String(a.type);
-      if (!["note", "event", "mail"].includes(type)) return "type must be note, event, or mail.";
+      if (!["note", "event", "mail", "pdf"].includes(type)) return "type must be note, event, mail, or pdf.";
       useHome.getState().launchDeepWork({ type: type as HomeTarget["type"], id: String(a.id) });
       return "Added to Deep Work.";
+    }
+  ),
+  tool(
+    "list_pdfs",
+    "List the user's uploaded PDFs with their tags and ids. Use to find a PDF to add to Deep Work.",
+    obj({ tag: str("optional: only PDFs with this tag") }),
+    async (a) => {
+      const wanted = a.tag ? String(a.tag).toLowerCase().trim() : null;
+      const list = Object.values(usePdfs.getState().pdfs).filter(
+        (p) => !wanted || p.tags.some((t) => t.toLowerCase().trim() === wanted)
+      );
+      if (!list.length) return wanted ? `No PDFs tagged "${a.tag}".` : "No PDFs uploaded.";
+      return list.map((p) => `- ${p.name}${p.tags.length ? ` [tags: ${p.tags.join(", ")}]` : ""} [id:${p.id}]`).join("\n");
     }
   ),
   tool(
@@ -664,6 +678,7 @@ export const READ_TOOLS = new Set([
   "search_notes", "read_note", "get_tree", "recall", "list_memories",
   "list_events", "find_free_slots", "search_mail", "read_mail",
   "list_tags", "list_facets", // added in phase 3
+  "list_pdfs",
 ]);
 
 export function isReadTool(name: string): boolean {
@@ -687,6 +702,9 @@ function threadSubject(id: string): string {
 }
 function memoryTitle(id: string): string {
   return loadMemories().find((m) => m.id === id)?.title || "memory";
+}
+function pdfName(id: string): string {
+  return usePdfs.getState().pdfs[id]?.name || "PDF";
 }
 
 export interface ToolCallDescription {
@@ -732,7 +750,7 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "deepwork_add": {
       const type = s("type");
       const id = s("id");
-      const detail = type === "note" ? noteTitle(id) : type === "event" ? eventSummary(id) : type === "mail" ? threadSubject(id) : id;
+      const detail = type === "note" ? noteTitle(id) : type === "event" ? eventSummary(id) : type === "mail" ? threadSubject(id) : type === "pdf" ? pdfName(id) : id;
       return d("Add to Deep Work", detail);
     }
     case "deepwork_remove": return d("Remove from Deep Work", s("id"));

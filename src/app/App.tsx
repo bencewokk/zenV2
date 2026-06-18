@@ -15,6 +15,7 @@ import { MailPanel } from "@/features/google/MailPanel";
 import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
 import { useWorkspace } from "@/shared/stores/workspace";
+import { usePdfs } from "@/features/pdfs/store";
 
 /**
  * Phase 1 shell — a thin composer of feature modules (the anti-ui.py).
@@ -54,6 +55,7 @@ export function App() {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     void load();
+    void usePdfs.getState().load();
   }, [load]);
   useEffect(() => {
     if (loaded && !restored.current) {

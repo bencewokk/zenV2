@@ -20,6 +20,15 @@ export interface Note {
   updatedAt: number;
 }
 
+/** An uploaded PDF document (binary lives in IndexedDB; this is the metadata). */
+export interface PdfDoc {
+  id: string;
+  name: string;
+  tags: string[];
+  size: number; // bytes
+  addedAt: number;
+}
+
 /** Inline [[wiki-link]] edge between notes. */
 export interface NoteLink {
   fromNoteId: string;

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Note } from "@/shared/lib/types";
+import type { Note, PdfDoc } from "@/shared/lib/types";
 import type { CalEvent } from "@/services/google/calendar";
 import type { MailThread } from "@/services/google/gmail";
 import { notify } from "@/shared/ui/notify";
 import { useHome, type HomeTarget } from "@/features/home/store";
+import { usePdfs } from "@/features/pdfs/store";
 import {
   fmtDuration,
   readinessColor,
@@ -17,16 +18,17 @@ import { WindowFrame } from "@/features/home/deepwork/windows/WindowFrame";
 import { NoteWindow } from "@/features/home/deepwork/windows/NoteWindow";
 import { EmailWindow } from "@/features/home/deepwork/windows/EmailWindow";
 import { EventWindow } from "@/features/home/deepwork/windows/EventWindow";
+import { PdfWindow } from "@/features/home/deepwork/windows/PdfWindow";
 
 /** A candidate the user can pull onto the canvas, related to the source item. */
 interface RelatedCandidate {
   target: HomeTarget;
-  type: "note" | "event" | "mail";
+  type: "note" | "event" | "mail" | "pdf";
   title: string;
   subtitle: string;
 }
 
-const TYPE_GLYPH: Record<RelatedCandidate["type"], string> = { note: "✎", event: "◷", mail: "✉" };
+const TYPE_GLYPH: Record<RelatedCandidate["type"], string> = { note: "✎", event: "◷", mail: "✉", pdf: "📄" };
 
 /**
  * Keywords that characterise a source item, used to find related material via
@@ -38,7 +40,8 @@ function keywordsFor(
   notes: Record<string, Note>,
   events: CalEvent[],
   threads: MailThread[],
-  matchedLabels: Record<string, string>
+  matchedLabels: Record<string, string>,
+  pdfs: Record<string, PdfDoc>
 ): string[] {
   if (target.type === "note") {
     return notes[target.id]?.tags.map((t) => t.toLowerCase().trim()).filter(Boolean) ?? [];
@@ -46,6 +49,10 @@ function keywordsFor(
   if (target.type === "event") {
     const e = events.find((ev) => ev.id === target.id);
     return e?.summary ? [e.summary.toLowerCase().trim()] : [];
+  }
+  if (target.type === "pdf") {
+    const p = pdfs[target.id];
+    return p ? [...p.tags, p.name].map((s) => s.toLowerCase().trim()).filter(Boolean) : [];
   }
   const t = threads.find((th) => th.id === target.id);
   if (!t) return [];
@@ -64,9 +71,10 @@ function relatedCandidates(
   notes: Record<string, Note>,
   events: CalEvent[],
   threads: MailThread[],
-  matchedLabels: Record<string, string>
+  matchedLabels: Record<string, string>,
+  pdfs: Record<string, PdfDoc>
 ): RelatedCandidate[] {
-  const keywords = keywordsFor(source, notes, events, threads, matchedLabels);
+  const keywords = keywordsFor(source, notes, events, threads, matchedLabels, pdfs);
   if (keywords.length === 0) return [];
   const isSource = (t: HomeTarget) => t.type === source.type && t.id === source.id;
   // A keyword and a field match if either contains the other (tags are short labels;
@@ -108,7 +116,16 @@ function relatedCandidates(
       subtitle: t.from,
     }));
 
-  return [...noteHits, ...evHits, ...mailHits];
+  const pdfHits: RelatedCandidate[] = Object.values(pdfs)
+    .filter((p) => !isSource({ type: "pdf", id: p.id }) && hits(p.tags.concat(p.name)))
+    .map((p) => ({
+      target: { type: "pdf", id: p.id },
+      type: "pdf",
+      title: p.name,
+      subtitle: p.tags.join(", ") || "PDF",
+    }));
+
+  return [...noteHits, ...evHits, ...mailHits, ...pdfHits];
 }
 
 const SECTION_LABEL = "text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--text-dim)]";
@@ -152,6 +169,7 @@ export function DeepWorkV2({
   const zenMode = useDeepWork((s) => s.zenMode);
   const setZenMode = useDeepWork((s) => s.setZenMode);
   const matchedLabels = useHome((s) => s.matchedThreadLabels);
+  const pdfs = usePdfs((s) => s.pdfs);
 
   const [relatedMenu, setRelatedMenu] = useState<{ x: number; y: number; source: HomeTarget } | null>(null);
   useEffect(() => {
@@ -313,6 +331,23 @@ export function DeepWorkV2({
                 </WindowFrame>
               );
             }
+            if (item.type === "pdf") {
+              const pdf = pdfs[item.id];
+              return (
+                <WindowFrame
+                  key={key}
+                  geom={geom}
+                  onCommit={commit}
+                  onRemove={onRemove}
+                  glyph="📄"
+                  accent="#e0a35f"
+                  title={pdf?.name || "PDF"}
+                  onHeaderContextMenu={(e) => openRelatedMenu(e, item)}
+                >
+                  {pdf ? <PdfWindow pdfId={item.id} /> : <Missing label="This PDF is no longer available." />}
+                </WindowFrame>
+              );
+            }
             const thread = threads.find((t) => t.id === item.id);
             return (
               <WindowFrame
@@ -336,7 +371,7 @@ export function DeepWorkV2({
         <RelatedTagMenu
           x={relatedMenu.x}
           y={relatedMenu.y}
-          related={relatedCandidates(relatedMenu.source, notes, events, threads, matchedLabels).filter(
+          related={relatedCandidates(relatedMenu.source, notes, events, threads, matchedLabels, pdfs).filter(
             (c) => !items.some((it) => it.type === c.target.type && it.id === c.target.id)
           )}
           onAdd={(c) => {

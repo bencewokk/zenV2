@@ -14,7 +14,8 @@ import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 export type HomeTarget =
   | { type: "event"; id: string }
   | { type: "mail"; id: string }
-  | { type: "note"; id: string };
+  | { type: "note"; id: string }
+  | { type: "pdf"; id: string };
 
 export interface HomeActionChild {
   key: string;

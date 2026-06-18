@@ -11,7 +11,8 @@ import { create, insertMultiple, removeMultiple, search, type Orama } from "@ora
 import type { Note } from "@/shared/lib/types";
 import { docToText } from "@/shared/lib/docText";
 
-env.allowLocalModels = false; // fetch the model from the HF hub + cache in browser
+// fetch the model from the HF hub + cache in browser (env field is typed readonly)
+(env as unknown as { allowLocalModels: boolean }).allowLocalModels = false;
 
 const SCHEMA = { noteId: "string", title: "string", text: "string", embedding: "vector[384]" } as const;
 type Doc = { id: string; noteId: string; title: string; text: string; embedding: number[] };
@@ -32,10 +33,10 @@ export function onModelStatus(fn: (s: ModelStatus) => void): () => void {
 }
 
 let extractorP: Promise<FeatureExtractionPipeline> | null = null;
-function getExtractor() {
+function getExtractor(): Promise<FeatureExtractionPipeline> {
   if (!extractorP) {
     setStatus("loading");
-    extractorP = pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2")
+    extractorP = (pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2") as Promise<FeatureExtractionPipeline>)
       .then((p) => {
         setStatus("ready");
         return p;
