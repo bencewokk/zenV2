@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { marked } from "marked";
+import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { useAI } from "@/features/ai/store";
 import { useNotes } from "@/features/notes/store";
 import { useDeepWork, readinessColor, type StudyBackbone } from "@/features/home/deepwork/deepworkStore";
 import { docToText } from "@/shared/lib/docText";
 import { ProfilePanel } from "@/features/memory/ProfilePanel";
+import { ToolSettings } from "@/features/ai/ToolSettings";
 import { useMemoryStatus } from "@/features/memory/useMemoryStatus";
 import { usePresence } from "@/shared/ui/usePresence";
 
@@ -34,6 +35,7 @@ export function ChatPanel() {
 
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,6 +63,14 @@ export function ChatPanel() {
     return (
       <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
         <ProfilePanel onClose={() => setShowProfile(false)} />
+      </aside>
+    );
+  }
+
+  if (showTools) {
+    return (
+      <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
+        <ToolSettings onClose={() => setShowTools(false)} />
       </aside>
     );
   }
@@ -122,6 +132,9 @@ export function ChatPanel() {
           </span>
         )}
         <div className="ml-auto flex items-center gap-3">
+          <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowTools(true)} title="Tool permissions">
+            Tools
+          </button>
           <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowProfile(true)} title="Profile memory">
             Profile
           </button>
@@ -156,7 +169,7 @@ export function ChatPanel() {
                 {t.role === "assistant" ? (
                   <div
                     className="zen-md"
-                    dangerouslySetInnerHTML={{ __html: marked.parse(t.content || "…") as string }}
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(t.content || "…") }}
                   />
                 ) : (
                   <span className="whitespace-pre-wrap">{t.content}</span>
@@ -212,7 +225,7 @@ export function ChatPanel() {
 
         {pendingQuestion && (
           <div className="zen-anim-rise rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--bg-elev)] p-3 text-sm">
-            <div className="mb-2 font-medium">{pendingQuestion.question}</div>
+            <div className="zen-md mb-2 font-medium" dangerouslySetInnerHTML={{ __html: renderMarkdown(pendingQuestion.question) }} />
             <div className="flex flex-col gap-1.5">
               {pendingQuestion.options.map((opt, i) => (
                 <button
@@ -220,7 +233,7 @@ export function ChatPanel() {
                   className="zen-pressable rounded border border-[var(--border)] px-3 py-1.5 text-left text-xs hover:bg-[var(--bg)] hover:text-[var(--text)]"
                   onClick={() => answerQuestion(opt)}
                 >
-                  {opt}
+                  <span className="zen-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(opt) }} />
                 </button>
               ))}
             </div>

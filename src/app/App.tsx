@@ -10,6 +10,8 @@ import { Home } from "@/features/home/Home";
 import { useHome } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { FocusTimerButton } from "@/features/home/deepwork/FocusTimerButton";
+import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
+import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
 import { CalendarPanel } from "@/features/google/CalendarPanel";
 import { MailPanel } from "@/features/google/MailPanel";
 import { useNotes } from "@/features/notes/store";
@@ -169,6 +171,11 @@ export function App() {
         >
           Zen
         </button>
+        {deepWork && (
+          <div className="mx-3 min-w-0 flex-1">
+            <SessionTabs />
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {sidebarApplicable && (
             <button
@@ -298,6 +305,7 @@ export function App() {
           <StatusBar />
         </div>
       )}
+      <AddToSessionPicker />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>
   );

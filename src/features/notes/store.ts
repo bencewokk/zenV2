@@ -14,6 +14,7 @@ function newNote(parentId: string | null, order: number): Note {
     title: "Untitled",
     content: null,
     collapsed: false,
+    moc: false,
     space: null,
     subject: null,
     unit: null,
@@ -59,7 +60,7 @@ export const useNotes = create<NotesState>((set, get) => ({
     const all = await store.all();
     const map: Record<string, Note> = {};
     // Tolerate notes persisted before `pdfIds` existed.
-    for (const n of all) map[n.id] = { ...n, pdfIds: n.pdfIds ?? [] };
+    for (const n of all) map[n.id] = { ...n, pdfIds: n.pdfIds ?? [], moc: n.moc ?? false };
     set({ notes: map, loaded: true });
   },
 

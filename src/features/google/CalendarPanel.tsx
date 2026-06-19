@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GoogleGate } from "@/features/google/GoogleGate";
 import { listEvents, createEvent, deleteEvent, type CalEvent } from "@/services/google/calendar";
 import { useHome } from "@/features/home/store";
+import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { notify } from "@/shared/ui/notify";
 import { SkeletonRows } from "@/shared/ui/Skeleton";
 
@@ -20,7 +21,7 @@ export function CalendarPanel({ embedded = false }: { embedded?: boolean }) {
 }
 
 function CalendarInner({ embedded }: { embedded: boolean }) {
-  const launchDeepWork = useHome((s) => s.launchDeepWork);
+  const requestAdd = useDeepWork((s) => s.requestAdd);
   const knownLabelOptions = useHome((s) => s.knownLabelOptions);
   const scanned = useMemo(
     () => new Set(knownLabelOptions.map((o) => o.toLowerCase().trim())),
@@ -173,7 +174,7 @@ function CalendarInner({ embedded }: { embedded: boolean }) {
           <button
             className="block w-full rounded-[10px] px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--bg-elev)]"
             onClick={() => {
-              launchDeepWork({ type: "event", id: menu.id });
+              requestAdd({ type: "event", id: menu.id });
               setMenu(null);
             }}
           >

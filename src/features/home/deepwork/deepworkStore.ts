@@ -2,10 +2,15 @@ import { create } from "zustand";
 import type { HomeTarget } from "@/features/home/store";
 
 /**
- * Deep Work session — a curated canvas. The user explicitly adds items
- * (notes/events/emails) by right-clicking them; each becomes a draggable window.
- * One session goal (intent) drives an AI readiness assessment over the whole set.
- * Persisted to localStorage.
+ * Deep Work — a collection of named **sessions**. Each session is a curated canvas:
+ * the user explicitly adds items (notes/PDFs/events/emails) by right-clicking them or via
+ * the in-canvas source library; each becomes a draggable window. A session also owns its
+ * study state (intent + AI backbone/mastery) and its focus time.
+ *
+ * Sources are stored as references (`HomeTarget` = {type, id}) only — the real content
+ * lives in its own store. The active session's fields are mirrored onto the top-level
+ * store so existing consumers keep reading `items`/`windows`/`intent`/`backbone`/`focusMs`
+ * unchanged. Persisted to localStorage under `zen.deepwork.v3`.
  */
 
 /** One key concept in the study backbone, with its own mastery score. */
@@ -31,6 +36,25 @@ export interface WindowGeom {
   h: number;
 }
 
+/** The per-session study state — everything that is scoped to one session. */
+export interface SessionStudyState {
+  items: HomeTarget[];
+  windows: Record<string, WindowGeom>;
+  intent: string;
+  backbone: StudyBackbone | null;
+  focusMs: number;
+  focusSessions: number;
+}
+
+/** A named Deep Work session. */
+export interface DeepWorkSession extends SessionStudyState {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  archived: boolean;
+}
+
 export function targetKey(t: HomeTarget): string {
   return `${t.type}:${t.id}`;
 }
@@ -48,31 +72,57 @@ function defaultGeom(index: number): WindowGeom {
   };
 }
 
-interface PersistedDeepWork {
-  items: HomeTarget[];
-  windows: Record<string, WindowGeom>;
-  intent: string;
-  backbone: StudyBackbone | null;
-  focusMs: number;
-  sessions: number;
-  headerCollapsed: boolean;
+function emptyStudyState(): SessionStudyState {
+  return { items: [], windows: {}, intent: "", backbone: null, focusMs: 0, focusSessions: 0 };
+}
+
+interface PersistedV3 {
+  sessions: Record<string, DeepWorkSession>;
+  order: string[];
+  activeId: string | null;
   zenMode: boolean;
 }
 
-const KEY = "zen.deepwork.v2";
+const KEY = "zen.deepwork.v3";
 
-function read(): PersistedDeepWork {
-  const empty: PersistedDeepWork = { items: [], windows: {}, intent: "", backbone: null, focusMs: 0, sessions: 0, headerCollapsed: false, zenMode: false };
+function read(): PersistedV3 {
+  const empty: PersistedV3 = { sessions: {}, order: [], activeId: null, zenMode: false };
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...empty, ...(JSON.parse(raw) as Partial<PersistedDeepWork>) };
+    if (raw) return { ...empty, ...(JSON.parse(raw) as Partial<PersistedV3>) };
   } catch {
     /* ignore */
   }
   return empty;
 }
 
-interface DeepWorkState extends PersistedDeepWork {
+/** The active session's study fields, mirrored for backward-compatible selectors. */
+function mirrorOf(s: DeepWorkSession | null): SessionStudyState {
+  return s
+    ? {
+        items: s.items,
+        windows: s.windows,
+        intent: s.intent,
+        backbone: s.backbone,
+        focusMs: s.focusMs,
+        focusSessions: s.focusSessions,
+      }
+    : emptyStudyState();
+}
+
+interface DeepWorkState extends SessionStudyState {
+  // Session collection
+  sessions: Record<string, DeepWorkSession>;
+  order: string[];
+  activeId: string | null;
+  zenMode: boolean;
+
+  // Ephemeral: a target awaiting "which session?" selection (not persisted)
+  pendingAdd: HomeTarget | null;
+  requestAdd: (t: HomeTarget) => void;
+  cancelAdd: () => void;
+
+  // Per-session study actions (operate on the active session, auto-creating if needed)
   addItem: (t: HomeTarget) => void;
   removeItem: (t: HomeTarget) => void;
   setWindow: (key: string, geom: WindowGeom) => void;
@@ -81,115 +131,213 @@ interface DeepWorkState extends PersistedDeepWork {
   setMastery: (updates: { concept: string; mastery: number }[], overall?: number) => void;
   clearBackbone: () => void;
   logFocus: (ms: number) => void;
-  setHeaderCollapsed: (collapsed: boolean) => void;
+
+  // Session management
+  createSession: (name?: string) => string;
+  switchSession: (id: string) => void;
+  renameSession: (id: string, name: string) => void;
+  archiveSession: (id: string) => void;
+  unarchiveSession: (id: string) => void;
+  deleteSession: (id: string) => void;
+
   setZenMode: (zen: boolean) => void;
 }
 
 export const useDeepWork = create<DeepWorkState>((set, get) => {
   const initial = read();
+  const activeSession = initial.activeId ? initial.sessions[initial.activeId] ?? null : null;
 
-  function persist(next: Partial<PersistedDeepWork>) {
-    const s = { ...get(), ...next };
+  function persist(p: Pick<PersistedV3, "sessions" | "order" | "activeId" | "zenMode">) {
     try {
       localStorage.setItem(
         KEY,
-        JSON.stringify({ items: s.items, windows: s.windows, intent: s.intent, backbone: s.backbone, focusMs: s.focusMs, sessions: s.sessions, headerCollapsed: s.headerCollapsed, zenMode: s.zenMode })
+        JSON.stringify({ sessions: p.sessions, order: p.order, activeId: p.activeId, zenMode: p.zenMode })
       );
     } catch {
       /* ignore */
     }
   }
 
+  /** Commit a partial PersistedV3 plus the refreshed active-session mirror to the store. */
+  function commit(next: Pick<PersistedV3, "sessions" | "order" | "activeId" | "zenMode">) {
+    const active = next.activeId ? next.sessions[next.activeId] ?? null : null;
+    set({ sessions: next.sessions, order: next.order, activeId: next.activeId, zenMode: next.zenMode, ...mirrorOf(active) });
+    persist(next);
+  }
+
+  /** Apply a mutation to the active session, auto-creating one if none is active. */
+  function mutateActive(fn: (s: DeepWorkSession) => DeepWorkSession) {
+    const st = get();
+    let { sessions, order, activeId } = { sessions: st.sessions, order: st.order, activeId: st.activeId };
+    if (!activeId || !sessions[activeId]) {
+      const created = newSession("Untitled session");
+      sessions = { ...sessions, [created.id]: created };
+      order = [...order, created.id];
+      activeId = created.id;
+    }
+    const current = sessions[activeId];
+    const updated = { ...fn(current), updatedAt: Date.now() };
+    commit({ sessions: { ...sessions, [activeId]: updated }, order, activeId, zenMode: st.zenMode });
+  }
+
+  function newSession(name: string): DeepWorkSession {
+    const now = Date.now();
+    return { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now, archived: false, ...emptyStudyState() };
+  }
+
   return {
-    ...initial,
+    sessions: initial.sessions,
+    order: initial.order,
+    activeId: initial.activeId,
+    zenMode: initial.zenMode,
+    pendingAdd: null,
+    ...mirrorOf(activeSession),
+
+    requestAdd(t) {
+      set({ pendingAdd: t });
+    },
+
+    cancelAdd() {
+      set({ pendingAdd: null });
+    },
 
     addItem(t) {
-      const key = targetKey(t);
-      const { items, windows } = get();
-      if (items.some((it) => targetKey(it) === key)) return; // already present
-      const nextItems = [...items, t];
-      const nextWindows = windows[key] ? windows : { ...windows, [key]: defaultGeom(items.length) };
-      set({ items: nextItems, windows: nextWindows });
-      persist({ items: nextItems, windows: nextWindows });
+      mutateActive((s) => {
+        const key = targetKey(t);
+        if (s.items.some((it) => targetKey(it) === key)) return s; // already present
+        const windows = s.windows[key] ? s.windows : { ...s.windows, [key]: defaultGeom(s.items.length) };
+        return { ...s, items: [...s.items, t], windows };
+      });
     },
 
     removeItem(t) {
-      const key = targetKey(t);
-      const items = get().items.filter((it) => targetKey(it) !== key);
-      const windows = { ...get().windows };
-      delete windows[key];
-      set({ items, windows });
-      persist({ items, windows });
+      mutateActive((s) => {
+        const key = targetKey(t);
+        const windows = { ...s.windows };
+        delete windows[key];
+        return { ...s, items: s.items.filter((it) => targetKey(it) !== key), windows };
+      });
     },
 
     setWindow(key, geom) {
-      const windows = { ...get().windows, [key]: geom };
-      set({ windows });
-      persist({ windows });
+      mutateActive((s) => ({ ...s, windows: { ...s.windows, [key]: geom } }));
     },
 
     setIntent(intent) {
-      set({ intent });
-      persist({ intent });
+      mutateActive((s) => ({ ...s, intent }));
     },
 
     setBackbone(intent, concepts, overall) {
       const backbone: StudyBackbone = {
         intent,
-        concepts: concepts.map((c) => ({
-          id: crypto.randomUUID(),
-          title: c.title,
-          summary: c.summary,
-          mastery: 0,
-        })),
+        concepts: concepts.map((c) => ({ id: crypto.randomUUID(), title: c.title, summary: c.summary, mastery: 0 })),
         overall: clampPercent(overall ?? 0),
         generatedAt: Date.now(),
       };
-      set({ backbone, intent });
-      persist({ backbone, intent });
+      mutateActive((s) => ({ ...s, backbone, intent }));
     },
 
     setMastery(updates, overall) {
-      const backbone = get().backbone;
-      if (!backbone) return;
-      const norm = (s: string) => s.toLowerCase().trim();
-      const concepts = backbone.concepts.map((c) => {
-        const hit = updates.find((u) => norm(u.concept) === norm(c.title) || u.concept === c.id);
-        return hit ? { ...c, mastery: clampPercent(hit.mastery) } : c;
+      mutateActive((s) => {
+        if (!s.backbone) return s;
+        const norm = (str: string) => str.toLowerCase().trim();
+        const concepts = s.backbone.concepts.map((c) => {
+          const hit = updates.find((u) => norm(u.concept) === norm(c.title) || u.concept === c.id);
+          return hit ? { ...c, mastery: clampPercent(hit.mastery) } : c;
+        });
+        const backbone: StudyBackbone = {
+          ...s.backbone,
+          concepts,
+          overall: overall != null ? clampPercent(overall) : s.backbone.overall,
+        };
+        return { ...s, backbone };
       });
-      const next: StudyBackbone = {
-        ...backbone,
-        concepts,
-        overall: overall != null ? clampPercent(overall) : backbone.overall,
-      };
-      set({ backbone: next });
-      persist({ backbone: next });
     },
 
     clearBackbone() {
-      set({ backbone: null });
-      persist({ backbone: null });
+      mutateActive((s) => ({ ...s, backbone: null }));
     },
 
     logFocus(ms) {
       if (ms <= 0) return;
-      const focusMs = get().focusMs + ms;
-      const sessions = get().sessions + 1;
-      set({ focusMs, sessions });
-      persist({ focusMs, sessions });
+      mutateActive((s) => ({ ...s, focusMs: s.focusMs + ms, focusSessions: s.focusSessions + 1 }));
     },
 
-    setHeaderCollapsed(headerCollapsed) {
-      set({ headerCollapsed });
-      persist({ headerCollapsed });
+    createSession(name) {
+      const st = get();
+      const session = newSession(name?.trim() || `Session ${st.order.length + 1}`);
+      commit({
+        sessions: { ...st.sessions, [session.id]: session },
+        order: [...st.order, session.id],
+        activeId: session.id,
+        zenMode: st.zenMode,
+      });
+      return session.id;
+    },
+
+    switchSession(id) {
+      const st = get();
+      if (!st.sessions[id]) return;
+      // Surface the session by bumping updatedAt so "recent" ordering reflects access.
+      const session = { ...st.sessions[id], updatedAt: Date.now() };
+      commit({ sessions: { ...st.sessions, [id]: session }, order: st.order, activeId: id, zenMode: st.zenMode });
+    },
+
+    renameSession(id, name) {
+      const st = get();
+      const session = st.sessions[id];
+      if (!session) return;
+      const next = { ...session, name: name.trim() || session.name, updatedAt: Date.now() };
+      commit({ sessions: { ...st.sessions, [id]: next }, order: st.order, activeId: st.activeId, zenMode: st.zenMode });
+    },
+
+    archiveSession(id) {
+      const st = get();
+      const session = st.sessions[id];
+      if (!session) return;
+      const next = { ...session, archived: true, updatedAt: Date.now() };
+      // If the active session is archived, fall back to the most recent open session.
+      let activeId = st.activeId;
+      if (activeId === id) {
+        const openIds = st.order.filter((sid) => sid !== id && !st.sessions[sid]?.archived);
+        activeId = openIds.length ? openIds[openIds.length - 1] : null;
+      }
+      commit({ sessions: { ...st.sessions, [id]: next }, order: st.order, activeId, zenMode: st.zenMode });
+    },
+
+    unarchiveSession(id) {
+      const st = get();
+      const session = st.sessions[id];
+      if (!session) return;
+      const next = { ...session, archived: false, updatedAt: Date.now() };
+      commit({ sessions: { ...st.sessions, [id]: next }, order: st.order, activeId: st.activeId, zenMode: st.zenMode });
+    },
+
+    deleteSession(id) {
+      const st = get();
+      if (!st.sessions[id]) return;
+      const sessions = { ...st.sessions };
+      delete sessions[id];
+      const order = st.order.filter((sid) => sid !== id);
+      let activeId = st.activeId;
+      if (activeId === id) {
+        const openIds = order.filter((sid) => !sessions[sid]?.archived);
+        activeId = openIds.length ? openIds[openIds.length - 1] : null;
+      }
+      commit({ sessions, order, activeId, zenMode: st.zenMode });
     },
 
     setZenMode(zenMode) {
-      set({ zenMode });
-      persist({ zenMode });
+      const st = get();
+      commit({ sessions: st.sessions, order: st.order, activeId: st.activeId, zenMode });
     },
   };
 });
+
+/** All sessions in display order (most-recent-access first within filters elsewhere). */
+export function sessionList(s: { sessions: Record<string, DeepWorkSession>; order: string[] }): DeepWorkSession[] {
+  return s.order.map((id) => s.sessions[id]).filter(Boolean);
+}
 
 export function fmtClock(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));

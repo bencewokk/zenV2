@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
 import { useNoteSplit } from "@/features/pdfs/splitStore";
-import { useHome } from "@/features/home/store";
+import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import type { Note } from "@/shared/lib/types";
 
 /** Inline metadata editor for the open note: space/subject/unit/tags/inbox. */
@@ -45,6 +45,15 @@ export function NoteMeta({ note }: { note: Note }) {
       >
         inbox
       </button>
+      <button
+        className={`zen-pressable rounded px-2 py-0.5 ${
+          note.moc ? "bg-[var(--accent-dim)] text-[var(--text)]" : "bg-[var(--bg-elev)] text-[var(--text-dim)]"
+        }`}
+        onClick={() => update({ moc: !note.moc })}
+        title="Map of Content: list child notes inside this note"
+      >
+        MOC
+      </button>
       <NotePdfs note={note} />
     </div>
   );
@@ -57,7 +66,7 @@ function NotePdfs({ note }: { note: Note }) {
   const attachPdf = useNotes((s) => s.attachPdf);
   const detachPdf = useNotes((s) => s.detachPdf);
   const openSplit = useNoteSplit((s) => s.open);
-  const launchDeepWork = useHome((s) => s.launchDeepWork);
+  const requestAdd = useDeepWork((s) => s.requestAdd);
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [dwMenu, setDwMenu] = useState<{ x: number; y: number; pdfId: string } | null>(null);
@@ -155,7 +164,7 @@ function NotePdfs({ note }: { note: Note }) {
                     <span className="shrink-0">📄</span>
                     <span className="block min-w-0 flex-1 truncate text-[var(--text)]">{p.name}</span>
                   </button>
-                  <button className="shrink-0 text-[var(--text-dim)] opacity-0 hover:text-[var(--accent)] group-hover:opacity-100" title="Add to Deep Work" onClick={() => { launchDeepWork({ type: "pdf", id: p.id }); setOpen(false); }}>⊕</button>
+                  <button className="shrink-0 text-[var(--text-dim)] opacity-0 hover:text-[var(--accent)] group-hover:opacity-100" title="Add to Deep Work" onClick={() => { requestAdd({ type: "pdf", id: p.id }); setOpen(false); }}>⊕</button>
                   <button className="shrink-0 text-[var(--text-dim)] opacity-0 hover:text-red-400 group-hover:opacity-100" title="Detach" onClick={() => detachPdf(note.id, p.id)}>✕</button>
                 </div>
               ))}
@@ -208,7 +217,7 @@ function NotePdfs({ note }: { note: Note }) {
           <button
             className="block w-full rounded-[10px] px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--bg-elev)]"
             onClick={() => {
-              launchDeepWork({ type: "pdf", id: dwMenu.pdfId });
+              requestAdd({ type: "pdf", id: dwMenu.pdfId });
               setDwMenu(null);
               setOpen(false);
             }}

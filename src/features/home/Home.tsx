@@ -4,13 +4,15 @@ import type { JSONContent } from "@tiptap/react";
 import {
   buildActionGroups,
   buildTriageItems,
+  parseBriefItems,
   resolveTargetDetails,
   useHome,
   type HomeTarget,
 } from "@/features/home/store";
 import { DeepWorkV2 } from "@/features/home/deepwork/DeepWorkV2";
 import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
-import { fmtClock } from "@/features/home/deepwork/deepworkStore";
+import { fmtClock, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { useQuote } from "@/features/home/quote";
 import { useNotes } from "@/features/notes/store";
 import { docToText } from "@/shared/lib/docText";
 import { notify } from "@/shared/ui/notify";
@@ -51,7 +53,11 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
   const focusTarget = useHome((s) => s.focusTarget);
   const setFocusTarget = useHome((s) => s.setFocusTarget);
   const regenerateSummary = useHome((s) => s.regenerateSummary);
+  const doneBriefItems = useHome((s) => s.doneBriefItems);
+  const markBriefItemDone = useHome((s) => s.markBriefItemDone);
   const bootstrap = useHome((s) => s.bootstrap);
+  // Items ticked in this view stay visible (lined out) until reload; persisted done items vanish.
+  const [briefStruck, setBriefStruck] = useState<Set<string>>(() => new Set());
   const [hiddenTargets, setHiddenTargets] = useState<HiddenTargets>(() => readHiddenTargets());
   const [quickCapture, setQuickCapture] = useState("");
   const [captureSaving, setCaptureSaving] = useState(false);
@@ -105,6 +111,17 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
     () => pickNextTarget(focusTarget, visibleNotes, visibleEvents, visibleThreads),
     [focusTarget, visibleEvents, visibleNotes, visibleThreads]
   );
+
+  // Parse the brief into checklist items, hiding ones already ticked off on a prior view.
+  const briefItems = useMemo(
+    () => parseBriefItems(summary).filter((item) => !doneBriefItems.includes(item.key) || briefStruck.has(item.key)),
+    [summary, doneBriefItems, briefStruck]
+  );
+
+  function tickBriefItem(key: string) {
+    setBriefStruck((current) => new Set(current).add(key));
+    markBriefItemDone(key);
+  }
 
   const openAdmin = onOpenAdmin ?? (() => undefined);
   const focusTime = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -222,6 +239,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                   <div className="zen-meta text-sm">{focusDate}</div>
                 </div>
               </div>
+              {!deepWork && <DailyQuote />}
             </div>
 
             <div className={`zen-panel-scroll mt-5 grid flex-1 gap-5 pr-1 ${deepWork ? "min-h-0 grid-cols-1" : "xl:grid-cols-[minmax(0,1.55fr)_minmax(14rem,0.45fr)]"}`}>
@@ -293,12 +311,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                         )}
                       </div>
                     ) : (
-                      <div className="rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-4 py-3">
-                        <div className="zen-meta text-[11px] uppercase tracking-[0.24em]">Deep Work Ready</div>
-                        <div className="mt-2 text-sm text-[var(--text)]">
-                          Right-click a note, email, or event to add it to Deep Work.
-                        </div>
-                      </div>
+                      <DeepWorkRecommendations />
                     )}
                   </div>
                 </section>
@@ -313,11 +326,32 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                         <div className="zen-primary-copy mt-2 max-w-[54ch] text-[15px] text-[var(--text)]">
                           Generating your brief...
                         </div>
+                      ) : briefItems.length > 0 ? (
+                        <ul className="zen-primary-copy mt-2 max-w-[54ch] space-y-1.5 text-[15px] text-[var(--text)]">
+                          {briefItems.map((item) => {
+                            const done = doneBriefItems.includes(item.key);
+                            return (
+                              <li key={item.key}>
+                                <button
+                                  type="button"
+                                  className={`text-left transition ${
+                                    done
+                                      ? "cursor-default text-[var(--text-dim)] line-through"
+                                      : "cursor-pointer hover:text-[var(--text-dim)]"
+                                  }`}
+                                  disabled={done}
+                                  onClick={() => tickBriefItem(item.key)}
+                                  aria-label={`Mark done: ${item.text}`}
+                                  dangerouslySetInnerHTML={{ __html: marked.parseInline(item.text) as string }}
+                                />
+                              </li>
+                            );
+                          })}
+                        </ul>
                       ) : summary ? (
-                        <div
-                          className="zen-md zen-primary-copy mt-2 max-w-[54ch] text-[15px] text-[var(--text)]"
-                          dangerouslySetInnerHTML={{ __html: marked.parse(summary) as string }}
-                        />
+                        <div className="zen-secondary-copy mt-2 max-w-[54ch] text-[15px]">
+                          All cleared for today. Regenerate for a fresh brief.
+                        </div>
                       ) : (
                         <div className="zen-primary-copy mt-2 max-w-[54ch] text-[15px] text-[var(--text)]">
                           Generate a focus brief to seed the canvas.
@@ -666,6 +700,98 @@ function SurfaceCard({
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--text-dim)]">{children}</div>;
+}
+
+/** AI-generated daily quote, shown in the empty space beside the clock. */
+function DailyQuote() {
+  const quote = useQuote((s) => s.current);
+  const loading = useQuote((s) => s.loading);
+  const refresh = useQuote((s) => s.refresh);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  if (!quote) {
+    return loading ? (
+      <div className="max-w-md flex-1 text-right text-sm text-[var(--text-dim)]">Finding a quote…</div>
+    ) : null;
+  }
+
+  return (
+    <div className="group max-w-md flex-1 text-right">
+      <blockquote className="zen-primary-copy text-[15px] italic leading-snug text-[var(--text)]">
+        “{quote.text}”
+      </blockquote>
+      <div className="zen-meta mt-1 text-xs">
+        — {quote.author}
+        <button
+          className="ml-2 align-middle text-[var(--text-dim)] opacity-0 transition hover:text-[var(--text)] group-hover:opacity-100 disabled:opacity-40"
+          onClick={() => void refresh(true)}
+          disabled={loading}
+          title="New quote"
+          aria-label="New quote"
+        >
+          ↻
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Dashboard card: resume a recent Deep Work session or start a new one. */
+function DeepWorkRecommendations() {
+  const sessions = useDeepWork((s) => s.sessions);
+  const order = useDeepWork((s) => s.order);
+  const switchSession = useDeepWork((s) => s.switchSession);
+  const createSession = useDeepWork((s) => s.createSession);
+  const setManualDeepWork = useHome((s) => s.setManualDeepWork);
+
+  const recent = sessionList({ sessions, order })
+    .filter((s) => !s.archived)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 4);
+
+  function open(id?: string) {
+    if (id) switchSession(id);
+    else createSession();
+    setManualDeepWork(true);
+  }
+
+  return (
+    <div className="rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="zen-meta text-[11px] uppercase tracking-[0.24em]">Deep Work</div>
+        <button className="text-xs text-[var(--text-dim)] hover:text-[var(--text)]" onClick={() => open()}>
+          + New
+        </button>
+      </div>
+      {recent.length === 0 ? (
+        <div className="mt-2 text-sm text-[var(--text)]">
+          Start a session, then add notes, PDFs, events, or emails to it.
+        </div>
+      ) : (
+        <div className="mt-2 space-y-1.5">
+          {recent.map((s) => (
+            <button
+              key={s.id}
+              className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:border-[rgba(96,165,250,0.3)] hover:bg-[rgba(96,165,250,0.06)]"
+              onClick={() => open(s.id)}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-[var(--text)]">{s.name}</span>
+                <span className="block truncate text-xs text-[var(--text-dim)]">
+                  {s.items.length} source{s.items.length === 1 ? "" : "s"}
+                  {s.backbone ? ` · ${s.backbone.overall}% ready` : ""}
+                </span>
+              </span>
+              <span className="shrink-0 text-sm text-[var(--text-dim)]">→</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {

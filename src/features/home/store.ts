@@ -61,6 +61,7 @@ interface HomeState {
   summaryDayKey: string | null;
   summaryScope: SummaryScope;
   summaryLoading: boolean;
+  doneBriefItems: string[]; // hashes of briefing items the user has ticked off
   events: CalEvent[];
   threads: MailThread[];
   processedThreadIds: string[]; // threads the AI has checked for event matching
@@ -80,9 +81,11 @@ interface HomeState {
   toggleManualDeepWork: () => void;
   addCustomLabel: (label: string) => void;
   removeCustomLabel: (label: string) => void;
+  markBriefItemDone: (key: string) => void;
 }
 
 const STORAGE_KEY = "zen.home.v1";
+const BRIEF_DONE_KEY = "zen.home.brief-done.v1";
 const DEEP_WORK_KEY = "zen.home.deepwork.v1";
 const MAIL_ACCENT = "#b073e0";
 const EVENT_ACCENT = "#6ea8fe";
@@ -109,6 +112,46 @@ function readPersisted(): PersistedHomeState {
 
 function persistSummary(summary: string, summaryDayKey: string | null, summaryScope: SummaryScope) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ summary, summaryDayKey, summaryScope }));
+}
+
+function readBriefDone(): string[] {
+  try {
+    const raw = localStorage.getItem(BRIEF_DONE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as string[];
+      if (Array.isArray(arr)) return arr.filter((s) => typeof s === "string");
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+function saveBriefDone(keys: string[]): void {
+  try {
+    localStorage.setItem(BRIEF_DONE_KEY, JSON.stringify(keys.slice(-500)));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Stable hash of a briefing item's normalized text — survives reword-free regenerations. */
+export function briefItemKey(text: string): string {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  let hash = 5381;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = ((hash << 5) + hash + normalized.charCodeAt(i)) | 0;
+  }
+  return `b${hash >>> 0}`;
+}
+
+/** Split a markdown brief into discrete checklist items, stripping list/heading markers. */
+export function parseBriefItems(summary: string): { key: string; text: string }[] {
+  return summary
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*+]|\d+\.|#{1,6})\s+/, "").trim())
+    .filter(Boolean)
+    .map((text) => ({ key: briefItemKey(text), text }));
 }
 
 interface PersistedDeepWork {
@@ -210,16 +253,36 @@ function resolveFocusTarget(
   return recent[0] ? { type: "note", id: recent[0].id } : null;
 }
 
+/** The brief only considers activity from the past 3 days through the end of today. */
+function withinBriefWindow(timestamp: number, now = Date.now()): boolean {
+  if (!timestamp) return false;
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - 3);
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  return timestamp >= start.getTime() && timestamp <= end.getTime();
+}
+
 function buildSummaryContext(notes: Note[], events: CalEvent[], threads: MailThread[]): string {
-  const allNotes = [...notes].sort((a, b) => {
-    if (Number(b.inbox) !== Number(a.inbox)) return Number(b.inbox) - Number(a.inbox);
-    return b.updatedAt - a.updatedAt;
-  });
-  const allEvents = [...events].sort((a, b) => eventTimestamp(a) - eventTimestamp(b));
-  const allThreads = [...threads].sort((a, b) => {
-    if (Number(b.unread) !== Number(a.unread)) return Number(b.unread) - Number(a.unread);
-    return mailTimestamp(b) - mailTimestamp(a);
-  });
+  const allNotes = [...notes]
+    .filter((note) => withinBriefWindow(note.updatedAt))
+    .sort((a, b) => {
+      if (Number(b.inbox) !== Number(a.inbox)) return Number(b.inbox) - Number(a.inbox);
+      return b.updatedAt - a.updatedAt;
+    });
+  const allEvents = [...events]
+    .filter((event) => withinBriefWindow(eventTimestamp(event)))
+    .sort((a, b) => eventTimestamp(a) - eventTimestamp(b));
+  const allThreads = [...threads]
+    .filter((thread) => withinBriefWindow(mailTimestamp(thread)))
+    .sort((a, b) => {
+      if (Number(b.unread) !== Number(a.unread)) return Number(b.unread) - Number(a.unread);
+      return mailTimestamp(b) - mailTimestamp(a);
+    });
+
+  // Nothing in the window — let the caller fall back to a reassuring brief.
+  if (allNotes.length === 0 && allEvents.length === 0 && allThreads.length === 0) return "";
 
   const lines = [
     `NOTES (${allNotes.length})`,
@@ -243,9 +306,11 @@ function buildSummaryContext(notes: Note[], events: CalEvent[], threads: MailThr
 }
 
 function buildFallbackBrief(notes: Note[], events: CalEvent[], threads: MailThread[]): string {
-  const inbox = [...notes].filter((note) => note.inbox).sort((a, b) => b.updatedAt - a.updatedAt);
-  const firstEvent = events[0];
-  const unread = threads.filter((thread) => thread.unread);
+  const inbox = [...notes]
+    .filter((note) => note.inbox && withinBriefWindow(note.updatedAt))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const firstEvent = events.filter((event) => withinBriefWindow(eventTimestamp(event)))[0];
+  const unread = threads.filter((thread) => thread.unread && withinBriefWindow(mailTimestamp(thread)));
   const lines: string[] = [];
 
   if (firstEvent) {
@@ -258,7 +323,7 @@ function buildFallbackBrief(notes: Note[], events: CalEvent[], threads: MailThre
     lines.push(`Mail pressure: ${unread[0].subject}${unread.length > 1 ? ` + ${unread.length - 1} more unread threads` : ""}.`);
   }
 
-  return lines.join("\n") || "Your dashboard is clear right now. Keep the focus canvas as the single place to choose the next concrete action.";
+  return lines.join("\n") || "Nothing to worry about right now — your slate is clear. Enjoy the calm or start something on your own terms.";
 }
 
 // ---------------------------------------------------------------------------
@@ -468,19 +533,32 @@ async function maybeRefreshSummary(
   useHome.setState({ summaryLoading: true });
   const out = context
     ? await useAI.getState().complete(
-        "Create a concise startup focus brief for the homepage. Return 3 short paragraphs or lines with clear priorities, sequencing, and pressure points. No greeting.",
+        "Create a concise startup focus brief for the homepage. Return 3-6 short bullet points, one concrete actionable priority per line, each starting with '- '. Order by importance. No greeting, no intro line. If nothing is genuinely pressing, reply with a single reassuring line such as 'Nothing to worry about right now.'",
         context
       )
     : fallback;
-  const summary = out && out.trim() && out.trim() !== context ? out.trim() : fallback;
+  const generated = out && out.trim() && out.trim() !== context ? out.trim() : fallback;
+
+  // Carry over items the user hasn't ticked off yet so a regenerate doesn't drop them.
+  const done = new Set(state.doneBriefItems);
+  const carried = parseBriefItems(state.summary).filter((item) => !done.has(item.key));
+  const fresh = parseBriefItems(generated).filter((item) => !done.has(item.key));
+  const seen = new Set<string>();
+  const mergedLines: string[] = [];
+  for (const item of [...carried, ...fresh]) {
+    if (seen.has(item.key)) continue;
+    seen.add(item.key);
+    mergedLines.push(`- ${item.text}`);
+  }
+  const summary = mergedLines.join("\n") || generated;
 
   useHome.setState({
-    summary: summary || fallback,
+    summary,
     summaryDayKey: dayKey,
     summaryScope: scope,
     summaryLoading: false,
   });
-  persistSummary(summary || fallback, dayKey, scope);
+  persistSummary(summary, dayKey, scope);
 }
 
 const persisted = readPersisted();
@@ -493,6 +571,7 @@ export const useHome = create<HomeState>((set, get) => ({
   summaryDayKey: persisted.summaryDayKey,
   summaryScope: persisted.summaryScope,
   summaryLoading: false,
+  doneBriefItems: readBriefDone(),
   events: [],
   threads: [],
   processedThreadIds: [...readLabeledSet()],
@@ -587,6 +666,14 @@ export const useHome = create<HomeState>((set, get) => ({
     const next = get().customLabels.filter((l) => l !== label);
     set({ customLabels: next });
     saveCustomLabels(next);
+  },
+
+  markBriefItemDone(key) {
+    const existing = get().doneBriefItems;
+    if (existing.includes(key)) return;
+    const next = [...existing, key];
+    set({ doneBriefItems: next });
+    saveBriefDone(next);
   },
 }));
 

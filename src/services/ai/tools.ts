@@ -8,6 +8,7 @@ import { useWorkspace } from "@/shared/stores/workspace";
 import { allTags, facetValues } from "@/features/filtering/filter";
 import { flattenTree } from "@/features/notes/tree";
 import { docToText } from "@/shared/lib/docText";
+import { mdToDoc } from "@/shared/lib/markdownDoc";
 import {
   recall, formatRecall, findInPdf, updateProfile,
   loadMemories, saveMemory, deleteMemory,
@@ -18,17 +19,6 @@ import {
   listThreads, getThread, createDraft,
   sendEmail, replyInThread, modifyThread,
 } from "@/services/google/gmail";
-
-/** Turn plain text (with newlines) into a TipTap doc. */
-function textToDoc(text: string): JSONContent {
-  return {
-    type: "doc",
-    content: text.split("\n").map((line) => ({
-      type: "paragraph",
-      content: line ? [{ type: "text", text: line }] : [],
-    })),
-  };
-}
 
 interface ToolImpl {
   def: ToolDef;
@@ -46,16 +36,19 @@ function tool(
   return { def: { type: "function", function: { name, description, parameters } }, run, confirm };
 }
 
-/** Append a block node to a note's TipTap content and persist. */
-async function appendBlock(noteId: string, node: JSONContent): Promise<boolean> {
+/** Append block node(s) to a note's TipTap content and persist. */
+async function appendBlocks(noteId: string, nodes: JSONContent[]): Promise<boolean> {
   const s = useNotes.getState();
   const note = s.notes[noteId];
   if (!note) return false;
   const doc: JSONContent = note.content ?? { type: "doc", content: [] };
-  const content = [...(doc.content ?? []), node];
+  const content = [...(doc.content ?? []), ...nodes];
   await s.saveContent(noteId, { type: "doc", content });
   return true;
 }
+
+/** Append a single block node. */
+const appendBlock = (noteId: string, node: JSONContent) => appendBlocks(noteId, [node]);
 
 const obj = (props: Record<string, unknown>, required: string[] = []) => ({
   type: "object",
@@ -187,24 +180,27 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "create_note",
-    "Create a new note with a title and optional body text. Returns the new note id.",
-    obj({ title: str("note title"), content: str("body text (optional)") }, ["title"]),
+    "Create a new note with a title and optional body. The body is parsed as Markdown — " +
+      "use #/##/### headings, **bold**, *italic*, `code`, and -/1. lists for formatting. " +
+      "Returns the new note id.",
+    obj({ title: str("note title"), content: str("body in Markdown (optional)") }, ["title"]),
     async (a) => {
       const s = useNotes.getState();
       const id = await s.create(null);
       await s.rename(id, String(a.title));
-      if (a.content) await s.saveContent(id, textToDoc(String(a.content)));
+      if (a.content) await s.saveContent(id, mdToDoc(String(a.content)));
       return `Created note "${a.title}" [id:${id}].`;
     }
   ),
   tool(
     "update_note",
-    "Replace the body text of an existing note.",
-    obj({ id: str("note id"), content: str("new body text") }, ["id", "content"]),
+    "Replace the body of an existing note. The body is parsed as Markdown (headings, " +
+      "**bold**, *italic*, `code`, lists).",
+    obj({ id: str("note id"), content: str("new body in Markdown") }, ["id", "content"]),
     async (a) => {
       const s = useNotes.getState();
       if (!s.notes[String(a.id)]) return "No note with that id.";
-      await s.saveContent(String(a.id), textToDoc(String(a.content)));
+      await s.saveContent(String(a.id), mdToDoc(String(a.content)));
       return "Note updated.";
     }
   ),
@@ -233,13 +229,11 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "append_note",
-    "Append a paragraph of text to the end of a note.",
-    obj({ id: str("note id"), text: str("text to append") }, ["id", "text"]),
+    "Append Markdown content to the end of a note (headings, **bold**, *italic*, lists supported).",
+    obj({ id: str("note id"), text: str("Markdown to append") }, ["id", "text"]),
     async (a) => {
-      const ok = await appendBlock(String(a.id), {
-        type: "paragraph",
-        content: [{ type: "text", text: String(a.text) }],
-      });
+      const blocks = mdToDoc(String(a.text)).content ?? [];
+      const ok = await appendBlocks(String(a.id), blocks);
       return ok ? "Appended." : "No note with that id.";
     }
   ),
@@ -984,6 +978,73 @@ export function isMutationTool(name: string): boolean {
   return !READ_TOOLS.has(name) && name !== "ask_user";
 }
 
+// ── Per-tool acceptance policy (user-configurable in the chat's Tools tab) ─────
+
+/**
+ * How a tool is gated before it runs:
+ *  - "auto": apply immediately during the agent loop (no card).
+ *  - "ask":  surface a proposal card the user must Run/Dismiss.
+ *  - "off":  the tool is disabled — the assistant is told it's unavailable.
+ *
+ * Read-only lookups, ask_user, and local study-state writes are never gated
+ * (always effectively "auto") and are not configurable.
+ */
+export type ToolPolicy = "off" | "ask" | "auto";
+
+export interface ToolMeta {
+  name: string;
+  label: string;
+  category: string;
+  danger: boolean; // destructive or outbound
+  configurable: boolean; // false → always auto (reads / ask_user / study writes)
+  defaultPolicy: ToolPolicy;
+}
+
+const CATEGORY_SETS: Array<[string, Set<string>]> = [
+  ["Interaction", new Set(["ask_user"])],
+  ["Memory", new Set(["update_profile", "save_memory", "list_memories", "forget_memory", "recall"])],
+  ["Notes", new Set([
+    "search_notes", "read_note", "create_note", "update_note", "open_note", "get_tree",
+    "append_note", "set_metadata", "move_note", "delete_note", "insert_math", "insert_table", "link_notes",
+  ])],
+  ["Calendar", new Set(["list_events", "create_event", "update_event", "delete_event", "find_free_slots"])],
+  ["Gmail", new Set([
+    "search_mail", "read_mail", "draft_email", "send_email", "reply_in_thread",
+    "archive_thread", "mark_read", "add_email_label", "remove_email_label",
+  ])],
+  ["PDF", new Set([
+    "list_pdfs", "find_in_pdf", "read_pdf", "search_pdf", "cite_pdf", "highlight_pdf",
+    "unhighlight_pdf", "rename_pdf", "tag_pdf", "delete_pdf", "attach_pdf", "detach_pdf",
+  ])],
+  ["Deep Work", new Set([
+    "deepwork_add", "deepwork_remove", "deepwork_set_intent", "deepwork_read_material",
+    "deepwork_set_backbone", "deepwork_set_mastery",
+  ])],
+  ["Navigation", new Set(["apply_filter", "clear_filter", "list_tags", "list_facets", "open_view"])],
+];
+
+function categoryOf(name: string): string {
+  for (const [cat, set] of CATEGORY_SETS) if (set.has(name)) return cat;
+  return "Other";
+}
+
+/** Metadata for every tool, for the settings UI and policy resolution. */
+export const TOOL_CATALOG: ToolMeta[] = TOOLS.map((t) => {
+  const name = t.def.function.name;
+  const danger = !!t.confirm;
+  // Reads, ask_user and local study writes always auto-run and aren't gated.
+  const configurable = name !== "ask_user" && !READ_TOOLS.has(name) && !STUDY_AUTO.has(name);
+  const defaultPolicy: ToolPolicy = !configurable ? "auto" : danger ? "ask" : "auto";
+  return {
+    name,
+    label: describeToolCall(name, {}).title,
+    category: categoryOf(name),
+    danger,
+    configurable,
+    defaultPolicy,
+  };
+});
+
 // ── Human-readable descriptions for proposal / confirm cards ──────────────────
 
 function noteTitle(id: string): string {
@@ -1072,6 +1133,52 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "open_view": return d("Open view", s("view"));
     default:
       return d(name.replace(/_/g, " "), Object.entries(a).map(([k, v]) => `${k}: ${v}`).join(", "));
+  }
+}
+
+/**
+ * Repair invalid backslash escapes in a JSON string. Models routinely emit LaTeX
+ * with single backslashes inside tool-call arguments (e.g. "$\frac{1}{x}$",
+ * "\int", "\ln"), which is invalid JSON and makes JSON.parse throw — leaving the
+ * tool with empty args (an empty ask_user card, a bodyless note).
+ *
+ * We double any backslash that isn't a valid JSON escape. The tricky case is the
+ * control-letter escapes `\b \f \n \r \t`: these are valid JSON, but when one is
+ * followed by another letter it's really a LaTeX command (\frac, \beta, \nu, \rho,
+ * \tau), not a control char — so we double those too. A lone `\n`/`\t` (newline,
+ * tab) is preserved.
+ */
+function repairJsonBackslashes(raw: string): string {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c !== "\\") { out += c; continue; }
+    const next = raw[i + 1] ?? "";
+    const after = raw[i + 2] ?? "";
+    const isValidEscape = '"\\/bfnrtu'.includes(next) && next !== "";
+    const isLatexCommand = "bfnrt".includes(next) && /[a-zA-Z]/.test(after);
+    if (!isValidEscape || isLatexCommand) {
+      out += "\\\\" + next; // double the stray/command backslash
+    } else {
+      out += c + next; // keep a genuine escape pair intact (\" \\ \n \uXXXX…)
+    }
+    i++; // consume `next`
+  }
+  return out;
+}
+
+/** Parse tool-call arguments tolerantly, repairing unescaped LaTeX on failure. */
+export function parseToolArgs(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    /* fall through to repair */
+  }
+  try {
+    return JSON.parse(repairJsonBackslashes(raw)) as Record<string, unknown>;
+  } catch {
+    return {};
   }
 }
 

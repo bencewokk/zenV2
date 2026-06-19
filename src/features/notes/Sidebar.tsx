@@ -15,7 +15,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useNotes } from "@/features/notes/store";
-import { useHome, type HomeTarget } from "@/features/home/store";
+import { type HomeTarget } from "@/features/home/store";
+import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { matchesFilter, isFilterActive } from "@/features/filtering/filter";
 import {
   flattenTree,
@@ -37,7 +38,7 @@ export function Sidebar() {
   const toggleCollapse = useNotes((s) => s.toggleCollapse);
   const move = useNotes((s) => s.move);
   const rename = useNotes((s) => s.rename);
-  const launchDeepWork = useHome((s) => s.launchDeepWork);
+  const requestAdd = useDeepWork((s) => s.requestAdd);
   const [menu, setMenu] = useState<{ x: number; y: number; target: HomeTarget } | null>(null);
 
   useEffect(() => {
@@ -159,7 +160,7 @@ export function Sidebar() {
           <button
             className="block w-full rounded-[10px] px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--bg-elev)]"
             onClick={() => {
-              launchDeepWork(menu.target);
+              requestAdd(menu.target);
               setMenu(null);
             }}
           >

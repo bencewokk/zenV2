@@ -13,6 +13,7 @@ import { WikiLink } from "@/features/notes/extensions/wikiLink";
 import { MathBlock, MathInline } from "@/features/math/math-nodes";
 import { TrailingNode } from "@/features/notes/extensions/trailingNode";
 import { Geometry } from "@/features/geometry/geometry-node";
+import { MocBlock, MOC_ALLOW_REMOVE, countMocBlocks } from "@/features/notes/extensions/mocBlock";
 import { TableToolbar } from "@/features/notes/TableToolbar";
 import { AIBubbleMenu } from "@/features/ai/AIBubbleMenu";
 
@@ -38,6 +39,7 @@ export function Editor({ noteId }: { noteId: string }) {
         MathBlock,
         MathInline,
         Geometry,
+        MocBlock,
         TrailingNode,
       ],
       content: note?.content ?? "",
@@ -63,6 +65,30 @@ export function Editor({ noteId }: { noteId: string }) {
       }
     };
   }, [noteId, editor, saveContent]);
+
+  // Keep the MOC block in sync with the note's `moc` flag: insert it at the top
+  // when enabled, remove it (bypassing the deletion guard) when disabled.
+  const moc = note?.moc ?? false;
+  useEffect(() => {
+    if (!editor) return;
+    const present = countMocBlocks(editor.state.doc) > 0;
+    if (moc && !present) {
+      editor.chain().insertContentAt(0, { type: "mocBlock" }).run();
+    } else if (!moc && present) {
+      let target: { pos: number; size: number } | null = null;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "mocBlock") {
+          target = { pos, size: node.nodeSize };
+          return false;
+        }
+        return true;
+      });
+      if (target) {
+        const { pos, size } = target;
+        editor.view.dispatch(editor.state.tr.delete(pos, pos + size).setMeta(MOC_ALLOW_REMOVE, true));
+      }
+    }
+  }, [editor, moc]);
 
   if (import.meta.env.DEV && editor) (window as unknown as { __zenEditor?: unknown }).__zenEditor = editor;
 

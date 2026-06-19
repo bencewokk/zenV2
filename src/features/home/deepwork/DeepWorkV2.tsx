@@ -14,6 +14,8 @@ import { NoteWindow } from "@/features/home/deepwork/windows/NoteWindow";
 import { EmailWindow } from "@/features/home/deepwork/windows/EmailWindow";
 import { EventWindow } from "@/features/home/deepwork/windows/EventWindow";
 import { PdfWindow } from "@/features/home/deepwork/windows/PdfWindow";
+import { SourceLibrary } from "@/features/home/deepwork/SourceLibrary";
+import { SessionLauncher } from "@/features/home/deepwork/SessionLauncher";
 
 /** A candidate the user can pull onto the canvas, related to the source item. */
 interface RelatedCandidate {
@@ -134,6 +136,7 @@ export interface DeepWorkV2Props {
 export function DeepWorkV2({
   notes, events, threads, sessionActive,
 }: DeepWorkV2Props) {
+  const activeId = useDeepWork((s) => s.activeId);
   const items = useDeepWork((s) => s.items);
   const windows = useDeepWork((s) => s.windows);
   const setWindow = useDeepWork((s) => s.setWindow);
@@ -144,6 +147,25 @@ export function DeepWorkV2({
   const setZenMode = useDeepWork((s) => s.setZenMode);
   const matchedLabels = useHome((s) => s.matchedThreadLabels);
   const pdfs = usePdfs((s) => s.pdfs);
+
+  const [showLibrary, setShowLibrary] = useState(false);
+
+  // Local window stacking: the most-recently-focused window sits on top and is highlighted.
+  // Geometry is persisted; stacking is ephemeral and resets when the session changes.
+  const [zMap, setZMap] = useState<Record<string, number>>({});
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const zCounter = useRef(1);
+  useEffect(() => {
+    setZMap({});
+    setActiveKey(null);
+    zCounter.current = 1;
+  }, [activeId]);
+  function focusWindow(key: string) {
+    setActiveKey(key);
+    zCounter.current += 1;
+    const next = zCounter.current;
+    setZMap((m) => ({ ...m, [key]: next }));
+  }
 
   const [relatedMenu, setRelatedMenu] = useState<{ x: number; y: number; source: HomeTarget } | null>(null);
   useEffect(() => {
@@ -174,9 +196,20 @@ export function DeepWorkV2({
     }
   }, [sessionActive, logFocus]);
 
+  if (!activeId) return <SessionLauncher />;
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="zen-panel-scroll relative min-h-0 flex-1 overflow-auto rounded-[16px] border border-[rgba(255,255,255,0.06)] bg-[rgba(0,0,0,0.12)]">
+        {!zenMode && (
+          <button
+            className="zen-pressable absolute left-3 top-3 z-10 rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(18,19,24,0.7)] px-3 py-1 text-sm leading-none text-[var(--text-dim)] backdrop-blur hover:text-[var(--text)]"
+            onClick={() => setShowLibrary(true)}
+            title="Add a note, PDF, event, or email to this session"
+          >
+            ＋ Add source
+          </button>
+        )}
         {zenMode && (
           <button
             className="zen-anim-fade zen-pressable absolute right-3 top-3 z-10 rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(18,19,24,0.7)] px-2 py-1 text-sm leading-none text-[var(--text-dim)] backdrop-blur hover:text-[var(--text)]"
@@ -189,7 +222,7 @@ export function DeepWorkV2({
         )}
         {items.length === 0 ? (
           <div className="flex h-full items-center justify-center p-8 text-center text-sm text-[var(--text-dim)]">
-            Nothing here yet. Right-click a note, email, or event → <span className="mx-1 text-[var(--text)]">Add to Deep Work</span> to bring it onto this canvas.
+            Nothing here yet. Use <span className="mx-1 text-[var(--text)]">＋ Add source</span> (top-left), or right-click a note, email, or event → <span className="mx-1 text-[var(--text)]">Add to Deep Work</span>.
           </div>
         ) : (
           items.map((item) => {
@@ -197,6 +230,10 @@ export function DeepWorkV2({
             const geom: WindowGeom = windows[key] ?? { x: 32, y: 32, w: 380, h: 340 };
             const commit = (g: WindowGeom) => setWindow(key, g);
             const onRemove = () => removeItem(item);
+            const peers = Object.entries(windows)
+              .filter(([k]) => k !== key)
+              .map(([, g]) => g);
+            const stack = { z: zMap[key], active: activeKey === key, onFocus: () => focusWindow(key), peers };
 
             if (item.type === "note") {
               const note = notes[item.id];
@@ -206,6 +243,7 @@ export function DeepWorkV2({
                   geom={geom}
                   onCommit={commit}
                   onRemove={onRemove}
+                  {...stack}
                   glyph="✎"
                   accent="#60A5FA"
                   title={note?.title || "Untitled"}
@@ -223,6 +261,7 @@ export function DeepWorkV2({
                   geom={geom}
                   onCommit={commit}
                   onRemove={onRemove}
+                  {...stack}
                   glyph="◷"
                   accent="#6ea8fe"
                   title={event?.summary || "Event"}
@@ -240,6 +279,7 @@ export function DeepWorkV2({
                   geom={geom}
                   onCommit={commit}
                   onRemove={onRemove}
+                  {...stack}
                   glyph="📄"
                   accent="#e0a35f"
                   title={pdf?.name || "PDF"}
@@ -279,6 +319,18 @@ export function DeepWorkV2({
             addItem(c.target);
             setRelatedMenu(null);
           }}
+        />
+      )}
+
+      {showLibrary && (
+        <SourceLibrary
+          notes={notes}
+          events={events}
+          threads={threads}
+          pdfs={pdfs}
+          current={items}
+          onAdd={(t) => addItem(t)}
+          onClose={() => setShowLibrary(false)}
         />
       )}
     </div>

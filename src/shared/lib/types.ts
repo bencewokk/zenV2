@@ -8,6 +8,7 @@ export interface Note {
   title: string;
   content: JSONContent | null; // TipTap doc
   collapsed: boolean; // tree collapse/expand state
+  moc: boolean; // Map of Content: render child notes inline within this note
 
   // metadata for filtering
   space: string | null;

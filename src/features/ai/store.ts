@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import type { AIMessage } from "@/services/ai/types";
 import { deepseek, streamChatWithTools, chatOnce, type AssistantReply } from "@/services/ai/deepseek";
-import { TOOL_DEFS, runTool, isReadTool, isAutoTool, describeToolCall } from "@/services/ai/tools";
+import { TOOL_DEFS, runTool, isReadTool, isAutoTool, describeToolCall, parseToolArgs } from "@/services/ai/tools";
+import { policyFor } from "@/services/ai/toolPolicy";
 import { loadSettings } from "@/services/ai/settings";
 import { memoryContext, recordActivity, recall, formatRecall } from "@/services/memory";
 import { useNotes } from "@/features/notes/store";
@@ -110,9 +111,18 @@ const SYSTEM = (ctx?: string): AIMessage => ({
   content:
     "You are Zen's built-in assistant. Always respond in English, even if the user writes " +
     "in another language. Be concise and helpful. Format replies in Markdown. " +
+    "Write ALL mathematics as LaTeX wrapped in $...$ for inline or $$...$$ for display math " +
+    "(e.g. $\\frac{1}{x}$, $$\\int_0^1 x^2\\,dx$$) — never write bare LaTeX without $ delimiters " +
+    "and never paste raw \\frac/\\int outside math delimiters. This applies in chat AND in notes. " +
     "You can act on the user's notes, Google Calendar, and Gmail using the provided tools — " +
     "use them when the request calls for it (searching/creating/opening notes, reading or " +
     "creating events, searching/reading/drafting mail). Use ISO 8601 for event times. " +
+    "When the user asks you to create, change, move, delete, send, or otherwise ACT on something, " +
+    "you MUST call the matching tool — do not just describe the action or claim it's done without " +
+    "calling the tool. Pick the single most specific tool for the request. If you're missing an " +
+    "[id:...] or another required argument, first call a search/list/read tool to get it, then call " +
+    "the action tool. Some tools may apply immediately and others ask the user to confirm — either " +
+    "way, issue the tool call and let the app handle gating; never invent results. " +
     "To reschedule or remove an event/note, first list/search to get its [id:...], then call " +
     "update_event/delete_event (or move/delete note) with that id — never recreate a duplicate. " +
     "When the user tells you a durable fact about themselves or a preference, save it with " +
@@ -124,8 +134,10 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "'backbone' and save it with deepwork_set_backbone (with the study goal/intent and each " +
     "concept's title + a 1-2 sentence summary). Then teach concept by concept, grounding " +
     "explanations in the actual material and the user's highlights. Quiz the user when they're " +
-    "ready: use the ask_user tool for multiple-choice questions (so options are clickable) and " +
-    "ask short-answer questions in plain text. After tutoring or grading a quiz, record progress " +
+    "ready: use the ask_user tool for multiple-choice questions — put the FULL question text " +
+    "(including any $...$ math) in the question field and the answer choices in options; do not " +
+    "leave the real question only in your prose. Ask short-answer questions in plain text. " +
+    "After tutoring or grading a quiz, record progress " +
     "with deepwork_set_mastery (per-concept mastery 0-100 plus an overall readiness). Ask the user " +
     "if they're ready to be evaluated before quizzing. " +
     "IMPORTANT: Whenever you would offer the user choices, present a numbered/bulleted list of " +
@@ -205,6 +217,10 @@ export const useAI = create<AIState>((set, get) => ({
       }
     } catch { /* memory unavailable — proceed without it */ }
 
+    // Don't even offer tools the user has switched off — keeps the model from
+    // proposing actions it isn't allowed to take.
+    const activeTools = TOOL_DEFS.filter((d) => policyFor(d.function.name) !== "off");
+
     try {
       // Agent loop: stream the model → run any tool calls → feed results back → repeat.
       for (let step = 0; step < MAX_TOOL_STEPS; step++) {
@@ -212,7 +228,7 @@ export const useAI = create<AIState>((set, get) => ({
         set((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
         const turnIndex = get().turns.length - 1;
         let acc = "";
-        const gen = streamChatWithTools(messages, get().model, TOOL_DEFS, controller.signal);
+        const gen = streamChatWithTools(messages, get().model, activeTools, controller.signal);
         let reply: AssistantReply;
         for (;;) {
           const next = await gen.next();
@@ -234,28 +250,32 @@ export const useAI = create<AIState>((set, get) => ({
           const reads = new Map<string, Promise<string>>();
           for (const call of reply.tool_calls) {
             if (call.function.name !== "ask_user" && isReadTool(call.function.name)) {
-              let a: Record<string, unknown> = {};
-              try { a = JSON.parse(call.function.arguments || "{}"); } catch { /* bad json */ }
-              reads.set(call.id, runTool(call.function.name, a));
+              reads.set(call.id, runTool(call.function.name, parseToolArgs(call.function.arguments)));
             }
           }
 
           for (const call of reply.tool_calls) {
             const name = call.function.name;
-            let args: Record<string, unknown> = {};
-            try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* bad json */ }
+            const args = parseToolArgs(call.function.arguments);
 
             let result: string;
             if (name === "ask_user") {
               // Pause and ask the user; their pick becomes the tool result.
-              const question = String(args.question ?? "Which option?");
-              const options = Array.isArray(args.options) ? args.options.map(String) : [];
-              const choice = await new Promise<string>((resolve) => {
-                questionResolver = resolve;
-                set({ pendingQuestion: { question, options } });
-              });
-              set((s) => ({ turns: [...s.turns, { role: "tool", content: `${question} → ${choice}` }] }));
-              result = `The user chose: ${choice}`;
+              const question = String(args.question ?? "").trim();
+              const options = (Array.isArray(args.options) ? args.options.map(String) : typeof args.options === "string" ? [args.options] : [])
+                .map((o) => o.trim())
+                .filter(Boolean);
+              if (!question && !options.length) {
+                // Malformed call — don't render a dead-end empty card.
+                result = "ask_user received no question or options. Ask the user directly in plain text instead.";
+              } else {
+                const choice = await new Promise<string>((resolve) => {
+                  questionResolver = resolve;
+                  set({ pendingQuestion: { question: question || "Pick one:", options: options.length ? options : ["OK"] } });
+                });
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${question || "Pick one:"} → ${choice}` }] }));
+                result = `The user chose: ${choice}`;
+              }
             } else if (isReadTool(name)) {
               // Reads run automatically (in parallel) so the assistant can answer.
               set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔎 ${describeToolCall(name, args).title}` }] }));
@@ -266,13 +286,25 @@ export const useAI = create<AIState>((set, get) => ({
               set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${describeToolCall(name, args).title}` }] }));
               result = await runTool(name, args);
             } else {
-              // Mutations are proposed, not executed — the user runs the card.
+              // Everything else is gated by the user's per-tool policy (Tools tab).
+              const policy = policyFor(name);
               const desc = describeToolCall(name, args);
-              const id = crypto.randomUUID();
-              set((s) => ({
-                proposals: [...s.proposals, { id, name, args, ...desc, status: "pending" }],
-              }));
-              result = `Proposed "${desc.title}: ${desc.detail}" to the user; awaiting their action. Do not assume it ran.`;
+              if (policy === "off") {
+                // The user disabled this tool — tell the model so it can adapt.
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🚫 ${desc.title} (disabled)` }] }));
+                result = `The user has disabled the "${name}" tool. Do not use it; tell the user it's turned off or find another way.`;
+              } else if (policy === "auto") {
+                // Auto-apply: run now and report the outcome inline.
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${desc.title}` }] }));
+                result = await runTool(name, args);
+              } else {
+                // "ask": propose a card the user must Run/Dismiss.
+                const id = crypto.randomUUID();
+                set((s) => ({
+                  proposals: [...s.proposals, { id, name, args, ...desc, status: "pending" }],
+                }));
+                result = `Proposed "${desc.title}: ${desc.detail}" to the user; awaiting their action. Do not assume it ran.`;
+              }
             }
             messages.push({ role: "tool", tool_call_id: call.id, content: result });
           }

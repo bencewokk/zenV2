@@ -3,6 +3,7 @@ import { GoogleGate } from "@/features/google/GoogleGate";
 import { listThreads, getThread, type MailThread } from "@/services/google/gmail";
 import { useAI } from "@/features/ai/store";
 import { useHome } from "@/features/home/store";
+import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { notify } from "@/shared/ui/notify";
 import { SkeletonRows } from "@/shared/ui/Skeleton";
 
@@ -32,7 +33,7 @@ function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpen
   const processedIdsArr = useHome((s) => s.processedThreadIds);
   const processedIds = useMemo(() => new Set(processedIdsArr), [processedIdsArr]);
   const matchedLabels = useHome((s) => s.matchedThreadLabels);
-  const launchDeepWork = useHome((s) => s.launchDeepWork);
+  const requestAdd = useDeepWork((s) => s.requestAdd);
   const [threads, setThreads] = useState<MailThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -181,7 +182,7 @@ function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpen
             <button
               className="block w-full rounded-[10px] px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--bg-elev)]"
               onClick={() => {
-                launchDeepWork({ type: "mail", id: menu.id });
+                requestAdd({ type: "mail", id: menu.id });
                 setMenu(null);
               }}
             >
