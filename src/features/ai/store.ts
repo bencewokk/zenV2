@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { AIMessage } from "@/services/ai/types";
 import { deepseek, streamChatWithTools, chatOnce, type AssistantReply } from "@/services/ai/deepseek";
-import { TOOL_DEFS, runTool, isReadTool, describeToolCall } from "@/services/ai/tools";
+import { TOOL_DEFS, runTool, isReadTool, isAutoTool, describeToolCall } from "@/services/ai/tools";
 import { loadSettings } from "@/services/ai/settings";
 import { memoryContext, recordActivity, recall, formatRecall } from "@/services/memory";
 import { useNotes } from "@/features/notes/store";
@@ -118,6 +118,16 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "When the user tells you a durable fact about themselves or a preference, save it with " +
     "update_profile (about them / how to work) or save_memory (any other fact). Don't ask " +
     "permission to remember — just do it and mention briefly that you saved it. " +
+    "STUDY/TUTOR MODE: When the user wants to study, learn, or prepare for an exam using their " +
+    "Deep Work material, first call deepwork_read_material to read everything they've gathered " +
+    "(notes, full PDF text, their highlights, events, emails). Synthesize the key concepts into a " +
+    "'backbone' and save it with deepwork_set_backbone (with the study goal/intent and each " +
+    "concept's title + a 1-2 sentence summary). Then teach concept by concept, grounding " +
+    "explanations in the actual material and the user's highlights. Quiz the user when they're " +
+    "ready: use the ask_user tool for multiple-choice questions (so options are clickable) and " +
+    "ask short-answer questions in plain text. After tutoring or grading a quiz, record progress " +
+    "with deepwork_set_mastery (per-concept mastery 0-100 plus an overall readiness). Ask the user " +
+    "if they're ready to be evaluated before quizzing. " +
     "IMPORTANT: Whenever you would offer the user choices, present a numbered/bulleted list of " +
     "options, ask which they'd prefer, or are unsure how to proceed, you MUST call the ask_user " +
     "tool with concise options instead of writing the options as plain text. Use ask_user " +
@@ -250,6 +260,11 @@ export const useAI = create<AIState>((set, get) => ({
               // Reads run automatically (in parallel) so the assistant can answer.
               set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔎 ${describeToolCall(name, args).title}` }] }));
               result = await reads.get(call.id)!;
+            } else if (isAutoTool(name)) {
+              // Study-state writes apply immediately (no proposal card) so the
+              // tutoring flow stays conversational — they're local & non-outbound.
+              set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${describeToolCall(name, args).title}` }] }));
+              result = await runTool(name, args);
             } else {
               // Mutations are proposed, not executed — the user runs the card.
               const desc = describeToolCall(name, args);

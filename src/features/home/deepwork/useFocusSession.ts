@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { create } from "zustand";
 import { notify } from "@/shared/ui/notify";
 
 const FOCUS_SESSION_KEY = "zen.focus.session.v1";
@@ -27,6 +27,79 @@ function writeSession(session: FocusSession | null) {
   }
 }
 
+interface FocusStore {
+  session: FocusSession | null;
+  /** Bumped by the 1s ticker so consumers re-render the live countdown. */
+  now: number;
+  startSession: (durationMin: number) => void;
+  endSession: () => void;
+}
+
+// Module-level ticker so a single countdown drives every consumer (header
+// button, Deep Work crediting, Home dashboard) regardless of what's mounted.
+let timer: number | null = null;
+let completed = false;
+
+/**
+ * Shared focus-session store: localStorage persistence, a single 1s countdown
+ * ticker, and the one-shot "time's up" toast. Exposed app-wide so the timer can
+ * live in the header while Deep Work credits focused time.
+ */
+export const useFocusStore = create<FocusStore>((set, get) => {
+  function stopTicker() {
+    if (timer !== null) {
+      window.clearInterval(timer);
+      timer = null;
+    }
+  }
+
+  function startTicker() {
+    stopTicker();
+    timer = window.setInterval(() => {
+      const s = get().session;
+      if (!s) {
+        stopTicker();
+        return;
+      }
+      set({ now: Date.now() });
+      const remaining = s.durationMin * 60000 - (Date.now() - s.startedAt);
+      if (remaining <= 0) {
+        stopTicker();
+        if (!completed) {
+          completed = true;
+          notify.success("Focus session complete — time's up");
+        }
+      }
+    }, 1000);
+  }
+
+  const initial = readSession();
+  if (initial) {
+    completed = initial.durationMin * 60000 - (Date.now() - initial.startedAt) <= 0;
+    if (!completed) startTicker();
+  }
+
+  return {
+    session: initial,
+    now: Date.now(),
+
+    startSession(durationMin) {
+      const next: FocusSession = { startedAt: Date.now(), durationMin };
+      completed = false;
+      writeSession(next);
+      set({ session: next, now: Date.now() });
+      startTicker();
+      notify.success(`Focus session started · ${durationMin}m`);
+    },
+
+    endSession() {
+      stopTicker();
+      writeSession(null);
+      set({ session: null });
+    },
+  };
+});
+
 export interface FocusSessionApi {
   session: FocusSession | null;
   sessionActive: boolean;
@@ -36,53 +109,17 @@ export interface FocusSessionApi {
   endSession: () => void;
 }
 
-/**
- * Owns the timed focus session: localStorage persistence, the 1s countdown
- * ticker, and the one-shot "time's up" toast. Behaviour mirrors the original
- * inline implementation in Home.tsx.
- */
+/** Derived view over the shared store, preserving the original hook API. */
 export function useFocusSession(): FocusSessionApi {
-  const [session, setSession] = useState<FocusSession | null>(() => readSession());
-  const [, setTick] = useState(0);
-  const completedRef = useRef(false);
+  const session = useFocusStore((s) => s.session);
+  useFocusStore((s) => s.now); // subscribe to ticks so the countdown re-renders
+  const startSession = useFocusStore((s) => s.startSession);
+  const endSession = useFocusStore((s) => s.endSession);
 
-  const sessionTotal = session ? session.durationMin * 60000 : 0;
-  const sessionElapsed = session ? Date.now() - session.startedAt : 0;
-  const sessionRemaining = Math.max(0, sessionTotal - sessionElapsed);
-  const sessionProgress = sessionTotal ? Math.min(100, (sessionElapsed / sessionTotal) * 100) : 0;
-  const sessionFinished = !!session && sessionRemaining <= 0;
-
-  // 1s ticker for the live countdown — stops once the block is finished.
-  useEffect(() => {
-    if (!session || sessionFinished) return;
-    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
-    return () => window.clearInterval(t);
-  }, [session, sessionFinished]);
-
-  // Fire once when the timer reaches zero.
-  useEffect(() => {
-    if (!session) {
-      completedRef.current = false;
-      return;
-    }
-    if (sessionFinished && !completedRef.current) {
-      completedRef.current = true;
-      notify.success("Focus session complete — time's up");
-    }
-  }, [session, sessionFinished]);
-
-  function startSession(durationMin: number) {
-    const next: FocusSession = { startedAt: Date.now(), durationMin };
-    completedRef.current = false;
-    writeSession(next);
-    setSession(next);
-    notify.success(`Focus session started · ${durationMin}m`);
-  }
-
-  function endSession() {
-    writeSession(null);
-    setSession(null);
-  }
+  const total = session ? session.durationMin * 60000 : 0;
+  const elapsed = session ? Date.now() - session.startedAt : 0;
+  const sessionRemaining = Math.max(0, total - elapsed);
+  const sessionProgress = total ? Math.min(100, (elapsed / total) * 100) : 0;
 
   return {
     session,

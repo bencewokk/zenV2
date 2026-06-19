@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
 import { useNoteSplit } from "@/features/pdfs/splitStore";
+import { useHome } from "@/features/home/store";
 import type { Note } from "@/shared/lib/types";
 
 /** Inline metadata editor for the open note: space/subject/unit/tags/inbox. */
@@ -56,8 +57,10 @@ function NotePdfs({ note }: { note: Note }) {
   const attachPdf = useNotes((s) => s.attachPdf);
   const detachPdf = useNotes((s) => s.detachPdf);
   const openSplit = useNoteSplit((s) => s.open);
+  const launchDeepWork = useHome((s) => s.launchDeepWork);
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [dwMenu, setDwMenu] = useState<{ x: number; y: number; pdfId: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -68,6 +71,23 @@ function NotePdfs({ note }: { note: Note }) {
     };
     window.addEventListener("mousedown", close);
     return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+
+  // Dismiss the Deep Work context menu on any outside interaction.
+  useEffect(() => {
+    if (!dwMenu) return;
+    const close = () => setDwMenu(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [dwMenu]);
+
+  // Drop the menu whenever the popover closes.
+  useEffect(() => {
+    if (!open) setDwMenu(null);
   }, [open]);
 
   const noteTags = note.tags.map((t) => t.toLowerCase().trim()).filter(Boolean);
@@ -126,11 +146,16 @@ function NotePdfs({ note }: { note: Note }) {
             <>
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">Attached</div>
               {attached.map((p) => (
-                <div key={p.id} className="group flex items-center gap-2 rounded-[10px] px-3 py-2 hover:bg-[var(--bg-elev)]">
+                <div
+                  key={p.id}
+                  className="group flex items-center gap-2 rounded-[10px] px-3 py-2 hover:bg-[var(--bg-elev)]"
+                  onContextMenu={(e) => { e.preventDefault(); setDwMenu({ x: e.clientX, y: e.clientY, pdfId: p.id }); }}
+                >
                   <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => { openSplit(p.id); setOpen(false); }}>
                     <span className="shrink-0">📄</span>
                     <span className="block min-w-0 flex-1 truncate text-[var(--text)]">{p.name}</span>
                   </button>
+                  <button className="shrink-0 text-[var(--text-dim)] opacity-0 hover:text-[var(--accent)] group-hover:opacity-100" title="Add to Deep Work" onClick={() => { launchDeepWork({ type: "pdf", id: p.id }); setOpen(false); }}>⊕</button>
                   <button className="shrink-0 text-[var(--text-dim)] opacity-0 hover:text-red-400 group-hover:opacity-100" title="Detach" onClick={() => detachPdf(note.id, p.id)}>✕</button>
                 </div>
               ))}
@@ -145,7 +170,8 @@ function NotePdfs({ note }: { note: Note }) {
                   key={p.id}
                   className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left hover:bg-[var(--bg-elev)]"
                   onClick={() => { void attachPdf(note.id, p.id); openSplit(p.id); setOpen(false); }}
-                  title="Attach & open beside this note"
+                  onContextMenu={(e) => { e.preventDefault(); setDwMenu({ x: e.clientX, y: e.clientY, pdfId: p.id }); }}
+                  title="Attach & open beside this note (right-click → Add to Deep Work)"
                 >
                   <span className="shrink-0 text-[var(--accent)]">＋</span>
                   <span className="min-w-0 flex-1">
@@ -170,6 +196,25 @@ function NotePdfs({ note }: { note: Note }) {
             </button>
           </div>
           <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={onUpload} />
+        </div>
+      )}
+
+      {dwMenu && (
+        <div
+          className="zen-anim-pop fixed z-[60] min-w-[180px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
+          style={{ left: dwMenu.x, top: dwMenu.y, transformOrigin: "top left" }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="block w-full rounded-[10px] px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--bg-elev)]"
+            onClick={() => {
+              launchDeepWork({ type: "pdf", id: dwMenu.pdfId });
+              setDwMenu(null);
+              setOpen(false);
+            }}
+          >
+            Add to Deep Work
+          </button>
         </div>
       )}
     </div>

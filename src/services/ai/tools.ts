@@ -67,6 +67,11 @@ const num = (description: string) => ({ type: "number", description });
 const bool = (description: string) => ({ type: "boolean", description });
 const arr = (description: string) => ({ type: "array", items: { type: "string" }, description });
 
+function clipText(text: string, max: number): string {
+  const normalized = (text ?? "").trim().replace(/\s+/g, " ");
+  return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
+}
+
 function needGoogle(): string | null {
   return isSignedIn() ? null : "Not connected to Google. Ask the user to open the Calendar or Mail tab and click Connect.";
 }
@@ -759,6 +764,98 @@ const TOOLS: ToolImpl[] = [
     }
   ),
   tool(
+    "deepwork_read_material",
+    "Read ALL study material the user has gathered on the Deep Work canvas: note bodies, " +
+      "full PDF text and the user's highlights/annotations, plus any events and emails. " +
+      "Call this first when helping the user study so you can build a backbone of key concepts.",
+    obj({}),
+    async () => {
+      const items = useDeepWork.getState().items;
+      if (!items.length) return "The Deep Work canvas is empty — ask the user to add notes/PDFs first.";
+      const notes = useNotes.getState().notes;
+      const home = useHome.getState();
+      const pdfs = usePdfs.getState();
+      const sections: string[] = [];
+
+      for (const item of items) {
+        if (item.type === "note") {
+          const n = notes[item.id];
+          if (n) sections.push(`NOTE — ${n.title || "Untitled"}:\n${clipText(docToText(n.content), 4000) || "(empty)"}`);
+        } else if (item.type === "pdf") {
+          const p = pdfs.pdfs[item.id];
+          if (!p) continue;
+          const pages = (await pdfs.pagesFor(item.id)) ?? [];
+          await pdfs.loadAnnotations(item.id);
+          const anns = usePdfs.getState().annotations[item.id] ?? [];
+          const highlights = anns
+            .filter((an) => an.text || an.note)
+            .map((an) => `  • p${an.page}: "${clipText(an.text ?? "", 200)}"${an.note ? ` — note: ${clipText(an.note, 200)}` : ""}`)
+            .join("\n");
+          sections.push(
+            `PDF — ${p.name}:\n${clipText(pages.join("\n"), 6000) || "(no extractable text)"}` +
+              (highlights ? `\nUSER HIGHLIGHTS:\n${highlights}` : "")
+          );
+        } else if (item.type === "event") {
+          const e = home.events.find((ev) => ev.id === item.id);
+          if (e) sections.push(`EVENT — ${e.summary} (${e.start})${e.description ? `: ${clipText(e.description, 300)}` : ""}`);
+        } else if (item.type === "mail") {
+          const t = home.threads.find((th) => th.id === item.id);
+          if (t) sections.push(`EMAIL — ${t.subject}: ${clipText(t.snippet, 300)}`);
+        }
+      }
+      return sections.join("\n\n") || "No readable material on the canvas.";
+    }
+  ),
+  tool(
+    "deepwork_set_backbone",
+    "Save the study 'backbone' — the key concepts of the material — so it shows in the Study " +
+      "card. Call after reading the material with deepwork_read_material. Each concept needs a " +
+      "short title and a one/two sentence summary. Concepts start at 0% mastery.",
+    obj({
+      intent: str("the study goal this backbone serves"),
+      concepts: {
+        type: "array",
+        description: "the key concepts, in study order",
+        items: obj({ title: str("short concept name"), summary: str("1-2 sentence explanation") }, ["title", "summary"]),
+      },
+      overall: num("optional overall readiness 0-100 (default 0)"),
+    }, ["intent", "concepts"]),
+    async (a) => {
+      const concepts = Array.isArray(a.concepts)
+        ? a.concepts
+            .map((c) => (c && typeof c === "object" ? (c as Record<string, unknown>) : null))
+            .filter(Boolean)
+            .map((c) => ({ title: String(c!.title ?? "Concept"), summary: String(c!.summary ?? "") }))
+        : [];
+      if (!concepts.length) return "No concepts provided.";
+      useDeepWork.getState().setBackbone(String(a.intent ?? ""), concepts, a.overall != null ? Number(a.overall) : undefined);
+      return `Saved a backbone of ${concepts.length} concept(s).`;
+    }
+  ),
+  tool(
+    "deepwork_set_mastery",
+    "Update the user's per-concept mastery (0-100) and optionally the overall readiness, based " +
+      "on tutoring and quiz performance. Match concepts by their title.",
+    obj({
+      updates: {
+        type: "array",
+        description: "mastery updates",
+        items: obj({ concept: str("concept title"), mastery: num("mastery 0-100") }, ["concept", "mastery"]),
+      },
+      overall: num("optional overall readiness 0-100"),
+    }, ["updates"]),
+    async (a) => {
+      const updates = Array.isArray(a.updates)
+        ? a.updates
+            .map((u) => (u && typeof u === "object" ? (u as Record<string, unknown>) : null))
+            .filter(Boolean)
+            .map((u) => ({ concept: String(u!.concept ?? ""), mastery: Number(u!.mastery) || 0 }))
+        : [];
+      useDeepWork.getState().setMastery(updates, a.overall != null ? Number(a.overall) : undefined);
+      return "Updated mastery.";
+    }
+  ),
+  tool(
     "add_email_label",
     "Add a custom topic label the AI will use when auto-labeling incoming emails.",
     obj({ label: str("the topic label, e.g. 'Logiscool Python'") }, ["label"]),
@@ -865,10 +962,22 @@ export const READ_TOOLS = new Set([
   "list_events", "find_free_slots", "search_mail", "read_mail",
   "list_tags", "list_facets", // added in phase 3
   "list_pdfs", "read_pdf", "search_pdf", "find_in_pdf",
+  "deepwork_read_material",
 ]);
 
 export function isReadTool(name: string): boolean {
   return READ_TOOLS.has(name);
+}
+
+/**
+ * Study tools that write only to the local Deep Work study state (backbone,
+ * mastery, intent). They auto-apply during the agent loop instead of becoming
+ * proposal cards, so the tutoring chat stays smooth — nothing here is outbound.
+ */
+export const STUDY_AUTO = new Set(["deepwork_set_backbone", "deepwork_set_mastery", "deepwork_set_intent"]);
+
+export function isAutoTool(name: string): boolean {
+  return STUDY_AUTO.has(name);
 }
 
 export function isMutationTool(name: string): boolean {
@@ -949,6 +1058,9 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "detach_pdf": return d("Detach PDF from note", `${pdfName(s("pdfId"))} ✕ ${noteTitle(s("noteId"))}`);
     case "deepwork_remove": return d("Remove from Deep Work", s("id"));
     case "deepwork_set_intent": return d("Set Deep Work intent", s("intent"));
+    case "deepwork_read_material": return d("Read Deep Work material", "notes, PDFs, highlights");
+    case "deepwork_set_backbone": return d("Build study backbone", Array.isArray(a.concepts) ? `${a.concepts.length} concepts` : "");
+    case "deepwork_set_mastery": return d("Update mastery", Array.isArray(a.updates) ? `${a.updates.length} concept(s)` : "");
     case "add_email_label": return d("Add email label", s("label"));
     case "remove_email_label": return d("Remove email label", s("label"));
     // Filtering & navigation

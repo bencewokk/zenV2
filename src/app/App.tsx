@@ -9,6 +9,7 @@ import { ChatPanel } from "@/features/ai/ChatPanel";
 import { Home } from "@/features/home/Home";
 import { useHome } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { FocusTimerButton } from "@/features/home/deepwork/FocusTimerButton";
 import { CalendarPanel } from "@/features/google/CalendarPanel";
 import { MailPanel } from "@/features/google/MailPanel";
 import { useNotes } from "@/features/notes/store";
@@ -20,6 +21,11 @@ import { usePdfs } from "@/features/pdfs/store";
  * Phase 1 shell — a thin composer of feature modules (the anti-ui.py).
  * Sidebar (tree) + FilterBar | Editor + NoteMeta, StatusBar across the bottom.
  */
+/** Shared base for every header button so they share one height (h-7). */
+const HEADER_BTN = "zen-pressable inline-flex h-7 items-center rounded-[6px] border px-2.5 text-xs";
+const HEADER_BTN_ACTIVE = "border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]";
+const HEADER_BTN_IDLE = "border-[var(--border)] bg-[var(--bg-elev)] text-[var(--text-dim)] hover:text-[var(--text)]";
+
 export function App() {
   const load = useNotes((s) => s.load);
   const loaded = useNotes((s) => s.loaded);
@@ -27,6 +33,7 @@ export function App() {
   const selectedId = useNotes((s) => s.selectedId);
   const select = useNotes((s) => s.select);
   const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
+  const sidebarCollapsed = useWorkspace((s) => s.sidebarCollapsed);
   const setWs = useWorkspace((s) => s.set);
   const manualDeepWork = useHome((s) => s.manualDeepWork);
   const setManualDeepWork = useHome((s) => s.setManualDeepWork);
@@ -105,7 +112,8 @@ export function App() {
   const showHome = !note && surface === "home";
   const deepWork = showHome && manualDeepWork;
   const zen = deepWork && zenMode;
-  const sidebarVisible = !showAdmin && !deepWork;
+  const sidebarApplicable = !showAdmin && !deepWork;
+  const sidebarVisible = sidebarApplicable && !sidebarCollapsed;
   const noteList = Object.values(notes);
   const inboxCount = noteList.filter((item) => item.inbox).length;
   const weeklyActivity = noteList.filter((item) => Date.now() - item.updatedAt < 7 * 24 * 60 * 60 * 1000).length;
@@ -145,21 +153,12 @@ export function App() {
       style={shellStyle}
       className={`zen-shell flex h-full flex-col ${showHome ? "is-home" : ""} ${showAdmin ? "is-admin" : ""} ${deepWork ? "is-deep-work" : ""}`}
     >
-      <div className="zen-shell-backdrop" aria-hidden="true">
-        <div className="zen-bg-split" />
-        <div className="zen-bg-eclipse" />
-        <div className="zen-bg-dots" />
-        <div className="zen-bg-contours" />
-        <div className="zen-bg-orbit">
-          <div className="zen-bg-orbit-node" />
-        </div>
-      </div>
 
       <AuroraOverlay />
 
       {!zen && <header className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
         <button
-          className="zen-pressable font-semibold tracking-tight hover:text-[var(--accent)]"
+          className="zen-pressable inline-flex h-7 items-center font-semibold tracking-tight text-[var(--text)] hover:text-[var(--accent)]"
           onClick={() => {
             select(null);
             setSurface("home");
@@ -171,12 +170,17 @@ export function App() {
           Zen
         </button>
         <div className="flex items-center gap-2">
+          {sidebarApplicable && (
+            <button
+              className={`${HEADER_BTN} ${sidebarVisible ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
+              onClick={() => setWs({ sidebarCollapsed: !sidebarCollapsed })}
+              title={sidebarVisible ? "Hide notes" : "Show notes"}
+            >
+              Notes
+            </button>
+          )}
           <button
-            className={`zen-pressable rounded-[6px] border px-2.5 py-1 text-xs ${
-              showHome && deepWork
-                ? "border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]"
-                : "border-[var(--border)] bg-[var(--bg-elev)] text-[var(--text-dim)] hover:text-[var(--text)]"
-            }`}
+            className={`${HEADER_BTN} ${showHome && deepWork ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
             onClick={() => {
               if (deepWork) {
                 setManualDeepWork(false);
@@ -197,11 +201,7 @@ export function App() {
           ] as const).map(([v, label]) => (
             <button
               key={v}
-              className={`zen-pressable rounded-[6px] border px-2.5 py-1 text-xs ${
-                showAdmin && adminFocus === v
-                  ? "border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]"
-                  : "border-[var(--border)] bg-[var(--bg-elev)] text-[var(--text-dim)] hover:text-[var(--text)]"
-              }`}
+              className={`${HEADER_BTN} ${showAdmin && adminFocus === v ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
               onClick={() => {
                 select(null);
                 setSurface("admin");
@@ -213,9 +213,10 @@ export function App() {
               {label}
             </button>
           ))}
+          {deepWork && <FocusTimerButton />}
           {deepWork && (
             <button
-              className="zen-pressable rounded-[6px] border border-[var(--border)] bg-[var(--bg-elev)] px-2 py-1 text-xs leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
+              className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
               onClick={() => setZenMode(true)}
               title="Zen mode — show only sources"
               aria-label="Enter zen mode"
@@ -224,7 +225,7 @@ export function App() {
             </button>
           )}
           <button
-            className="zen-pressable rounded-[6px] border border-[var(--border)] bg-[var(--bg-elev)] px-2.5 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
+            className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
             onClick={() => useAI.getState().toggle()}
             title="Toggle AI panel"
           >

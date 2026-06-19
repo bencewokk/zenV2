@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePdfs } from "@/features/pdfs/store";
+import { useHome } from "@/features/home/store";
 import type { PdfAnnotation } from "@/shared/lib/types";
 
 const EMPTY: PdfAnnotation[] = []; // stable empty ref to avoid re-renders
@@ -92,6 +93,7 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
         <button className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 disabled:opacity-40" onClick={() => go(page + 1)} disabled={!!pageCount && page >= pageCount}>›</button>
         <span className="mx-1 h-4 w-px bg-[var(--border)]" />
         <button className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--accent)]" onClick={addBookmark} title="Bookmark this page">＋ Bookmark</button>
+        <button className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--text-dim)] hover:text-[var(--text)]" onClick={() => useHome.getState().launchDeepWork({ type: "pdf", id: pdfId })} title="Add this PDF to Deep Work">⊕ Deep Work</button>
         <span className="mx-1 h-4 w-px bg-[var(--border)]" />
         <input
           value={query}

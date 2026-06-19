@@ -8,11 +8,20 @@ import type { HomeTarget } from "@/features/home/store";
  * Persisted to localStorage.
  */
 
-export interface AiReadiness {
-  percent: number; // 0..100, AI-assessed
+/** One key concept in the study backbone, with its own mastery score. */
+export interface StudyConcept {
+  id: string;
+  title: string;
   summary: string;
-  next: string[];
-  assessedAt: number;
+  mastery: number; // 0..100, AI-tracked from tutoring/quizzes
+}
+
+/** The backbone of the study material: the key concepts the AI synthesized. */
+export interface StudyBackbone {
+  intent: string; // goal snapshot the backbone serves
+  concepts: StudyConcept[];
+  overall: number; // 0..100 overall readiness
+  generatedAt: number;
 }
 
 export interface WindowGeom {
@@ -43,7 +52,7 @@ interface PersistedDeepWork {
   items: HomeTarget[];
   windows: Record<string, WindowGeom>;
   intent: string;
-  ai: AiReadiness | null;
+  backbone: StudyBackbone | null;
   focusMs: number;
   sessions: number;
   headerCollapsed: boolean;
@@ -53,7 +62,7 @@ interface PersistedDeepWork {
 const KEY = "zen.deepwork.v2";
 
 function read(): PersistedDeepWork {
-  const empty: PersistedDeepWork = { items: [], windows: {}, intent: "", ai: null, focusMs: 0, sessions: 0, headerCollapsed: false, zenMode: false };
+  const empty: PersistedDeepWork = { items: [], windows: {}, intent: "", backbone: null, focusMs: 0, sessions: 0, headerCollapsed: false, zenMode: false };
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) return { ...empty, ...(JSON.parse(raw) as Partial<PersistedDeepWork>) };
@@ -68,7 +77,9 @@ interface DeepWorkState extends PersistedDeepWork {
   removeItem: (t: HomeTarget) => void;
   setWindow: (key: string, geom: WindowGeom) => void;
   setIntent: (intent: string) => void;
-  setAi: (ai: AiReadiness | null) => void;
+  setBackbone: (intent: string, concepts: { title: string; summary: string }[], overall?: number) => void;
+  setMastery: (updates: { concept: string; mastery: number }[], overall?: number) => void;
+  clearBackbone: () => void;
   logFocus: (ms: number) => void;
   setHeaderCollapsed: (collapsed: boolean) => void;
   setZenMode: (zen: boolean) => void;
@@ -82,7 +93,7 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
     try {
       localStorage.setItem(
         KEY,
-        JSON.stringify({ items: s.items, windows: s.windows, intent: s.intent, ai: s.ai, focusMs: s.focusMs, sessions: s.sessions, headerCollapsed: s.headerCollapsed, zenMode: s.zenMode })
+        JSON.stringify({ items: s.items, windows: s.windows, intent: s.intent, backbone: s.backbone, focusMs: s.focusMs, sessions: s.sessions, headerCollapsed: s.headerCollapsed, zenMode: s.zenMode })
       );
     } catch {
       /* ignore */
@@ -122,9 +133,42 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
       persist({ intent });
     },
 
-    setAi(ai) {
-      set({ ai });
-      persist({ ai });
+    setBackbone(intent, concepts, overall) {
+      const backbone: StudyBackbone = {
+        intent,
+        concepts: concepts.map((c) => ({
+          id: crypto.randomUUID(),
+          title: c.title,
+          summary: c.summary,
+          mastery: 0,
+        })),
+        overall: clampPercent(overall ?? 0),
+        generatedAt: Date.now(),
+      };
+      set({ backbone, intent });
+      persist({ backbone, intent });
+    },
+
+    setMastery(updates, overall) {
+      const backbone = get().backbone;
+      if (!backbone) return;
+      const norm = (s: string) => s.toLowerCase().trim();
+      const concepts = backbone.concepts.map((c) => {
+        const hit = updates.find((u) => norm(u.concept) === norm(c.title) || u.concept === c.id);
+        return hit ? { ...c, mastery: clampPercent(hit.mastery) } : c;
+      });
+      const next: StudyBackbone = {
+        ...backbone,
+        concepts,
+        overall: overall != null ? clampPercent(overall) : backbone.overall,
+      };
+      set({ backbone: next });
+      persist({ backbone: next });
+    },
+
+    clearBackbone() {
+      set({ backbone: null });
+      persist({ backbone: null });
     },
 
     logFocus(ms) {
@@ -161,6 +205,10 @@ export function fmtDuration(ms: number): string {
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+export function clampPercent(n: unknown): number {
+  return Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 }
 
 export function readinessColor(percent: number): string {

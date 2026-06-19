@@ -9,6 +9,7 @@ type AdminFocus = "calendar" | "mail";
 
 type PersistedWorkspace = {
   sidebarWidth: number;
+  sidebarCollapsed: boolean;
   lastOpenId: string | null;
   surface: Surface;
   adminFocus: AdminFocus;
@@ -23,6 +24,7 @@ const KEY = "zen.workspace.v1";
 
 const DEFAULTS: PersistedWorkspace = {
   sidebarWidth: 280,
+  sidebarCollapsed: false,
   lastOpenId: null,
   surface: "home",
   adminFocus: "calendar",
@@ -43,13 +45,14 @@ const initial = read();
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   sidebarWidth: initial.sidebarWidth,
+  sidebarCollapsed: initial.sidebarCollapsed,
   lastOpenId: initial.lastOpenId,
   surface: initial.surface,
   adminFocus: initial.adminFocus,
   adminMailId: initial.adminMailId,
   set(fields) {
     set(fields);
-    const { sidebarWidth, lastOpenId, surface, adminFocus, adminMailId } = get();
-    localStorage.setItem(KEY, JSON.stringify({ sidebarWidth, lastOpenId, surface, adminFocus, adminMailId }));
+    const { sidebarWidth, sidebarCollapsed, lastOpenId, surface, adminFocus, adminMailId } = get();
+    localStorage.setItem(KEY, JSON.stringify({ sidebarWidth, sidebarCollapsed, lastOpenId, surface, adminFocus, adminMailId }));
   },
 }));

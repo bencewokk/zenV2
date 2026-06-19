@@ -10,7 +10,7 @@ import {
 } from "@/features/home/store";
 import { DeepWorkV2 } from "@/features/home/deepwork/DeepWorkV2";
 import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
-import { fmtClock, useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { fmtClock } from "@/features/home/deepwork/deepworkStore";
 import { useNotes } from "@/features/notes/store";
 import { docToText } from "@/shared/lib/docText";
 import { notify } from "@/shared/ui/notify";
@@ -85,7 +85,6 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
     [hiddenTargets, now, threads]
   );
 
-  const zenMode = useDeepWork((s) => s.zenMode);
   const triage = useMemo(() => buildTriageItems(visibleNotes, visibleThreads, visibleEvents).slice(0, 10), [visibleNotes, visibleThreads, visibleEvents]);
   const matchedThreadLabels = useHome((s) => s.matchedThreadLabels);
   const groups = useMemo(() => buildActionGroups(visibleNotes, visibleEvents, visibleThreads, matchedThreadLabels), [visibleEvents, visibleNotes, visibleThreads, matchedThreadLabels]);
@@ -196,26 +195,13 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
 
   if (deepWork) {
     return (
-      <section className={`relative h-full min-h-0 overflow-hidden ${zenMode ? "p-0" : "px-4 py-3 sm:px-6"}`}>
-        <div className="h-full min-h-0">
-          <div className="zen-home-center h-full min-h-0">
-            <SurfaceCard
-              className={`zen-focus-surface flex h-full min-h-0 flex-col overflow-hidden ${zenMode ? "rounded-none border-0 p-2" : "p-5 sm:p-6"}`}
-              style={zenMode ? { borderColor: "transparent", boxShadow: "none" } : { borderColor: "#60A5FA", boxShadow: "0 0 0 1px #60A5FA20" }}
-            >
-              <DeepWorkV2
-                notes={visibleNotes}
-                events={visibleEvents}
-                threads={visibleThreads}
-                sessionActive={!!session}
-                sessionRemaining={sessionRemaining}
-                sessionProgress={sessionProgress}
-                onStartSession={startSession}
-                onEndSession={endSession}
-              />
-            </SurfaceCard>
-          </div>
-        </div>
+      <section className="relative h-full min-h-0 overflow-hidden">
+        <DeepWorkV2
+          notes={visibleNotes}
+          events={visibleEvents}
+          threads={visibleThreads}
+          sessionActive={!!session}
+        />
       </section>
     );
   }

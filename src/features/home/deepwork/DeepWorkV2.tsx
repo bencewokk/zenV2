@@ -1,19 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Note, PdfDoc } from "@/shared/lib/types";
 import type { CalEvent } from "@/services/google/calendar";
 import type { MailThread } from "@/services/google/gmail";
-import { notify } from "@/shared/ui/notify";
 import { useHome, type HomeTarget } from "@/features/home/store";
 import { usePdfs } from "@/features/pdfs/store";
 import {
-  fmtDuration,
-  readinessColor,
   targetKey,
   useDeepWork,
-  type AiReadiness,
   type WindowGeom,
 } from "@/features/home/deepwork/deepworkStore";
-import { assessReadiness } from "@/features/home/deepwork/aiReadiness";
 import { WindowFrame } from "@/features/home/deepwork/windows/WindowFrame";
 import { NoteWindow } from "@/features/home/deepwork/windows/NoteWindow";
 import { EmailWindow } from "@/features/home/deepwork/windows/EmailWindow";
@@ -128,44 +123,23 @@ function relatedCandidates(
   return [...noteHits, ...evHits, ...mailHits, ...pdfHits];
 }
 
-const SECTION_LABEL = "text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--text-dim)]";
 
 export interface DeepWorkV2Props {
   notes: Record<string, Note>;
   events: CalEvent[];
   threads: MailThread[];
   sessionActive: boolean;
-  sessionRemaining: number;
-  sessionProgress: number;
-  onStartSession: (min: number) => void;
-  onEndSession: () => void;
-}
-
-function fmtClock(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 export function DeepWorkV2({
-  notes, events, threads,
-  sessionActive, sessionRemaining, sessionProgress, onStartSession, onEndSession,
+  notes, events, threads, sessionActive,
 }: DeepWorkV2Props) {
   const items = useDeepWork((s) => s.items);
   const windows = useDeepWork((s) => s.windows);
   const setWindow = useDeepWork((s) => s.setWindow);
   const addItem = useDeepWork((s) => s.addItem);
   const removeItem = useDeepWork((s) => s.removeItem);
-  const intent = useDeepWork((s) => s.intent);
-  const setIntent = useDeepWork((s) => s.setIntent);
-  const ai = useDeepWork((s) => s.ai);
-  const setAi = useDeepWork((s) => s.setAi);
-  const focusMs = useDeepWork((s) => s.focusMs);
-  const sessions = useDeepWork((s) => s.sessions);
   const logFocus = useDeepWork((s) => s.logFocus);
-  const headerCollapsed = useDeepWork((s) => s.headerCollapsed);
-  const setHeaderCollapsed = useDeepWork((s) => s.setHeaderCollapsed);
   const zenMode = useDeepWork((s) => s.zenMode);
   const setZenMode = useDeepWork((s) => s.setZenMode);
   const matchedLabels = useHome((s) => s.matchedThreadLabels);
@@ -200,81 +174,8 @@ export function DeepWorkV2({
     }
   }, [sessionActive, logFocus]);
 
-  // Resolve the curated set against current data for AI assessment.
-  const materials = useMemo(() => {
-    const mNotes: Note[] = [];
-    const mEvents: CalEvent[] = [];
-    const mEmails: MailThread[] = [];
-    for (const item of items) {
-      if (item.type === "note" && notes[item.id]) mNotes.push(notes[item.id]);
-      else if (item.type === "event") {
-        const ev = events.find((e) => e.id === item.id);
-        if (ev) mEvents.push(ev);
-      } else if (item.type === "mail") {
-        const th = threads.find((t) => t.id === item.id);
-        if (th) mEmails.push(th);
-      }
-    }
-    return { notes: mNotes, events: mEvents, emails: mEmails };
-  }, [items, notes, events, threads]);
-
-  const [assessing, setAssessing] = useState(false);
-  async function runAssessment(intentArg?: string) {
-    const goal = (intentArg ?? intent).trim();
-    if (!goal || assessing) return;
-    setAssessing(true);
-    try {
-      const result = await assessReadiness(goal, { ...materials, focusMs, sessions });
-      setAi(result);
-    } catch (err) {
-      notify.error(err instanceof Error ? err.message : "Could not assess readiness");
-    } finally {
-      setAssessing(false);
-    }
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      {!zenMode && (
-        <div className="shrink-0 space-y-3">
-          <button
-            className="zen-pressable flex items-center gap-2 text-left text-[var(--text-dim)] hover:text-[var(--text)]"
-            onClick={() => setHeaderCollapsed(!headerCollapsed)}
-            title={headerCollapsed ? "Expand header" : "Collapse header"}
-          >
-            <span className="text-xs">{headerCollapsed ? "▸" : "▾"}</span>
-            <span className={SECTION_LABEL}>Session</span>
-          </button>
-          {!headerCollapsed && (
-            <>
-              <div className="flex flex-wrap items-start gap-3">
-                <IntentBar
-                  intent={intent}
-                  assessing={assessing}
-                  onCommit={setIntent}
-                  onAssess={(value) => void runAssessment(value)}
-                />
-                <SessionTimer
-                  sessionActive={sessionActive}
-                  sessionRemaining={sessionRemaining}
-                  sessionProgress={sessionProgress}
-                  onStartSession={onStartSession}
-                  onEndSession={onEndSession}
-                />
-              </div>
-              <AiReadinessPanel
-                ai={ai}
-                intent={intent}
-                assessing={assessing}
-                focusMs={focusMs}
-                sessions={sessions}
-                onAssess={() => void runAssessment()}
-              />
-            </>
-          )}
-        </div>
-      )}
-
       <div className="zen-panel-scroll relative min-h-0 flex-1 overflow-auto rounded-[16px] border border-[rgba(255,255,255,0.06)] bg-[rgba(0,0,0,0.12)]">
         {zenMode && (
           <button
@@ -424,151 +325,4 @@ function RelatedTagMenu({
 
 function Missing({ label }: { label: string }) {
   return <div className="p-4 text-sm text-[var(--text-dim)]">{label}</div>;
-}
-
-// ── intent + AI readiness ────────────────────────────────────────────────────
-
-function IntentBar({
-  intent, assessing, onCommit, onAssess,
-}: {
-  intent: string;
-  assessing: boolean;
-  onCommit: (value: string) => void;
-  onAssess: (value: string) => void;
-}) {
-  const [value, setValue] = useState(intent);
-  useEffect(() => setValue(intent), [intent]);
-  return (
-    <form
-      className="min-w-0 flex-1 space-y-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onCommit(value);
-        onAssess(value);
-      }}
-    >
-      <div className={SECTION_LABEL}>What do you want to do?</div>
-      <div className="flex gap-2">
-        <input
-          className="min-w-0 flex-1 rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-sm text-[var(--text)] outline-none transition placeholder:text-[rgba(232,233,237,0.34)] focus:border-[#60A5FA]"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={() => onCommit(value)}
-          placeholder="e.g. Be ready for the Python exam — finish the practice sets"
-        />
-        <button
-          type="submit"
-          disabled={!value.trim() || assessing}
-          className="zen-pressable shrink-0 rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black hover:brightness-105 disabled:opacity-60"
-        >
-          {assessing ? "Assessing…" : "Assess"}
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function AiReadinessPanel({
-  ai, intent, assessing, focusMs, sessions, onAssess,
-}: {
-  ai: AiReadiness | null;
-  intent: string;
-  assessing: boolean;
-  focusMs: number;
-  sessions: number;
-  onAssess: () => void;
-}) {
-  const color = ai ? readinessColor(ai.percent) : "#60A5FA";
-  const hasIntent = !!intent.trim();
-  return (
-    <div className="space-y-3 rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-left">
-      <div className="flex items-center justify-between gap-3">
-        <span className={SECTION_LABEL}>AI Readiness</span>
-        <div className="flex items-center gap-3">
-          {ai && <span className="text-2xl font-bold tabular-nums" style={{ color }}>{ai.percent}%</span>}
-          <button
-            onClick={onAssess}
-            disabled={assessing || !hasIntent}
-            className="zen-pressable rounded-[10px] border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
-          >
-            {assessing ? "…" : ai ? "Reassess" : "Assess"}
-          </button>
-        </div>
-      </div>
-
-      {ai ? (
-        <>
-          <div className="h-2 overflow-hidden rounded-full bg-[rgba(255,255,255,0.07)]">
-            <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${ai.percent}%`, background: color }} />
-          </div>
-          {ai.summary && <div className="text-sm text-[rgba(232,233,237,0.86)]">{ai.summary}</div>}
-          {ai.next.length > 0 && (
-            <ul className="space-y-1">
-              {ai.next.map((step, i) => (
-                <li key={i} className="flex gap-2 text-sm text-[var(--text-dim)]">
-                  <span style={{ color }}>→</span>
-                  <span>{step}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      ) : (
-        <div className="text-sm text-[var(--text-dim)]">
-          {hasIntent ? "Assess to see how ready you are for this goal." : "Add items and tell the AI what you want to do, then assess."}
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--text-dim)]">
-        <span className="text-[var(--text)]">{fmtDuration(focusMs)}</span>
-        <span>focused</span>
-        <span>·</span>
-        <span><span className="text-[var(--text)]">{sessions}</span> sessions</span>
-      </div>
-    </div>
-  );
-}
-
-// ── focus timer ──────────────────────────────────────────────────────────────
-
-function SessionTimer({
-  sessionActive, sessionRemaining, sessionProgress, onStartSession, onEndSession,
-}: {
-  sessionActive: boolean;
-  sessionRemaining: number;
-  sessionProgress: number;
-  onStartSession: (min: number) => void;
-  onEndSession: () => void;
-}) {
-  if (sessionActive) {
-    return (
-      <div className="min-w-[220px] rounded-[16px] bg-[rgba(96,165,250,0.06)] px-4 py-3 text-left">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-3xl font-semibold tabular-nums text-[var(--text)]">{fmtClock(sessionRemaining)}</span>
-          <button
-            className="rounded-[12px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-dim)] hover:text-[var(--text)]"
-            onClick={onEndSession}
-          >
-            End session
-          </button>
-        </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.07)]">
-          <div className="h-full rounded-full bg-[#60A5FA] transition-[width] duration-1000" style={{ width: `${sessionProgress}%` }} />
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-2 pt-6">
-      {[25, 50, 90].map((d) => (
-        <button
-          key={d}
-          onClick={() => onStartSession(d)}
-          className="zen-pressable rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[rgba(255,255,255,0.05)]"
-        >
-          {d}m
-        </button>
-      ))}
-    </div>
-  );
 }
