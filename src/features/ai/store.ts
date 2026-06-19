@@ -339,7 +339,10 @@ export const useAI = create<AIState>((set, get) => ({
       const result = (e as Error).message || "failed";
       set((s) => ({
         proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "error", result } : x)),
+        // Record the failure inline so the card can leave the bottom of the chat.
+        turns: [...s.turns, { role: "tool", content: `✕ ${p.title}: ${p.detail} — ${result}` }],
       }));
+      syncActive();
       notify.error(`${p.title} failed: ${result}`);
     }
   },

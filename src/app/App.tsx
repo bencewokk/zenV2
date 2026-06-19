@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Toaster } from "sonner";
-import { Editor } from "@/features/notes/Editor";
 import { Sidebar } from "@/features/notes/Sidebar";
-import { NoteMeta } from "@/features/notes/NoteMeta";
+import { NoteSurface } from "@/features/notes/NoteSurface";
 import { FilterBar } from "@/features/filtering/FilterBar";
 import { StatusBar } from "@/shared/ui/StatusBar";
 import { AuroraOverlay } from "@/shared/ui/AuroraOverlay";
@@ -267,17 +266,14 @@ export function App() {
           }}
         />
 
-        <main className={`min-w-0 flex-1 ${showAdmin || deepWork ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`min-w-0 flex-1 ${note || showAdmin || deepWork ? "overflow-hidden" : "overflow-y-auto"}`}>
           {/* Keyed by surface so switching views re-mounts and crossfades in. */}
           <div
             key={note ? "note" : showAdmin ? "admin" : deepWork ? (zen ? "zen" : "deep") : "home"}
             className="zen-anim-fade h-full min-h-0"
           >
             {note ? (
-              <div className="mx-auto w-full max-w-3xl px-8 py-6">
-                <NoteMeta note={note} />
-                <Editor noteId={note.id} />
-              </div>
+              <NoteSurface note={note} />
             ) : showAdmin ? (
               <AdminPanel focus={adminFocus} mailId={adminMailId} />
             ) : (

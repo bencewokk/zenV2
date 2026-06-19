@@ -1,13 +1,20 @@
 import { create } from "zustand";
-import type { PdfDoc } from "@/shared/lib/types";
+import type { PdfDoc, PdfAnnotation } from "@/shared/lib/types";
 import { pdfStore } from "@/services/pdfStore";
+import { extractPages } from "@/services/pdf/pdfjs";
 import { notify } from "@/shared/ui/notify";
 
 // Object URLs are created lazily and cached for the session (revoked on remove).
 const urlCache = new Map<string, string>();
+// Per-id page text, cached for the session once fetched/backfilled.
+const pagesCache = new Map<string, string[]>();
+// In-flight backfills, so concurrent callers share one extraction.
+const pagesInFlight = new Map<string, Promise<string[] | null>>();
 
 interface PdfState {
   pdfs: Record<string, PdfDoc>;
+  /** Reactive cache of persisted highlights, keyed by pdf id. */
+  annotations: Record<string, PdfAnnotation[]>;
   loaded: boolean;
   load: () => Promise<void>;
   add: (file: File, tags?: string[]) => Promise<string | null>;
@@ -16,10 +23,17 @@ interface PdfState {
   remove: (id: string) => Promise<void>;
   /** Lazily fetch the blob and return a cached object URL. */
   urlFor: (id: string) => Promise<string | null>;
+  /** Per-page text, extracting + persisting on first access (lazy backfill). */
+  pagesFor: (id: string) => Promise<string[] | null>;
+  /** Load a PDF's highlights into the reactive cache (no-op if already loaded). */
+  loadAnnotations: (id: string) => Promise<void>;
+  addAnnotation: (id: string, ann: PdfAnnotation) => Promise<void>;
+  removeAnnotation: (id: string, annId: string) => Promise<void>;
 }
 
 export const usePdfs = create<PdfState>((set, get) => ({
   pdfs: {},
+  annotations: {},
   loaded: false,
 
   async load() {
@@ -49,6 +63,22 @@ export const usePdfs = create<PdfState>((set, get) => ({
       await pdfStore.put({ ...doc, blob: file });
       set((s) => ({ pdfs: { ...s.pdfs, [doc.id]: doc } }));
       notify.success(`Added "${doc.name}"`);
+      // Extract page text in the background so the AI can read it and the
+      // viewer can search it; failure is non-fatal (backfilled later).
+      void (async () => {
+        try {
+          const buf = await file.arrayBuffer();
+          const pages = await extractPages(buf);
+          await pdfStore.putPages(doc.id, pages);
+          pagesCache.set(doc.id, pages);
+          set((s) => {
+            const cur = s.pdfs[doc.id];
+            return cur ? { pdfs: { ...s.pdfs, [doc.id]: { ...cur, pageCount: pages.length } } } : {};
+          });
+        } catch {
+          /* extraction failed — pagesFor will retry on demand */
+        }
+      })();
       return doc.id;
     } catch (e) {
       notify.error((e as Error).message || "Could not store PDF");
@@ -76,10 +106,13 @@ export const usePdfs = create<PdfState>((set, get) => ({
     await pdfStore.remove(id);
     const url = urlCache.get(id);
     if (url) { URL.revokeObjectURL(url); urlCache.delete(id); }
+    pagesCache.delete(id);
     set((s) => {
       const pdfs = { ...s.pdfs };
       delete pdfs[id];
-      return { pdfs };
+      const annotations = { ...s.annotations };
+      delete annotations[id];
+      return { pdfs, annotations };
     });
   },
 
@@ -91,5 +124,63 @@ export const usePdfs = create<PdfState>((set, get) => ({
     const url = URL.createObjectURL(blob);
     urlCache.set(id, url);
     return url;
+  },
+
+  async pagesFor(id) {
+    const cached = pagesCache.get(id);
+    if (cached) return cached;
+    const inflight = pagesInFlight.get(id);
+    if (inflight) return inflight;
+
+    const job = (async (): Promise<string[] | null> => {
+      // Fast path: already extracted and persisted.
+      const stored = await pdfStore.getPages(id);
+      if (stored) {
+        pagesCache.set(id, stored.pages);
+        return stored.pages;
+      }
+      // Lazy backfill: extract now, persist, patch pageCount.
+      const blob = await pdfStore.getBlob(id);
+      if (!blob) return null;
+      try {
+        const pages = await extractPages(await blob.arrayBuffer());
+        await pdfStore.putPages(id, pages);
+        pagesCache.set(id, pages);
+        set((s) => {
+          const cur = s.pdfs[id];
+          return cur ? { pdfs: { ...s.pdfs, [id]: { ...cur, pageCount: pages.length } } } : {};
+        });
+        return pages;
+      } catch {
+        return null;
+      }
+    })();
+
+    pagesInFlight.set(id, job);
+    try {
+      return await job;
+    } finally {
+      pagesInFlight.delete(id);
+    }
+  },
+
+  async loadAnnotations(id) {
+    if (get().annotations[id]) return;
+    const list = await pdfStore.getAnnotations(id);
+    set((s) => ({ annotations: { ...s.annotations, [id]: list } }));
+  },
+
+  async addAnnotation(id, ann) {
+    const cur = get().annotations[id] ?? (await pdfStore.getAnnotations(id));
+    const next = [...cur, ann];
+    await pdfStore.putAnnotations(id, next);
+    set((s) => ({ annotations: { ...s.annotations, [id]: next } }));
+  },
+
+  async removeAnnotation(id, annId) {
+    const cur = get().annotations[id] ?? (await pdfStore.getAnnotations(id));
+    const next = cur.filter((a) => a.id !== annId);
+    await pdfStore.putAnnotations(id, next);
+    set((s) => ({ annotations: { ...s.annotations, [id]: next } }));
   },
 }));

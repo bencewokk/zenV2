@@ -19,6 +19,7 @@ function newNote(parentId: string | null, order: number): Note {
     unit: null,
     tags: [],
     inbox: true,
+    pdfIds: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -38,6 +39,8 @@ interface NotesState {
   saveContent: (id: string, content: JSONContent) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
   saveMeta: (id: string, fields: Partial<Note>) => Promise<void>;
+  attachPdf: (id: string, pdfId: string) => Promise<void>;
+  detachPdf: (id: string, pdfId: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
   toggleCollapse: (id: string) => void;
   move: (id: string, parentId: string | null, order: number) => Promise<void>;
@@ -55,7 +58,8 @@ export const useNotes = create<NotesState>((set, get) => ({
   async load() {
     const all = await store.all();
     const map: Record<string, Note> = {};
-    for (const n of all) map[n.id] = n;
+    // Tolerate notes persisted before `pdfIds` existed.
+    for (const n of all) map[n.id] = { ...n, pdfIds: n.pdfIds ?? [] };
     set({ notes: map, loaded: true });
   },
 
@@ -100,6 +104,22 @@ export const useNotes = create<NotesState>((set, get) => ({
     const note = get().notes[id];
     if (!note) return;
     const updated = { ...note, ...fields, updatedAt: Date.now() };
+    await store.put(updated);
+    set((s) => ({ notes: { ...s.notes, [id]: updated } }));
+  },
+
+  async attachPdf(id, pdfId) {
+    const note = get().notes[id];
+    if (!note || note.pdfIds.includes(pdfId)) return;
+    const updated = { ...note, pdfIds: [...note.pdfIds, pdfId], updatedAt: Date.now() };
+    await store.put(updated);
+    set((s) => ({ notes: { ...s.notes, [id]: updated } }));
+  },
+
+  async detachPdf(id, pdfId) {
+    const note = get().notes[id];
+    if (!note || !note.pdfIds.includes(pdfId)) return;
+    const updated = { ...note, pdfIds: note.pdfIds.filter((p) => p !== pdfId), updatedAt: Date.now() };
     await store.put(updated);
     set((s) => ({ notes: { ...s.notes, [id]: updated } }));
   },

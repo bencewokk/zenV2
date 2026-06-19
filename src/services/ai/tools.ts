@@ -9,7 +9,7 @@ import { allTags, facetValues } from "@/features/filtering/filter";
 import { flattenTree } from "@/features/notes/tree";
 import { docToText } from "@/shared/lib/docText";
 import {
-  recall, formatRecall, updateProfile,
+  recall, formatRecall, findInPdf, updateProfile,
   loadMemories, saveMemory, deleteMemory,
 } from "@/services/memory";
 import { isSignedIn } from "@/services/google/auth";
@@ -165,7 +165,8 @@ const TOOLS: ToolImpl[] = [
       "asks about a concept rather than an exact phrase. Returns relevant notes with ids.",
     obj({ query: str("what to recall — a topic, question, or concept") }, ["query"]),
     async (a) => {
-      const hits = await recall(String(a.query ?? ""), useNotes.getState().notes, 6);
+      const { pdfs, pagesFor } = usePdfs.getState();
+      const hits = await recall(String(a.query ?? ""), useNotes.getState().notes, 6, { pdfs, getPages: pagesFor });
       return formatRecall(hits);
     }
   ),
@@ -551,7 +552,192 @@ const TOOLS: ToolImpl[] = [
         (p) => !wanted || p.tags.some((t) => t.toLowerCase().trim() === wanted)
       );
       if (!list.length) return wanted ? `No PDFs tagged "${a.tag}".` : "No PDFs uploaded.";
-      return list.map((p) => `- ${p.name}${p.tags.length ? ` [tags: ${p.tags.join(", ")}]` : ""} [id:${p.id}]`).join("\n");
+      return list
+        .map((p) => `- ${p.name}${p.pageCount ? ` (${p.pageCount}p)` : ""}${p.tags.length ? ` [tags: ${p.tags.join(", ")}]` : ""} [id:${p.id}]`)
+        .join("\n");
+    }
+  ),
+  tool(
+    "find_in_pdf",
+    "Semantically find the pages in a single PDF most relevant to a question or concept " +
+      "(uses on-device embeddings). Prefer this over search_pdf when the user asks about a " +
+      "topic/idea rather than an exact phrase. Returns the best pages with text snippets.",
+    obj({ id: str("pdf id"), query: str("question or topic to find") }, ["id", "query"]),
+    async (a) => {
+      const { pdfs, pagesFor } = usePdfs.getState();
+      const pdf = pdfs[String(a.id)];
+      if (!pdf) return "No PDF with that id.";
+      const pages = await pagesFor(String(a.id));
+      if (!pages || !pages.length) return "Could not extract text from that PDF (it may be scanned images).";
+      const hits = await findInPdf(String(a.query ?? ""), String(a.id), pdfs, pagesFor, 5);
+      if (hits.length) {
+        return `Most relevant pages in "${pdf.name}":\n` +
+          hits.map((h) => `- p${h.page} (${h.score}): ${h.text.replace(/\s+/g, " ").slice(0, 220)}…`).join("\n");
+      }
+      // Fall back to keyword scan if embeddings are unavailable.
+      const q = String(a.query ?? "").toLowerCase().trim();
+      const kw: string[] = [];
+      for (let i = 0; i < pages.length && kw.length < 5; i++) {
+        const idx = pages[i].toLowerCase().indexOf(q);
+        if (idx !== -1) kw.push(`- p${i + 1}: …${pages[i].slice(Math.max(0, idx - 60), idx + 120).replace(/\s+/g, " ").trim()}…`);
+      }
+      return kw.length ? `Keyword matches in "${pdf.name}":\n${kw.join("\n")}` : `Nothing relevant found in "${pdf.name}".`;
+    }
+  ),
+  tool(
+    "read_pdf",
+    "Read the extracted text of a PDF by its id. Pass a page number to read just that page; " +
+      "omit it to read from the start. Long PDFs are truncated — use search_pdf to locate a topic first.",
+    obj({ id: str("pdf id"), page: num("optional 1-based page number") }, ["id"]),
+    async (a) => {
+      const pdf = usePdfs.getState().pdfs[String(a.id)];
+      if (!pdf) return "No PDF with that id.";
+      const pages = await usePdfs.getState().pagesFor(String(a.id));
+      if (!pages || !pages.length) return "Could not extract text from that PDF (it may be scanned images).";
+      if (a.page != null) {
+        const i = Number(a.page) - 1;
+        if (i < 0 || i >= pages.length) return `Page out of range (1–${pages.length}).`;
+        return `# ${pdf.name} — page ${i + 1}/${pages.length}\n${pages[i] || "(no text on this page)"}`;
+      }
+      let out = `# ${pdf.name} (${pages.length} pages)\n`;
+      for (let i = 0; i < pages.length && out.length < 6000; i++) {
+        if (pages[i]) out += `\n[p${i + 1}] ${pages[i]}`;
+      }
+      return out.length > 6000 ? out.slice(0, 6000) + "\n…(truncated — read by page)" : out;
+    }
+  ),
+  tool(
+    "search_pdf",
+    "Search within a single PDF's text for a keyword/phrase. Returns matching pages with snippets.",
+    obj({ id: str("pdf id"), query: str("text to find") }, ["id", "query"]),
+    async (a) => {
+      const pdf = usePdfs.getState().pdfs[String(a.id)];
+      if (!pdf) return "No PDF with that id.";
+      const pages = await usePdfs.getState().pagesFor(String(a.id));
+      if (!pages) return "Could not extract text from that PDF.";
+      const q = String(a.query ?? "").toLowerCase().trim();
+      if (!q) return "Empty query.";
+      const hits: string[] = [];
+      for (let i = 0; i < pages.length && hits.length < 8; i++) {
+        const idx = pages[i].toLowerCase().indexOf(q);
+        if (idx === -1) continue;
+        const snip = pages[i].slice(Math.max(0, idx - 60), idx + 120).replace(/\s+/g, " ").trim();
+        hits.push(`- p${i + 1}: …${snip}…`);
+      }
+      return hits.length ? `Matches in "${pdf.name}":\n${hits.join("\n")}` : `No matches for "${a.query}".`;
+    }
+  ),
+  tool(
+    "cite_pdf",
+    "Quote a PDF page into a note — appends a labelled block (PDF name + page) with the page text.",
+    obj({ noteId: str("note id to append to"), pdfId: str("pdf id"), page: num("1-based page number") }, ["noteId", "pdfId", "page"]),
+    async (a) => {
+      const pdf = usePdfs.getState().pdfs[String(a.pdfId)];
+      if (!pdf) return "No PDF with that id.";
+      if (!useNotes.getState().notes[String(a.noteId)]) return "No note with that id.";
+      const pages = await usePdfs.getState().pagesFor(String(a.pdfId));
+      const i = Number(a.page) - 1;
+      if (!pages || i < 0 || i >= pages.length) return "Page out of range.";
+      const label = `(PDF: ${pdf.name} · p${i + 1})`;
+      const ok = await appendBlock(String(a.noteId), {
+        type: "paragraph",
+        content: [{ type: "text", text: `${label} ${pages[i]}`.trim() }],
+      });
+      return ok ? "Citation added to note." : "Failed.";
+    }
+  ),
+  tool(
+    "highlight_pdf",
+    "Bookmark a passage in a PDF. Pass the exact text (copied from the PDF — use " +
+      "read_pdf/find_in_pdf first) and the page it's on. The bookmark shows in the viewer's " +
+      "side panel; clicking it jumps to that page. Keep the passage short (a phrase or sentence).",
+    obj({ id: str("pdf id"), page: num("1-based page number"), text: str("exact text to bookmark") }, ["id", "page", "text"]),
+    async (a) => {
+      const pdf = usePdfs.getState().pdfs[String(a.id)];
+      if (!pdf) return "No PDF with that id.";
+      const text = String(a.text ?? "").trim();
+      if (!text) return "Provide the text to bookmark.";
+      const page = Number(a.page);
+      const pages = await usePdfs.getState().pagesFor(String(a.id));
+      if (!pages || page < 1 || page > pages.length) return `Page out of range (1–${pages?.length ?? 0}).`;
+      if (!pages[page - 1].toLowerCase().includes(text.replace(/\s+/g, " ").toLowerCase())) {
+        return `That text isn't on page ${page}. Use find_in_pdf to locate the exact wording/page first.`;
+      }
+      await usePdfs.getState().addAnnotation(String(a.id), {
+        id: crypto.randomUUID(),
+        page,
+        text: text.slice(0, 200),
+        createdAt: Date.now(),
+      });
+      return `Bookmarked on page ${page}.`;
+    }
+  ),
+  tool(
+    "unhighlight_pdf",
+    "Remove bookmarks from a PDF. Pass text to remove only matching bookmarks, or omit it to clear all.",
+    obj({ id: str("pdf id"), text: str("optional: only remove bookmarks whose text contains this") }, ["id"]),
+    async (a) => {
+      if (!usePdfs.getState().pdfs[String(a.id)]) return "No PDF with that id.";
+      await usePdfs.getState().loadAnnotations(String(a.id));
+      const all = usePdfs.getState().annotations[String(a.id)] ?? [];
+      const needle = a.text ? String(a.text).toLowerCase().trim() : null;
+      const toRemove = all.filter((x) => !needle || (x.text ?? "").toLowerCase().includes(needle));
+      if (!toRemove.length) return "No matching bookmarks.";
+      for (const x of toRemove) await usePdfs.getState().removeAnnotation(String(a.id), x.id);
+      return `Removed ${toRemove.length} bookmark${toRemove.length === 1 ? "" : "s"}.`;
+    },
+    true
+  ),
+  tool(
+    "rename_pdf",
+    "Rename an uploaded PDF.",
+    obj({ id: str("pdf id"), name: str("new name") }, ["id", "name"]),
+    async (a) => {
+      if (!usePdfs.getState().pdfs[String(a.id)]) return "No PDF with that id.";
+      await usePdfs.getState().rename(String(a.id), String(a.name));
+      return `Renamed to "${a.name}".`;
+    }
+  ),
+  tool(
+    "tag_pdf",
+    "Set the tags on a PDF (replaces existing tags). Tags link PDFs to notes that share them.",
+    obj({ id: str("pdf id"), tags: arr("tags (replaces existing)") }, ["id", "tags"]),
+    async (a) => {
+      if (!usePdfs.getState().pdfs[String(a.id)]) return "No PDF with that id.";
+      const tags = Array.isArray(a.tags) ? a.tags.map(String) : [];
+      await usePdfs.getState().setTags(String(a.id), tags);
+      return `Tags set: ${tags.join(", ") || "(none)"}.`;
+    }
+  ),
+  tool(
+    "delete_pdf",
+    "Delete an uploaded PDF and its extracted text. Destructive.",
+    obj({ id: str("pdf id") }, ["id"]),
+    async (a) => {
+      if (!usePdfs.getState().pdfs[String(a.id)]) return "No PDF with that id.";
+      await usePdfs.getState().remove(String(a.id));
+      return "PDF deleted.";
+    },
+    true
+  ),
+  tool(
+    "attach_pdf",
+    "Attach a PDF to a note so it's explicitly linked (shown in the note's PDFs list).",
+    obj({ noteId: str("note id"), pdfId: str("pdf id") }, ["noteId", "pdfId"]),
+    async (a) => {
+      if (!useNotes.getState().notes[String(a.noteId)]) return "No note with that id.";
+      if (!usePdfs.getState().pdfs[String(a.pdfId)]) return "No PDF with that id.";
+      await useNotes.getState().attachPdf(String(a.noteId), String(a.pdfId));
+      return "PDF attached to note.";
+    }
+  ),
+  tool(
+    "detach_pdf",
+    "Remove a PDF attachment from a note (does not delete the PDF).",
+    obj({ noteId: str("note id"), pdfId: str("pdf id") }, ["noteId", "pdfId"]),
+    async (a) => {
+      await useNotes.getState().detachPdf(String(a.noteId), String(a.pdfId));
+      return "PDF detached from note.";
     }
   ),
   tool(
@@ -678,7 +864,7 @@ export const READ_TOOLS = new Set([
   "search_notes", "read_note", "get_tree", "recall", "list_memories",
   "list_events", "find_free_slots", "search_mail", "read_mail",
   "list_tags", "list_facets", // added in phase 3
-  "list_pdfs",
+  "list_pdfs", "read_pdf", "search_pdf", "find_in_pdf",
 ]);
 
 export function isReadTool(name: string): boolean {
@@ -753,6 +939,14 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
       const detail = type === "note" ? noteTitle(id) : type === "event" ? eventSummary(id) : type === "mail" ? threadSubject(id) : type === "pdf" ? pdfName(id) : id;
       return d("Add to Deep Work", detail);
     }
+    case "cite_pdf": return d("Cite PDF into note", `${pdfName(s("pdfId"))} p${s("page")} → ${noteTitle(s("noteId"))}`);
+    case "highlight_pdf": return d("Bookmark in PDF", `${pdfName(s("id"))} p${s("page")}: "${s("text").slice(0, 40)}"`);
+    case "unhighlight_pdf": return d("Remove PDF bookmarks", s("text") ? `${pdfName(s("id"))}: "${s("text")}"` : pdfName(s("id")));
+    case "rename_pdf": return d("Rename PDF", `${pdfName(s("id"))} → ${s("name")}`);
+    case "tag_pdf": return d("Tag PDF", `${pdfName(s("id"))}: ${Array.isArray(a.tags) ? a.tags.join(", ") : ""}`);
+    case "delete_pdf": return d("Delete PDF", pdfName(s("id")));
+    case "attach_pdf": return d("Attach PDF to note", `${pdfName(s("pdfId"))} → ${noteTitle(s("noteId"))}`);
+    case "detach_pdf": return d("Detach PDF from note", `${pdfName(s("pdfId"))} ✕ ${noteTitle(s("noteId"))}`);
     case "deepwork_remove": return d("Remove from Deep Work", s("id"));
     case "deepwork_set_intent": return d("Set Deep Work intent", s("intent"));
     case "add_email_label": return d("Add email label", s("label"));

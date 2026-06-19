@@ -1,22 +1,9 @@
-import { useEffect, useState } from "react";
 import { usePdfs } from "@/features/pdfs/store";
+import { PdfViewer } from "@/features/pdfs/PdfViewer";
 
-/** A PDF rendered inside a Deep Work window via the browser's built-in viewer. */
+/** A PDF rendered inside a Deep Work window via the pdf.js canvas viewer. */
 export function PdfWindow({ pdfId }: { pdfId: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [missing, setMissing] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    usePdfs.getState().urlFor(pdfId).then((u) => {
-      if (!alive) return;
-      if (u) setUrl(u);
-      else setMissing(true);
-    });
-    return () => { alive = false; };
-  }, [pdfId]);
-
-  if (missing) return <div className="p-4 text-sm text-[var(--text-dim)]">This PDF is no longer available.</div>;
-  if (!url) return <div className="p-4 text-sm text-[var(--text-dim)]">Loading PDF…</div>;
-  return <iframe title="pdf" src={url} className="h-full w-full border-0 bg-white" />;
+  const exists = usePdfs((s) => !!s.pdfs[pdfId]);
+  if (!exists) return <div className="p-4 text-sm text-[var(--text-dim)]">This PDF is no longer available.</div>;
+  return <PdfViewer pdfId={pdfId} />;
 }

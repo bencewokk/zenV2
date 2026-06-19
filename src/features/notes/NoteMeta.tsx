@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
-import { useHome } from "@/features/home/store";
+import { useNoteSplit } from "@/features/pdfs/splitStore";
 import type { Note } from "@/shared/lib/types";
 
 /** Inline metadata editor for the open note: space/subject/unit/tags/inbox. */
@@ -49,12 +49,15 @@ export function NoteMeta({ note }: { note: Note }) {
   );
 }
 
-/** Button + popover to attach PDFs that share a tag with this note. */
+/** Button + popover to attach PDFs to a note (explicit attachments + tag suggestions). */
 function NotePdfs({ note }: { note: Note }) {
   const pdfs = usePdfs((s) => s.pdfs);
   const addPdf = usePdfs((s) => s.add);
-  const launchDeepWork = useHome((s) => s.launchDeepWork);
+  const attachPdf = useNotes((s) => s.attachPdf);
+  const detachPdf = useNotes((s) => s.detachPdf);
+  const openSplit = useNoteSplit((s) => s.open);
   const [open, setOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -68,22 +71,38 @@ function NotePdfs({ note }: { note: Note }) {
   }, [open]);
 
   const noteTags = note.tags.map((t) => t.toLowerCase().trim()).filter(Boolean);
-  const related = useMemo(
+  const attached = useMemo(
+    () => note.pdfIds.map((id) => pdfs[id]).filter(Boolean),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pdfs, note.pdfIds.join(",")]
+  );
+  // Tag-matching PDFs not already attached → offered as quick-attach suggestions.
+  const suggestions = useMemo(
     () =>
-      Object.values(pdfs).filter((p) =>
-        p.tags.some((t) => noteTags.includes(t.toLowerCase().trim()))
+      Object.values(pdfs).filter(
+        (p) => !note.pdfIds.includes(p.id) && p.tags.some((t) => noteTags.includes(t.toLowerCase().trim()))
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pdfs, note.tags.join(",")]
+    [pdfs, note.tags.join(","), note.pdfIds.join(",")]
   );
+
+  async function ingest(file: File | undefined) {
+    if (!file) return;
+    // Tag with the note's tags and attach explicitly so it stays linked.
+    const id = await addPdf(file, note.tags);
+    if (id) { await attachPdf(note.id, id); openSplit(id); }
+  }
 
   async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
-    // Tag the new PDF with the note's tags so it's linked by default.
-    const id = await addPdf(file, note.tags);
-    if (id) launchDeepWork({ type: "pdf", id });
+    await ingest(file);
+  }
+
+  async function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    await ingest([...e.dataTransfer.files].find((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")));
   }
 
   return (
@@ -91,34 +110,57 @@ function NotePdfs({ note }: { note: Note }) {
       <button
         className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--text-dim)] hover:text-[var(--text)]"
         onClick={() => setOpen((v) => !v)}
-        title="Attach a PDF with a shared tag"
+        title="Attach PDFs to this note"
       >
-        📄 PDFs{related.length ? ` · ${related.length}` : ""}
+        📄 PDFs{attached.length ? ` · ${attached.length}` : ""}
       </button>
       {open && (
-        <div className="zen-anim-pop absolute right-0 z-50 mt-1 max-h-[60vh] min-w-[240px] overflow-auto rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur" style={{ transformOrigin: "top right" }}>
-          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">
-            PDFs sharing a tag
-          </div>
-          {noteTags.length === 0 ? (
-            <div className="px-3 py-2 text-[var(--text-dim)]">Add a tag to this note first.</div>
-          ) : related.length === 0 ? (
-            <div className="px-3 py-2 text-[var(--text-dim)]">No PDFs with these tags yet.</div>
-          ) : (
-            related.map((p) => (
-              <button
-                key={p.id}
-                className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left hover:bg-[var(--bg-elev)]"
-                onClick={() => { launchDeepWork({ type: "pdf", id: p.id }); setOpen(false); }}
-              >
-                <span className="shrink-0">📄</span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[var(--text)]">{p.name}</span>
-                  <span className="block truncate text-[10px] text-[var(--text-dim)]">{p.tags.join(", ")}</span>
-                </span>
-              </button>
-            ))
+        <div
+          className={`zen-anim-pop absolute right-0 z-50 mt-1 max-h-[60vh] min-w-[260px] overflow-auto rounded-[12px] border bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur ${dragging ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
+          style={{ transformOrigin: "top right" }}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+        >
+          {attached.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">Attached</div>
+              {attached.map((p) => (
+                <div key={p.id} className="group flex items-center gap-2 rounded-[10px] px-3 py-2 hover:bg-[var(--bg-elev)]">
+                  <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => { openSplit(p.id); setOpen(false); }}>
+                    <span className="shrink-0">📄</span>
+                    <span className="block min-w-0 flex-1 truncate text-[var(--text)]">{p.name}</span>
+                  </button>
+                  <button className="shrink-0 text-[var(--text-dim)] opacity-0 hover:text-red-400 group-hover:opacity-100" title="Detach" onClick={() => detachPdf(note.id, p.id)}>✕</button>
+                </div>
+              ))}
+            </>
           )}
+
+          {suggestions.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">Suggested (shared tag)</div>
+              {suggestions.map((p) => (
+                <button
+                  key={p.id}
+                  className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left hover:bg-[var(--bg-elev)]"
+                  onClick={() => { void attachPdf(note.id, p.id); openSplit(p.id); setOpen(false); }}
+                  title="Attach & open beside this note"
+                >
+                  <span className="shrink-0 text-[var(--accent)]">＋</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[var(--text)]">{p.name}</span>
+                    <span className="block truncate text-[10px] text-[var(--text-dim)]">{p.tags.join(", ")}</span>
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+
+          {attached.length === 0 && suggestions.length === 0 && (
+            <div className="px-3 py-2 text-[var(--text-dim)]">{dragging ? "Drop to upload…" : "No PDFs attached. Upload or drop one below."}</div>
+          )}
+
           <div className="mt-1 border-t border-[var(--border)] pt-1">
             <button
               className="zen-pressable block w-full rounded-[10px] px-3 py-2 text-left text-[var(--accent)] hover:bg-[var(--bg-elev)]"

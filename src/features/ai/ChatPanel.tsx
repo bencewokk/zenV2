@@ -161,7 +161,9 @@ export function ChatPanel() {
           )
         )}
         {proposals
-          .filter((p) => p.status !== "dismissed")
+          // Resolved cards (done/error) become inline tool turns, so only the
+          // still-actionable ones live here at the bottom of the chat.
+          .filter((p) => p.status === "pending" || p.status === "running")
           .map((p) => (
             <div
               key={p.id}

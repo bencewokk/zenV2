@@ -16,6 +16,8 @@ export interface Note {
   tags: string[];
   inbox: boolean;
 
+  pdfIds: string[]; // explicitly attached PDFs (beyond shared-tag suggestions)
+
   createdAt: number;
   updatedAt: number;
 }
@@ -27,6 +29,26 @@ export interface PdfDoc {
   tags: string[];
   size: number; // bytes
   addedAt: number;
+  pageCount?: number; // populated after text extraction
+}
+
+/**
+ * A PDF annotation, used two ways:
+ * - In the native (Read) viewer it's a bookmark: page + quoted text, shown in a
+ *   side panel that navigates the viewer to the page.
+ * - In the canvas (Highlight) viewer it's a painted highlight: `rects`
+ *   (normalized 0–1 of the page box) from a user selection, blended onto the
+ *   page. AI/bookmark annotations carry only `text`; the canvas viewer resolves
+ *   that to rects against the rendered text layer.
+ */
+export interface PdfAnnotation {
+  id: string;
+  page: number; // 1-based
+  rects?: { x: number; y: number; w: number; h: number }[];
+  text?: string; // the quoted/highlighted text
+  note?: string;
+  color?: string;
+  createdAt: number;
 }
 
 /** Inline [[wiki-link]] edge between notes. */
