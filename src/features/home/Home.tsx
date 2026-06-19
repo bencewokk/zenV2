@@ -114,13 +114,18 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
 
   // Parse the brief into checklist items, hiding ones already ticked off on a prior view.
   const briefItems = useMemo(
-    () => parseBriefItems(summary).filter((item) => !doneBriefItems.includes(item.key) || briefStruck.has(item.key)),
+    () =>
+      parseBriefItems(summary)
+        // Reassuring "nothing to act on" lines aren't tasks — show them as the cleared
+        // state, not as a tickable checklist item.
+        .filter((item) => !(!item.source && /^nothing\s+(needs|to\s+worry)/i.test(item.text)))
+        .filter((item) => !doneBriefItems.includes(item.key) || briefStruck.has(item.key)),
     [summary, doneBriefItems, briefStruck]
   );
 
-  function tickBriefItem(key: string) {
+  function tickBriefItem(key: string, text: string) {
     setBriefStruck((current) => new Set(current).add(key));
-    markBriefItemDone(key);
+    markBriefItemDone(key, text);
   }
 
   const openAdmin = onOpenAdmin ?? (() => undefined);
@@ -327,23 +332,44 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                           Generating your brief...
                         </div>
                       ) : briefItems.length > 0 ? (
-                        <ul className="zen-primary-copy mt-2 max-w-[54ch] space-y-1.5 text-[15px] text-[var(--text)]">
+                        <ul className="mt-2 max-w-[54ch] space-y-1.5 text-[15px] text-[var(--text)]">
                           {briefItems.map((item) => {
                             const done = doneBriefItems.includes(item.key);
                             return (
-                              <li key={item.key}>
+                              <li key={item.key} className="flex items-start gap-2.5">
                                 <button
                                   type="button"
-                                  className={`text-left transition ${
-                                    done
-                                      ? "cursor-default text-[var(--text-dim)] line-through"
-                                      : "cursor-pointer hover:text-[var(--text-dim)]"
-                                  }`}
+                                  role="checkbox"
+                                  aria-checked={done}
                                   disabled={done}
-                                  onClick={() => tickBriefItem(item.key)}
+                                  onClick={() => tickBriefItem(item.key, item.text)}
                                   aria-label={`Mark done: ${item.text}`}
-                                  dangerouslySetInnerHTML={{ __html: marked.parseInline(item.text) as string }}
-                                />
+                                  className={`mt-[3px] grid h-[15px] w-[15px] shrink-0 place-items-center rounded-[4px] border transition ${
+                                    done
+                                      ? "border-transparent bg-[var(--text-dim)] text-black"
+                                      : "cursor-pointer border-[var(--border)] hover:border-[var(--text-dim)]"
+                                  }`}
+                                >
+                                  {done && (
+                                    <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                      <path d="M2.5 6.4l2.4 2.4 4.6-5" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  )}
+                                </button>
+                                <span className={`zen-primary-copy min-w-0 flex-1 ${done ? "text-[var(--text-dim)] line-through" : ""}`}>
+                                  <span dangerouslySetInnerHTML={{ __html: marked.parseInline(item.text) as string }} />
+                                  {item.source && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openTarget(item.source)}
+                                      className="ml-1.5 align-middle text-[13px] text-[var(--text-dim)] transition hover:text-[var(--text)]"
+                                      aria-label="Open source"
+                                      title="Open source"
+                                    >
+                                      ↗
+                                    </button>
+                                  )}
+                                </span>
                               </li>
                             );
                           })}
@@ -583,24 +609,47 @@ function LabelManager() {
         className="w-full rounded-[10px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[#60A5FA]"
       />
       {labels.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-col gap-2">
           {labels.map((label) => (
-            <span
-              key={label}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 text-xs text-[var(--text)]"
-            >
-              {label}
-              <button
-                className="text-[var(--text-dim)] transition hover:text-[var(--danger)]"
-                onClick={() => removeCustomLabel(label)}
-                title={`Remove ${label}`}
-              >
-                ✕
-              </button>
-            </span>
+            <LabelRow key={label.name} name={label.name} hint={label.hint} onRemove={() => removeCustomLabel(label.name)} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function LabelRow({ name, hint, onRemove }: { name: string; hint: string; onRemove: () => void }) {
+  const updateCustomLabel = useHome((s) => s.updateCustomLabel);
+  const [draftHint, setDraftHint] = useState(hint);
+
+  // Keep local draft in sync if the stored hint changes elsewhere.
+  useEffect(() => setDraftHint(hint), [hint]);
+
+  function commit() {
+    if (draftHint.trim() !== hint.trim()) updateCustomLabel(name, draftHint.trim());
+  }
+
+  return (
+    <div className="rounded-[10px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-sm text-[var(--text)]">{name}</span>
+        <button
+          className="shrink-0 text-[var(--text-dim)] transition hover:text-[var(--danger)]"
+          onClick={onRemove}
+          title={`Remove ${name}`}
+        >
+          ✕
+        </button>
+      </div>
+      <input
+        value={draftHint}
+        onChange={(e) => setDraftHint(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        placeholder="Match hint: senders, keywords, context…"
+        className="mt-1.5 w-full rounded-[8px] border border-transparent bg-[rgba(255,255,255,0.02)] px-2 py-1 text-xs text-[var(--text-dim)] outline-none placeholder:text-[var(--text-dim)] focus:border-[var(--border)] focus:text-[var(--text)]"
+      />
     </div>
   );
 }

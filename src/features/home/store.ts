@@ -17,6 +17,13 @@ export type HomeTarget =
   | { type: "note"; id: string }
   | { type: "pdf"; id: string };
 
+/** A user-defined email topic the AI matches against, plus optional metadata
+ *  (senders, keywords, context) that sharpens the match. */
+export interface LabelDef {
+  name: string;
+  hint: string;
+}
+
 export interface HomeActionChild {
   key: string;
   type: "mail" | "note";
@@ -62,11 +69,12 @@ interface HomeState {
   summaryScope: SummaryScope;
   summaryLoading: boolean;
   doneBriefItems: string[]; // hashes of briefing items the user has ticked off
+  doneBriefTexts: string[]; // raw text of recently-ticked items, for fuzzy de-dup on regenerate
   events: CalEvent[];
   threads: MailThread[];
   processedThreadIds: string[]; // threads the AI has checked for event matching
   matchedThreadLabels: Record<string, string>; // threadId → matched event/label name
-  customLabels: string[]; // user-defined topics the AI can also match emails to
+  customLabels: LabelDef[]; // user-defined topics (+ metadata) the AI can also match emails to
   knownLabelOptions: string[]; // event/label names the AI has scanned emails against
   focusTarget: HomeTarget | null;
   manualDeepWork: boolean;
@@ -80,12 +88,14 @@ interface HomeState {
   setManualDeepWork: (value: boolean) => void;
   toggleManualDeepWork: () => void;
   addCustomLabel: (label: string) => void;
+  updateCustomLabel: (name: string, hint: string) => void;
   removeCustomLabel: (label: string) => void;
-  markBriefItemDone: (key: string) => void;
+  markBriefItemDone: (key: string, text?: string) => void;
 }
 
 const STORAGE_KEY = "zen.home.v1";
 const BRIEF_DONE_KEY = "zen.home.brief-done.v1";
+const BRIEF_DONE_TEXTS_KEY = "zen.home.brief-done-texts.v1";
 const DEEP_WORK_KEY = "zen.home.deepwork.v1";
 const MAIL_ACCENT = "#b073e0";
 const EVENT_ACCENT = "#6ea8fe";
@@ -135,6 +145,27 @@ function saveBriefDone(keys: string[]): void {
   }
 }
 
+function readBriefDoneTexts(): string[] {
+  try {
+    const raw = localStorage.getItem(BRIEF_DONE_TEXTS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as string[];
+      if (Array.isArray(arr)) return arr.filter((s) => typeof s === "string");
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+function saveBriefDoneTexts(texts: string[]): void {
+  try {
+    localStorage.setItem(BRIEF_DONE_TEXTS_KEY, JSON.stringify(texts.slice(-200)));
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Stable hash of a briefing item's normalized text — survives reword-free regenerations. */
 export function briefItemKey(text: string): string {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
@@ -145,13 +176,66 @@ export function briefItemKey(text: string): string {
   return `b${hash >>> 0}`;
 }
 
-/** Split a markdown brief into discrete checklist items, stripping list/heading markers. */
-export function parseBriefItems(summary: string): { key: string; text: string }[] {
+const BRIEF_STOPWORDS = new Set([
+  "the", "a", "an", "to", "of", "for", "and", "or", "on", "in", "at", "your", "you",
+  "with", "about", "is", "are", "be", "this", "that", "it", "as", "by", "from", "up",
+  "down", "out", "do", "get", "make", "need", "should", "review", "check", "follow",
+]);
+
+/** Content tokens of a brief item: lowercased, depunctuated, de-stopworded, lightly stemmed. */
+function briefTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .map((w) => w.replace(/(ing|ed|s)$/, ""))
+      .filter((w) => w.length > 2 && !BRIEF_STOPWORDS.has(w))
+  );
+}
+
+/** True when two items describe the same thing despite different wording. */
+function isNearDuplicate(a: Set<string>, b: Set<string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  const union = a.size + b.size - inter;
+  const jaccard = inter / union;
+  const containment = inter / Math.min(a.size, b.size);
+  // Strict: collapse items that merely overlap meaningfully, not just near-identical ones.
+  // A couple of shared content tokens (e.g. the same person/subject) is enough to treat
+  // two bullets as the same underlying task.
+  return jaccard >= 0.34 || containment >= 0.6 || inter >= 3;
+}
+
+const BRIEF_SRC_RE = /\s*\[src:(note|mail|event|pdf):([^\]]+)\]\s*$/i;
+
+/** Serialize a source target back into the inline tag the AI/persistence uses. */
+export function briefSourceTag(source: HomeTarget | null): string {
+  return source ? ` [src:${source.type}:${source.id}]` : "";
+}
+
+export interface BriefItem {
+  key: string;
+  text: string;
+  source: HomeTarget | null;
+}
+
+/** Split a markdown brief into discrete checklist items, stripping list/heading markers
+ *  and pulling out the trailing [src:type:id] tag that links back to the source. */
+export function parseBriefItems(summary: string): BriefItem[] {
   return summary
     .split(/\r?\n/)
     .map((line) => line.replace(/^\s*(?:[-*+]|\d+\.|#{1,6})\s+/, "").trim())
     .filter(Boolean)
-    .map((text) => ({ key: briefItemKey(text), text }));
+    .map((line) => {
+      const match = line.match(BRIEF_SRC_RE);
+      const source: HomeTarget | null = match
+        ? { type: match[1].toLowerCase() as HomeTarget["type"], id: match[2].trim() }
+        : null;
+      const text = match ? line.replace(BRIEF_SRC_RE, "").trim() : line;
+      return { key: briefItemKey(text), text, source };
+    });
 }
 
 interface PersistedDeepWork {
@@ -264,13 +348,7 @@ function withinBriefWindow(timestamp: number, now = Date.now()): boolean {
   return timestamp >= start.getTime() && timestamp <= end.getTime();
 }
 
-function buildSummaryContext(notes: Note[], events: CalEvent[], threads: MailThread[]): string {
-  const allNotes = [...notes]
-    .filter((note) => withinBriefWindow(note.updatedAt))
-    .sort((a, b) => {
-      if (Number(b.inbox) !== Number(a.inbox)) return Number(b.inbox) - Number(a.inbox);
-      return b.updatedAt - a.updatedAt;
-    });
+function buildSummaryContext(_notes: Note[], events: CalEvent[], threads: MailThread[]): string {
   const allEvents = [...events]
     .filter((event) => withinBriefWindow(eventTimestamp(event)))
     .sort((a, b) => eventTimestamp(a) - eventTimestamp(b));
@@ -282,42 +360,30 @@ function buildSummaryContext(notes: Note[], events: CalEvent[], threads: MailThr
     });
 
   // Nothing in the window — let the caller fall back to a reassuring brief.
-  if (allNotes.length === 0 && allEvents.length === 0 && allThreads.length === 0) return "";
+  if (allEvents.length === 0 && allThreads.length === 0) return "";
 
   const lines = [
-    `NOTES (${allNotes.length})`,
-    ...allNotes.map((note) => {
-      const meta = [note.inbox ? "inbox" : null, note.space, note.subject, note.unit].filter(Boolean).join(" / ");
-      return `- ${clip(note.title || "Untitled", 72)}${meta ? ` [${meta}]` : ""}: ${clip(notePreview(note), 160)}`;
-    }),
-    "",
     `CALENDAR (${allEvents.length})`,
     ...allEvents.map((event) =>
-      `- ${formatEventTime(event)} :: ${clip(event.summary, 90)}${event.location ? ` @ ${clip(event.location, 48)}` : ""}${event.description ? ` :: ${clip(event.description, 120)}` : ""}`
+      `- [src:event:${event.id}] ${formatEventTime(event)} :: ${clip(event.summary, 90)}${event.location ? ` @ ${clip(event.location, 48)}` : ""}${event.description ? ` :: ${clip(event.description, 120)}` : ""}`
     ),
     "",
     `MAIL (${allThreads.length})`,
     ...allThreads.map((thread) =>
-      `- ${thread.unread ? "[unread] " : ""}${clip(thread.subject, 90)} :: ${clip(thread.from, 72)} :: ${clip(thread.snippet, 140)}`
+      `- [src:mail:${thread.id}] ${thread.unread ? "[unread] " : ""}${clip(thread.subject, 90)} :: ${clip(thread.from, 72)} :: ${clip(thread.snippet, 140)}`
     ),
   ].filter(Boolean);
 
   return lines.join("\n");
 }
 
-function buildFallbackBrief(notes: Note[], events: CalEvent[], threads: MailThread[]): string {
-  const inbox = [...notes]
-    .filter((note) => note.inbox && withinBriefWindow(note.updatedAt))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+function buildFallbackBrief(_notes: Note[], events: CalEvent[], threads: MailThread[]): string {
   const firstEvent = events.filter((event) => withinBriefWindow(eventTimestamp(event)))[0];
   const unread = threads.filter((thread) => thread.unread && withinBriefWindow(mailTimestamp(thread)));
   const lines: string[] = [];
 
   if (firstEvent) {
     lines.push(`Next anchor: ${firstEvent.summary}${firstEvent.location ? ` @ ${firstEvent.location}` : ""}.`);
-  }
-  if (inbox[0]) {
-    lines.push(`Primary note pressure: ${inbox[0].title || "Untitled"}${inbox.length > 1 ? ` + ${inbox.length - 1} more inbox items` : ""}.`);
   }
   if (unread[0]) {
     lines.push(`Mail pressure: ${unread[0].subject}${unread.length > 1 ? ` + ${unread.length - 1} more unread threads` : ""}.`);
@@ -352,18 +418,32 @@ function saveKnownLabelOptions(options: Set<string>): void {
   } catch { /* ignore */ }
 }
 
-function readCustomLabels(): string[] {
+function readCustomLabels(): LabelDef[] {
   try {
     const raw = localStorage.getItem(CUSTOM_LABELS_KEY);
     if (raw) {
-      const arr = JSON.parse(raw) as string[];
-      if (Array.isArray(arr)) return arr.filter((s) => typeof s === "string");
+      const arr = JSON.parse(raw) as unknown[];
+      if (Array.isArray(arr)) {
+        return arr
+          .map((item): LabelDef | null => {
+            // Legacy format: a bare topic string with no metadata.
+            if (typeof item === "string") return { name: item, hint: "" };
+            if (item && typeof item === "object") {
+              const o = item as Record<string, unknown>;
+              if (typeof o.name === "string") {
+                return { name: o.name, hint: typeof o.hint === "string" ? o.hint : "" };
+              }
+            }
+            return null;
+          })
+          .filter((x): x is LabelDef => !!x && !!x.name);
+      }
     }
   } catch { /* ignore */ }
   return [];
 }
 
-function saveCustomLabels(labels: string[]): void {
+function saveCustomLabels(labels: LabelDef[]): void {
   try {
     localStorage.setItem(CUSTOM_LABELS_KEY, JSON.stringify(labels));
   } catch { /* ignore */ }
@@ -401,17 +481,19 @@ function saveLabeledSet(ids: Set<string>): void {
   } catch { /* ignore */ }
 }
 
-async function matchThreadToEvent(thread: MailThread, labelOptions: string[]): Promise<string | null> {
+async function matchThreadToEvent(thread: MailThread, labelOptions: LabelDef[]): Promise<string | null> {
   const model = useAI.getState().model;
   const messages: AIMessage[] = [
     {
       role: "system",
       content:
-        "You match emails to topics. Reply with ONLY the exact topic name from the list below, or the word 'none' if nothing matches. No punctuation, no explanation.",
+        "You match emails to topics. Each topic may list matching criteria (senders, keywords, context) after an em dash — use them to decide. Reply with ONLY the exact topic name from the list below, or the word 'none' if nothing matches. No punctuation, no explanation.",
     },
     {
       role: "user",
-      content: `Subject: ${thread.subject}\nFrom: ${thread.from}\nSnippet: ${thread.snippet}\n\nTopics:\n${labelOptions.map((n, i) => `${i + 1}. ${n}`).join("\n")}`,
+      content: `Subject: ${thread.subject}\nFrom: ${thread.from}\nSnippet: ${thread.snippet}\n\nTopics:\n${labelOptions
+        .map((o, i) => `${i + 1}. ${o.name}${o.hint.trim() ? ` — matches when: ${o.hint.trim()}` : ""}`)
+        .join("\n")}`,
     },
   ];
 
@@ -420,36 +502,58 @@ async function matchThreadToEvent(thread: MailThread, labelOptions: string[]): P
   if (!response || response.toLowerCase() === "none") return null;
 
   const normalized = response.toLowerCase();
+  const names = labelOptions.map((o) => o.name);
   return (
-    labelOptions.find((name) => name.toLowerCase() === normalized) ??
-    labelOptions.find(
+    names.find((name) => name.toLowerCase() === normalized) ??
+    names.find(
       (name) => normalized.includes(name.toLowerCase()) || name.toLowerCase().includes(normalized)
     ) ??
     null
   );
 }
 
-async function autoLabelThreads(threads: MailThread[], events: CalEvent[], customLabels: string[]): Promise<void> {
+async function autoLabelThreads(threads: MailThread[], events: CalEvent[], customLabels: LabelDef[]): Promise<void> {
   if (!isSignedIn() || threads.length === 0) return;
 
   const labeled = readLabeledSet();
   const matched = readMatchedLabels();
 
   // The AI can match emails to calendar events AND user-defined topic labels.
-  const labelOptions = [...new Set([...events.map((e) => e.summary), ...customLabels])].filter(Boolean);
+  // Events contribute their summary as a name (no metadata); custom labels carry hints.
+  const labelOptions: LabelDef[] = [];
+  const seenNames = new Set<string>();
+  for (const e of events) {
+    const name = e.summary?.trim();
+    if (name && !seenNames.has(name.toLowerCase())) {
+      seenNames.add(name.toLowerCase());
+      labelOptions.push({ name, hint: "" });
+    }
+  }
+  for (const c of customLabels) {
+    const name = c.name?.trim();
+    if (name && !seenNames.has(name.toLowerCase())) {
+      seenNames.add(name.toLowerCase());
+      labelOptions.push({ name, hint: c.hint ?? "" });
+    }
+  }
   if (labelOptions.length === 0) {
     for (const thread of threads) labeled.add(thread.id);
     saveLabeledSet(labeled);
     return;
   }
 
-  // Label options that have appeared since the last run — a freshly-created event
-  // or a newly-added custom label. Already-seen emails get re-scanned against these.
+  // Signature includes the hint so editing a label's metadata re-scans already-seen
+  // emails against the sharpened criteria.
+  const optionSig = (o: LabelDef) => `${o.name} ${o.hint}`;
+
+  // Label options that have appeared since the last run — a freshly-created event,
+  // a newly-added custom label, or one whose metadata changed. Already-seen emails
+  // get re-scanned against these.
   const knownOptions = readKnownLabelOptions();
-  const freshOptions = labelOptions.filter((o) => !knownOptions.has(o));
+  const freshOptions = labelOptions.filter((o) => !knownOptions.has(optionSig(o)));
 
   // Try to apply a match to a thread (record it + tag in Gmail). Best-effort.
-  async function apply(thread: MailThread, options: string[]): Promise<void> {
+  async function apply(thread: MailThread, options: LabelDef[]): Promise<void> {
     const match = await matchThreadToEvent(thread, options);
     if (match) {
       matched[thread.id] = match;
@@ -478,7 +582,7 @@ async function autoLabelThreads(threads: MailThread[], events: CalEvent[], custo
   // without re-running AI on them.
   for (const thread of threads) labeled.add(thread.id);
 
-  for (const o of labelOptions) knownOptions.add(o);
+  for (const o of labelOptions) knownOptions.add(optionSig(o));
   saveLabeledSet(labeled);
   saveMatchedLabels(matched);
   saveKnownLabelOptions(knownOptions);
@@ -530,10 +634,27 @@ async function maybeRefreshSummary(
   const context = buildSummaryContext(notes, events, threads).trim();
   const fallback = buildFallbackBrief(notes, events, threads);
 
+  // Items already on the brief that the user hasn't ticked off — the AI must not
+  // re-emit these, even reworded.
+  const existing = parseBriefItems(state.summary)
+    .filter((item) => !new Set(state.doneBriefItems).has(item.key))
+    .map((item) => item.text);
+  const existingClause = existing.length
+    ? ` The following priorities are ALREADY shown — do NOT repeat them, not even reworded or rephrased; only add genuinely new priorities:\n${existing.map((t) => `- ${t}`).join("\n")}`
+    : "";
+
+  // Items the user has already ticked off — never resurface these, even reworded.
+  const completed = state.doneBriefTexts.slice(-30);
+  const completedClause = completed.length
+    ? ` The user has ALREADY handled and dismissed the following — never bring them back, not even reworded:\n${completed.map((t) => `- ${t}`).join("\n")}`
+    : "";
+
   useHome.setState({ summaryLoading: true });
   const out = context
     ? await useAI.getState().complete(
-        "Create a concise startup focus brief for the homepage. Return 3-6 short bullet points, one concrete actionable priority per line, each starting with '- '. Order by importance. No greeting, no intro line. If nothing is genuinely pressing, reply with a single reassuring line such as 'Nothing to worry about right now.'",
+        "You are building a startup focus brief for the homepage. ONLY include items that EXPLICITLY require the user to act or decide right now — something they must reply to, confirm, complete, submit, or choose between. EXCLUDE anything vague, informational, in-progress, or merely worth being aware of: if there is no concrete, specific next action the user must personally take, leave it out entirely. Prefer fewer, sharper items over a long list. Return at most 5 short bullet points, one concrete action per line, each starting with '- ', ordered by urgency. Each bullet must be a distinct action — never restate the same task in different words. Every line in the context starts with a [src:type:id] tag; when a bullet concerns that item, end the bullet with its EXACT [src:type:id] tag copied verbatim so the user can open the source — never invent a tag. No greeting, no intro line. If nothing genuinely needs the user's input, reply with the single line: 'Nothing needs your input right now.'" +
+          existingClause +
+          completedClause,
         context
       )
     : fallback;
@@ -543,12 +664,23 @@ async function maybeRefreshSummary(
   const done = new Set(state.doneBriefItems);
   const carried = parseBriefItems(state.summary).filter((item) => !done.has(item.key));
   const fresh = parseBriefItems(generated).filter((item) => !done.has(item.key));
-  const seen = new Set<string>();
+  const seenKeys = new Set<string>(done);
+  // Seed the fuzzy guard with the text of recently-ticked items so a reworded
+  // resurrection is dropped even if the model ignored the prompt instruction.
+  const seenTokens: Set<string>[] = state.doneBriefTexts
+    .slice(-60)
+    .map((t) => briefTokens(t))
+    .filter((s) => s.size > 0);
   const mergedLines: string[] = [];
+  // Carried items win over fresh ones, so a reworded regeneration of an existing
+  // priority is dropped rather than added a second time.
   for (const item of [...carried, ...fresh]) {
-    if (seen.has(item.key)) continue;
-    seen.add(item.key);
-    mergedLines.push(`- ${item.text}`);
+    if (seenKeys.has(item.key)) continue;
+    const tokens = briefTokens(item.text);
+    if (seenTokens.some((prev) => isNearDuplicate(tokens, prev))) continue;
+    seenKeys.add(item.key);
+    seenTokens.push(tokens);
+    mergedLines.push(`- ${item.text}${briefSourceTag(item.source)}`);
   }
   const summary = mergedLines.join("\n") || generated;
 
@@ -572,6 +704,7 @@ export const useHome = create<HomeState>((set, get) => ({
   summaryScope: persisted.summaryScope,
   summaryLoading: false,
   doneBriefItems: readBriefDone(),
+  doneBriefTexts: readBriefDoneTexts(),
   events: [],
   threads: [],
   processedThreadIds: [...readLabeledSet()],
@@ -654,26 +787,41 @@ export const useHome = create<HomeState>((set, get) => ({
     const trimmed = label.trim();
     if (!trimmed) return;
     const existing = get().customLabels;
-    if (existing.some((l) => l.toLowerCase() === trimmed.toLowerCase())) return;
-    const next = [...existing, trimmed];
+    if (existing.some((l) => l.name.toLowerCase() === trimmed.toLowerCase())) return;
+    const next = [...existing, { name: trimmed, hint: "" }];
     set({ customLabels: next });
     saveCustomLabels(next);
     // Re-scan already-seen emails against the new label right away.
     void get().refresh(false);
   },
 
+  updateCustomLabel(name, hint) {
+    const existing = get().customLabels;
+    if (!existing.some((l) => l.name === name)) return;
+    const next = existing.map((l) => (l.name === name ? { ...l, hint } : l));
+    set({ customLabels: next });
+    saveCustomLabels(next);
+    // The sharpened criteria re-scan already-seen emails on the next refresh.
+    void get().refresh(false);
+  },
+
   removeCustomLabel(label) {
-    const next = get().customLabels.filter((l) => l !== label);
+    const next = get().customLabels.filter((l) => l.name !== label);
     set({ customLabels: next });
     saveCustomLabels(next);
   },
 
-  markBriefItemDone(key) {
+  markBriefItemDone(key, text) {
     const existing = get().doneBriefItems;
     if (existing.includes(key)) return;
     const next = [...existing, key];
     set({ doneBriefItems: next });
     saveBriefDone(next);
+    if (text && text.trim()) {
+      const nextTexts = [...get().doneBriefTexts, text.trim()];
+      set({ doneBriefTexts: nextTexts });
+      saveBriefDoneTexts(nextTexts);
+    }
   },
 }));
 
