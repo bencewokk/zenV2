@@ -14,6 +14,8 @@ import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
 import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
 import { CalendarPanel } from "@/features/google/CalendarPanel";
 import { MailPanel } from "@/features/google/MailPanel";
+import { SettingsView } from "@/features/settings/SettingsView";
+import { applyAppearance } from "@/services/appearance";
 import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
 import { useWorkspace } from "@/shared/stores/workspace";
@@ -47,7 +49,7 @@ export function App() {
   const surface = useWorkspace((s) => s.surface);
   const adminFocus = useWorkspace((s) => s.adminFocus);
   const adminMailId = useWorkspace((s) => s.adminMailId);
-  const setSurface = (surface: "home" | "admin") => setWs({ surface });
+  const setSurface = (surface: "home" | "admin" | "settings") => setWs({ surface });
   const setAdminFocus = (adminFocus: "calendar" | "mail") => setWs({ adminFocus });
   const setAdminMailId = (adminMailId: string | null) => setWs({ adminMailId });
   const shellRef = useRef<HTMLDivElement>(null);
@@ -62,6 +64,7 @@ export function App() {
   const restored = useRef(false);
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
+    applyAppearance();
     void load();
     void usePdfs.getState().load();
   }, [load]);
@@ -72,8 +75,9 @@ export function App() {
       // panels (Calendar/Mail) own the view, so don't re-open a note over them.
       // A null lastOpenId on the home surface means the dashboard was showing.
       const deepWork = useHome.getState().manualDeepWork;
-      const onAdmin = useWorkspace.getState().surface === "admin";
-      if (!deepWork && !onAdmin) {
+      // Admin (Calendar/Mail) and Settings own the view — don't re-open a note over them.
+      const ownsView = useWorkspace.getState().surface !== "home";
+      if (!deepWork && !ownsView) {
         const last = useWorkspace.getState().lastOpenId;
         if (last && notes[last]) select(last);
       }
@@ -111,10 +115,11 @@ export function App() {
 
   const note = selectedId ? notes[selectedId] : null;
   const showAdmin = !note && surface === "admin";
+  const showSettings = !note && surface === "settings";
   const showHome = !note && surface === "home";
   const deepWork = showHome && manualDeepWork;
   const zen = deepWork && zenMode;
-  const sidebarApplicable = !showAdmin && !deepWork;
+  const sidebarApplicable = !showAdmin && !showSettings && !deepWork;
   const sidebarVisible = sidebarApplicable && !sidebarCollapsed;
   const noteList = Object.values(notes);
   const inboxCount = noteList.filter((item) => item.inbox).length;
@@ -171,11 +176,16 @@ export function App() {
         >
           Zen
         </button>
-        {deepWork && (
-          <div className="mx-3 min-w-0 flex-1">
-            <SessionTabs />
-          </div>
-        )}
+        <div className="mx-3 min-w-0 flex-1">
+          <SessionTabs
+            onOpen={() => {
+              select(null);
+              setSurface("home");
+              setAdminMailId(null);
+              setManualDeepWork(true);
+            }}
+          />
+        </div>
         <div className="flex items-center gap-2">
           {sidebarApplicable && (
             <button
@@ -238,6 +248,19 @@ export function App() {
           >
             AI
           </button>
+          <button
+            className={`${HEADER_BTN} ${showSettings ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
+            onClick={() => {
+              select(null);
+              setManualDeepWork(false);
+              setAdminMailId(null);
+              setSurface("settings");
+            }}
+            title="Settings"
+            aria-label="Settings"
+          >
+            ⚙
+          </button>
         </div>
       </header>}
 
@@ -274,16 +297,18 @@ export function App() {
           }}
         />
 
-        <main className={`min-w-0 flex-1 ${note || showAdmin || deepWork ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`min-w-0 flex-1 ${note || showAdmin || showSettings || deepWork ? "overflow-hidden" : "overflow-y-auto"}`}>
           {/* Keyed by surface so switching views re-mounts and crossfades in. */}
           <div
-            key={note ? "note" : showAdmin ? "admin" : deepWork ? (zen ? "zen" : "deep") : "home"}
+            key={note ? "note" : showAdmin ? "admin" : showSettings ? "settings" : deepWork ? (zen ? "zen" : "deep") : "home"}
             className="zen-anim-fade h-full min-h-0"
           >
             {note ? (
               <NoteSurface note={note} />
             ) : showAdmin ? (
               <AdminPanel focus={adminFocus} mailId={adminMailId} />
+            ) : showSettings ? (
+              <SettingsView />
             ) : (
               <Home
                 deepWork={deepWork}

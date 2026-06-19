@@ -5,7 +5,9 @@ import { useDeepWork, sessionList } from "@/features/home/deepwork/deepworkStore
  * Browser-style tab row for Deep Work sessions, shown in the header while in Deep Work.
  * Click a tab to switch, double-click to rename inline, × to archive, + to create.
  */
-export function SessionTabs() {
+/** `onOpen` fires when the user activates/creates a session — used to enter the
+ *  Deep Work surface when the tabs are shown from another view. */
+export function SessionTabs({ onOpen }: { onOpen?: () => void } = {}) {
   const sessions = useDeepWork((s) => s.sessions);
   const order = useDeepWork((s) => s.order);
   const activeId = useDeepWork((s) => s.activeId);
@@ -56,7 +58,7 @@ export function SessionTabs() {
             ) : (
               <button
                 className="max-w-[12rem] truncate"
-                onClick={() => switchSession(s.id)}
+                onClick={() => { switchSession(s.id); onOpen?.(); }}
                 onDoubleClick={() => {
                   setEditing(s.id);
                   setDraft(s.name);
@@ -80,7 +82,7 @@ export function SessionTabs() {
       })}
       <button
         className="shrink-0 rounded-[10px] border border-[rgba(255,255,255,0.06)] px-2 py-1 text-sm text-[var(--text-dim)] transition hover:text-[var(--text)]"
-        onClick={() => createSession()}
+        onClick={() => { createSession(); onOpen?.(); }}
         title="New session"
         aria-label="New Deep Work session"
       >

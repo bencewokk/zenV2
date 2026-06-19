@@ -14,6 +14,7 @@ import {
   loadMemories, saveMemory, deleteMemory,
 } from "@/services/memory";
 import { isSignedIn } from "@/services/google/auth";
+import { loadSettings } from "@/services/ai/settings";
 import { listEvents, createEvent, updateEvent, deleteEvent } from "@/services/google/calendar";
 import {
   listThreads, getThread, createDraft,
@@ -417,10 +418,11 @@ const TOOLS: ToolImpl[] = [
     async (a) => {
       const g = needGoogle();
       if (g) return g;
+      const cfg = loadSettings();
       const dur = Number(a.durationMins) * 60000;
       const days = Number(a.days ?? 7);
-      const dayStart = Number(a.dayStart ?? 9);
-      const dayEnd = Number(a.dayEnd ?? 18);
+      const dayStart = Number(a.dayStart ?? cfg.freeSlotDayStart);
+      const dayEnd = Number(a.dayEnd ?? cfg.freeSlotDayEnd);
       const now = new Date();
       const max = new Date(now);
       max.setDate(max.getDate() + days);

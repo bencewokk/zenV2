@@ -1,0 +1,126 @@
+import { useEffect, useState } from "react";
+import { loadSettings, saveSettings } from "@/services/ai/settings";
+import { loadGoogleSettings, saveGoogleSettings } from "@/services/google/settings";
+import { deepseek } from "@/services/ai/deepseek";
+import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/services/google/auth";
+import { notify } from "@/shared/ui/notify";
+import { Field, SettingsSection, SaveBar } from "../ui";
+
+/** API keys, endpoints, and Google connection. */
+export function Connections() {
+  const [ai, setAi] = useState(() => loadSettings());
+  const [clientId, setClientId] = useState(() => loadGoogleSettings().clientId);
+  const [showKey, setShowKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [signedIn, setSignedIn] = useState(() => isSignedIn());
+
+  useEffect(() => onAuthChange(setSignedIn), []);
+
+  function saveAi() {
+    saveSettings(ai);
+    notify.success("DeepSeek settings saved");
+  }
+  function saveGoogle() {
+    saveGoogleSettings({ clientId: clientId.trim() });
+    notify.success("Google Client ID saved");
+  }
+
+  async function testKey() {
+    setTesting(true);
+    saveSettings(ai); // test against what the user typed
+    try {
+      const models = await deepseek.listModels();
+      if (models.length) notify.success(`Key works — ${models.length} models available`);
+      else notify.error("No models returned. Check the key and base URL.");
+    } catch (e) {
+      notify.error((e as Error).message || "Key test failed");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function connectGoogle() {
+    saveGoogleSettings({ clientId: clientId.trim() });
+    try {
+      await signIn();
+      notify.success("Connected to Google");
+    } catch (e) {
+      notify.error((e as Error).message || "Google sign-in failed");
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <SettingsSection title="DeepSeek" hint="Powers the AI assistant. The key is stored locally in your browser.">
+        <Field label="API key">
+          <div className="flex gap-2">
+            <input
+              type={showKey ? "text" : "password"}
+              value={ai.apiKey}
+              onChange={(e) => setAi({ ...ai, apiKey: e.target.value })}
+              placeholder="sk-…"
+              className="zen-input flex-1"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button className="zen-btn-ghost shrink-0" onClick={() => setShowKey((s) => !s)}>
+              {showKey ? "Hide" : "Show"}
+            </button>
+          </div>
+        </Field>
+        <Field label="Base URL" hint="In dev this is the Vite proxy prefix (/deepseek).">
+          <input
+            value={ai.baseUrl}
+            onChange={(e) => setAi({ ...ai, baseUrl: e.target.value })}
+            className="zen-input w-full"
+            spellCheck={false}
+          />
+        </Field>
+        <Field label="Default model">
+          <input
+            value={ai.model}
+            onChange={(e) => setAi({ ...ai, model: e.target.value })}
+            className="zen-input w-full"
+            spellCheck={false}
+          />
+        </Field>
+        <SaveBar onSave={saveAi}>
+          <button className="zen-btn-ghost" onClick={testKey} disabled={testing}>
+            {testing ? "Testing…" : "Test key"}
+          </button>
+        </SaveBar>
+      </SettingsSection>
+
+      <SettingsSection title="Google" hint="Calendar + Gmail access. The Client ID is a public OAuth web client id.">
+        <Field label="Client ID">
+          <input
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder="…apps.googleusercontent.com"
+            className="zen-input w-full"
+            spellCheck={false}
+          />
+        </Field>
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: signedIn ? "var(--ok)" : "var(--text-dim)" }}
+          />
+          <span className="text-xs text-[var(--text-dim)]">
+            {signedIn ? "Connected" : isConfigured() ? "Not connected" : "No Client ID set"}
+          </span>
+          <div className="ml-auto flex gap-2">
+            <button className="zen-btn-ghost" onClick={saveGoogle}>Save</button>
+            {signedIn ? (
+              <button className="zen-btn-ghost" onClick={() => { signOut(); notify.success("Disconnected"); }}>
+                Disconnect
+              </button>
+            ) : (
+              <button className="zen-btn" onClick={connectGoogle}>Connect</button>
+            )}
+          </div>
+        </div>
+      </SettingsSection>
+    </div>
+  );
+}

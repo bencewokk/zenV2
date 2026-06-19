@@ -4,7 +4,7 @@ import { create } from "zustand";
  * Persistent layout/workspace state (DESIGN.md #8): panel widths, last open note.
  * Restored on launch. Persisted to localStorage now; SQLite `workspace_state` later.
  */
-type Surface = "home" | "admin";
+type Surface = "home" | "admin" | "settings";
 type AdminFocus = "calendar" | "mail";
 
 type PersistedWorkspace = {

@@ -39,10 +39,8 @@ export interface Conversation {
   updatedAt: number;
 }
 
-const MAX_TOOL_STEPS = 8;
 const CONV_KEY = "zen.ai.conversations.v1";
 const OPEN_KEY = "zen.ai.open.v1";
-const MAX_CONVERSATIONS = 30;
 
 function readOpen(): boolean {
   try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; }
@@ -221,9 +219,11 @@ export const useAI = create<AIState>((set, get) => ({
     // proposing actions it isn't allowed to take.
     const activeTools = TOOL_DEFS.filter((d) => policyFor(d.function.name) !== "off");
 
+    const maxToolSteps = Math.max(1, loadSettings().maxToolSteps);
+
     try {
       // Agent loop: stream the model → run any tool calls → feed results back → repeat.
-      for (let step = 0; step < MAX_TOOL_STEPS; step++) {
+      for (let step = 0; step < maxToolSteps; step++) {
         // Stream the assistant's text into a live turn as it arrives.
         set((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
         const turnIndex = get().turns.length - 1;
@@ -426,7 +426,8 @@ export const useAI = create<AIState>((set, get) => ({
 
 function persistConversations(conversations: Conversation[], activeId: string): void {
   try {
-    localStorage.setItem(CONV_KEY, JSON.stringify({ conversations: conversations.slice(-MAX_CONVERSATIONS), activeId }));
+    const max = Math.max(1, loadSettings().maxConversations);
+    localStorage.setItem(CONV_KEY, JSON.stringify({ conversations: conversations.slice(-max), activeId }));
   } catch { /* ignore */ }
 }
 
