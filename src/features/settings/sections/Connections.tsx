@@ -6,11 +6,15 @@ import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/servi
 import { notify } from "@/shared/ui/notify";
 import { Field, SettingsSection, SaveBar } from "../ui";
 
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 /** API keys, endpoints, and Google connection. */
 export function Connections() {
   const [ai, setAi] = useState(() => loadSettings());
   const [clientId, setClientId] = useState(() => loadGoogleSettings().clientId);
+  const [clientSecret, setClientSecret] = useState(() => loadGoogleSettings().clientSecret);
   const [showKey, setShowKey] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
   const [testing, setTesting] = useState(false);
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
 
@@ -21,8 +25,8 @@ export function Connections() {
     notify.success("DeepSeek settings saved");
   }
   function saveGoogle() {
-    saveGoogleSettings({ clientId: clientId.trim() });
-    notify.success("Google Client ID saved");
+    saveGoogleSettings({ clientId: clientId.trim(), clientSecret: clientSecret.trim() });
+    notify.success("Google settings saved");
   }
 
   async function testKey() {
@@ -40,7 +44,7 @@ export function Connections() {
   }
 
   async function connectGoogle() {
-    saveGoogleSettings({ clientId: clientId.trim() });
+    saveGoogleSettings({ clientId: clientId.trim(), clientSecret: clientSecret.trim() });
     try {
       await signIn();
       notify.success("Connected to Google");
@@ -91,7 +95,14 @@ export function Connections() {
         </SaveBar>
       </SettingsSection>
 
-      <SettingsSection title="Google" hint="Calendar + Gmail access. The Client ID is a public OAuth web client id.">
+      <SettingsSection
+        title="Google"
+        hint={
+          IS_TAURI
+            ? "Calendar + Gmail access. Use a Google \"Desktop app\" OAuth client (Client ID + Secret)."
+            : "Calendar + Gmail access. The Client ID is a public OAuth web client id."
+        }
+      >
         <Field label="Client ID">
           <input
             value={clientId}
@@ -101,6 +112,24 @@ export function Connections() {
             spellCheck={false}
           />
         </Field>
+        {IS_TAURI && (
+          <Field label="Client secret" hint="From your Google Desktop OAuth client. Stored in your OS keyring.">
+            <div className="flex gap-2">
+              <input
+                type={showSecret ? "text" : "password"}
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder="GOCSPX-…"
+                className="zen-input flex-1"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button className="zen-btn-ghost shrink-0" onClick={() => setShowSecret((s) => !s)}>
+                {showSecret ? "Hide" : "Show"}
+              </button>
+            </div>
+          </Field>
+        )}
         <div className="flex items-center gap-2">
           <span
             className="inline-block h-2 w-2 rounded-full"

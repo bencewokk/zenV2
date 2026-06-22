@@ -6,12 +6,16 @@ import { GOOGLE_CLIENT_ID } from "./secret";
 
 export interface GoogleSettings {
   clientId: string;
+  /** Desktop (Tauri) build only: OAuth client secret for the code flow.
+   *  Unused by the browser GIS flow. Stored locally + mirrored to the OS keyring. */
+  clientSecret: string;
 }
 
 const KEY = "zen.google.settings.v1";
 
 const DEFAULTS: GoogleSettings = {
   clientId: GOOGLE_CLIENT_ID,
+  clientSecret: "",
 };
 
 export function loadGoogleSettings(): GoogleSettings {

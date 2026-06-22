@@ -8,6 +8,7 @@ import { ProfilePanel } from "@/features/memory/ProfilePanel";
 import { ToolSettings } from "@/features/ai/ToolSettings";
 import { useMemoryStatus } from "@/features/memory/useMemoryStatus";
 import { usePresence } from "@/shared/ui/usePresence";
+import { Dropdown } from "@/shared/ui/Dropdown";
 
 export function ChatPanel() {
   const open = useAI((s) => s.open);
@@ -79,19 +80,16 @@ export function ChatPanel() {
     <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
       {/* Primary row: conversation + new + close */}
       <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-3 py-2">
-        <select
+        <Dropdown
           value={activeId}
-          onChange={(e) => switchConversation(e.target.value)}
-          className="min-w-0 flex-1 truncate rounded bg-transparent py-1 text-sm font-medium outline-none hover:bg-[var(--bg-elev)]"
+          onChange={switchConversation}
           title="Conversation"
-        >
-          {conversations
+          className="min-w-0 flex-1 text-sm font-medium"
+          options={conversations
             .slice()
             .sort((a, b) => b.updatedAt - a.updatedAt)
-            .map((c) => (
-              <option key={c.id} value={c.id}>{c.title || "New chat"}</option>
-            ))}
-        </select>
+            .map((c) => ({ value: c.id, label: c.title || "New chat" }))}
+        />
         <button
           className="zen-pressable shrink-0 rounded px-1.5 text-base leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
           onClick={newConversation}
@@ -110,16 +108,13 @@ export function ChatPanel() {
 
       {/* Secondary row: model + memory · profile / delete (all muted) */}
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-1 text-[11px] text-[var(--text-dim)]">
-        <select
+        <Dropdown
           value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="min-w-0 max-w-[40%] truncate rounded bg-transparent py-0.5 text-[11px] outline-none hover:text-[var(--text)]"
+          onChange={setModel}
           title="Model"
-        >
-          {(models.length ? models : [model]).map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
+          className="min-w-0 max-w-[40%] text-[11px]"
+          options={(models.length ? models : [model]).map((m) => ({ value: m, label: m }))}
+        />
         {memStatus !== "idle" && (
           <span className="flex items-center gap-1" title={`Embedding model: ${memStatus}`}>
             <span

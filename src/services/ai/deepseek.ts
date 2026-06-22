@@ -1,9 +1,23 @@
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { AIMessage, AIProvider, ToolCall, ToolDef } from "./types";
 import { loadSettings } from "./settings";
 
 export interface AssistantReply {
   content: string | null;
   tool_calls?: ToolCall[];
+}
+
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** In the desktop build, requests go through the native HTTP client (Rust) so there's
+ *  no CORS and no dependency on the Vite dev proxy. The browser build keeps window.fetch. */
+const httpFetch: typeof fetch = IS_TAURI ? (tauriFetch as typeof fetch) : fetch;
+
+/** Resolve the configured base URL. The "/deepseek" default is the Vite dev proxy,
+ *  which only exists in the browser dev server; the desktop build hits the API directly. */
+function resolveBase(baseUrl: string): string {
+  if (IS_TAURI && baseUrl.startsWith("/")) return "https://api.deepseek.com";
+  return baseUrl;
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -13,7 +27,7 @@ async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Pro
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
-      const res = await fetch(url, init);
+      const res = await httpFetch(url, init);
       if (res.status >= 500 && i < attempts - 1) {
         await delay(300 * (i + 1));
         continue;
@@ -46,7 +60,7 @@ export async function* streamChatWithTools(
   const { apiKey, baseUrl } = loadSettings();
   if (!apiKey) throw new Error("No DeepSeek API key set (open AI settings).");
 
-  const res = await fetchWithRetry(`${baseUrl}/chat/completions`, {
+  const res = await fetchWithRetry(`${resolveBase(baseUrl)}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -121,7 +135,7 @@ export async function chatOnce(
 ): Promise<AssistantReply> {
   const { apiKey, baseUrl } = loadSettings();
   if (!apiKey) throw new Error("No DeepSeek API key set (open AI settings).");
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  const res = await httpFetch(`${resolveBase(baseUrl)}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -154,7 +168,7 @@ export const deepseek: AIProvider = {
     const { apiKey, baseUrl } = loadSettings();
     if (!apiKey) return [];
     try {
-      const res = await fetch(`${baseUrl}/models`, {
+      const res = await httpFetch(`${resolveBase(baseUrl)}/models`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (!res.ok) return [];
@@ -169,7 +183,7 @@ export const deepseek: AIProvider = {
     const { apiKey, baseUrl } = loadSettings();
     if (!apiKey) throw new Error("No DeepSeek API key set (open AI settings).");
 
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await httpFetch(`${resolveBase(baseUrl)}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

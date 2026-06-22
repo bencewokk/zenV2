@@ -2,6 +2,9 @@
 
 /* Theme tokens — replaces V1's constants.py styling. */
 :root {
+  /* Render native controls (select dropdowns, scrollbars, pickers) in dark mode
+     so their popups don't flash white on hover. */
+  color-scheme: dark;
   --bg: #1a1b1e;
   --bg-elev: #232428;
   --border: #34363b;

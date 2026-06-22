@@ -5,6 +5,7 @@ import { NoteSurface } from "@/features/notes/NoteSurface";
 import { FilterBar } from "@/features/filtering/FilterBar";
 import { StatusBar } from "@/shared/ui/StatusBar";
 import { AuroraOverlay } from "@/shared/ui/AuroraOverlay";
+import { WindowControls, WindowResizeHandles, IS_TAURI } from "@/shared/ui/WindowChrome";
 import { ChatPanel } from "@/features/ai/ChatPanel";
 import { Home } from "@/features/home/Home";
 import { useHome } from "@/features/home/store";
@@ -163,7 +164,15 @@ export function App() {
 
       <AuroraOverlay />
 
-      {!zen && <header className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
+      <WindowResizeHandles />
+
+      {zen && IS_TAURI && (
+        <div data-tauri-drag-region className="fixed inset-x-0 top-0 z-[55] flex h-7 justify-end">
+          <WindowControls />
+        </div>
+      )}
+
+      {!zen && <header data-tauri-drag-region className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
         <button
           className="zen-pressable inline-flex h-7 items-center font-semibold tracking-tight text-[var(--text)] hover:text-[var(--accent)]"
           onClick={() => {
@@ -176,7 +185,7 @@ export function App() {
         >
           Zen
         </button>
-        <div className="mx-3 min-w-0 flex-1">
+        <div data-tauri-drag-region className="mx-3 min-w-0 flex-1">
           <SessionTabs
             onOpen={() => {
               select(null);
@@ -261,6 +270,7 @@ export function App() {
           >
             ⚙
           </button>
+          {IS_TAURI && <WindowControls className="-mr-2 ml-1" />}
         </div>
       </header>}
 
