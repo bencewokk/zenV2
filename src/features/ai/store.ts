@@ -152,9 +152,27 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "ready: use the ask_user tool for multiple-choice questions — put the FULL question text " +
     "(including any $...$ math) in the question field and the answer choices in options; do not " +
     "leave the real question only in your prose. Ask short-answer questions in plain text. " +
-    "After tutoring or grading a quiz, record progress " +
-    "with deepwork_set_mastery (per-concept mastery 0-100 plus an overall readiness). Ask the user " +
-    "if they're ready to be evaluated before quizzing. " +
+    "After informal tutoring, record progress " +
+    "with deepwork_set_mastery (per-concept mastery 0-100 plus an overall readiness). " +
+    "PREP BEFORE QUIZZING: when the user wants to prepare, find the notes/PDFs they should read for " +
+    "each backbone concept (use recall/search). Pull the relevant ones onto the canvas with deepwork_add. " +
+    "If a concept has NO note covering it, create a concise study note (create_note, grounded in the " +
+    "material) and add it too — then give the user a short reading checklist. " +
+    "FORMAL QUIZ: to run a real quiz, call deepwork_start_quiz with a set of questions (size it to the " +
+    "material). Mix question kinds — 'choice' (MCQ A–D / true-false), 'text' (numerical, fill-in-the-blank, " +
+    "short answer, written step-by-step, error analysis), 'math' (LaTeX working you then follow), 'order' " +
+    "(arrange steps — provide `items` in the CORRECT order; the app shuffles them for the user), " +
+    "'match' (match pairs). Tag each question with the `concept` it tests and a hidden " +
+    "`rubric`. The user answers in a dedicated quiz surface; when they submit you'll receive their answers — " +
+    "grade every question and call deepwork_grade_quiz with {id, verdict, score, feedback}, plus `strengths` " +
+    "and `mistakes` summaries (stored with the quiz inside this study session, and read back via " +
+    "deepwork_read_material so you can target weak spots in later quizzes). " +
+    "Concept mastery updates automatically from the scores, so don't also call deepwork_set_mastery for a quiz. " +
+    "Ask the user if they're ready to be evaluated before starting a quiz. " +
+    "PDF TOOLING WHILE TEACHING: when you reference a PDF, call pdf_goto to scroll the user's viewer to " +
+    "the exact page you're discussing. When a passage is important, highlight_pdf it and tag the `concept` " +
+    "it supports plus a one-line `why` — these become concept→page links in the Study panel. When grading " +
+    "a quiz question that came from a PDF, include pdfId + page in its result so the user can jump back to review. " +
     "IMPORTANT: Whenever you would offer the user choices, present a numbered/bulleted list of " +
     "options, ask which they'd prefer, or are unsure how to proceed, you MUST call the ask_user " +
     "tool with concise options instead of writing the options as plain text. Use ask_user " +
@@ -168,7 +186,160 @@ const SYSTEM = (ctx?: string): AIMessage => ({
 
 const initialConv = readConversations();
 
-export const useAI = create<AIState>((set, get) => ({
+export const useAI = create<AIState>((set, get) => {
+  /**
+   * Build the model's message list from conversation history. Past tool activity
+   * (reads, applied writes, run/dismissed proposals) is surfaced as `[Tool activity]`
+   * system notes so the model stays aware of what actually happened across turns —
+   * otherwise it can't act on a tool it called earlier.
+   */
+  function buildMessages(noteContext?: string, userText?: string): AIMessage[] {
+    const msgs: AIMessage[] = [SYSTEM(noteContext)];
+    for (const t of get().turns) {
+      if (t.role === "tool") msgs.push({ role: "system", content: `[Tool activity] ${t.content}` });
+      else msgs.push({ role: t.role as "user" | "assistant", content: t.content });
+    }
+    if (userText) msgs.push({ role: "user", content: userText });
+    return msgs;
+  }
+
+  /**
+   * The agent loop: stream the model → run any tool calls → feed each result back
+   * → repeat. Shared by send() and the post-proposal continuation. Owns the
+   * streaming/usage/status lifecycle (resets `streaming` in finally).
+   */
+  async function runAgent(messages: AIMessage[], controller: AbortController): Promise<void> {
+    const activeTools = TOOL_DEFS.filter((d) => policyFor(d.function.name) !== "off");
+    const maxToolSteps = Math.max(1, loadSettings().maxToolSteps);
+    const usage: Usage = { promptTokens: 0, completionTokens: 0 };
+    try {
+      for (let step = 0; step < maxToolSteps; step++) {
+        set((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
+        const turnIndex = get().turns.length - 1;
+        let acc = "";
+        const gen = streamChatWithTools(messages, get().model, activeTools, controller.signal);
+        let reply: AssistantReply;
+        for (;;) {
+          const next = await gen.next();
+          if (next.done) {
+            reply = next.value;
+            if (reply.usage) {
+              usage.promptTokens += reply.usage.promptTokens;
+              usage.completionTokens += reply.usage.completionTokens;
+            }
+            break;
+          }
+          acc += next.value;
+          set((s) => {
+            const t = [...s.turns];
+            if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: acc };
+            return { turns: t };
+          });
+        }
+
+        if (reply.tool_calls?.length) {
+          if (!acc.trim()) set((s) => ({ turns: s.turns.filter((_, i) => i !== turnIndex) }));
+          messages.push({ role: "assistant", content: reply.content ?? "", tool_calls: reply.tool_calls });
+
+          const reads = new Map<string, Promise<string>>();
+          for (const call of reply.tool_calls) {
+            if (call.function.name !== "ask_user" && isReadTool(call.function.name)) {
+              reads.set(call.id, runToolSafe(call.function.name, parseToolArgs(call.function.arguments)));
+            }
+          }
+
+          for (const call of reply.tool_calls) {
+            const name = call.function.name;
+            const args = parseToolArgs(call.function.arguments);
+
+            let result: string;
+            if (name === "ask_user") {
+              const question = String(args.question ?? "").trim();
+              const options = (Array.isArray(args.options) ? args.options.map(String) : typeof args.options === "string" ? [args.options] : [])
+                .map((o) => o.trim())
+                .filter(Boolean);
+              if (!question && !options.length) {
+                result = "ask_user received no question or options. Ask the user directly in plain text instead.";
+              } else {
+                const choice = await new Promise<string>((resolve) => {
+                  questionResolver = resolve;
+                  set({ pendingQuestion: { question: question || "Pick one:", options: options.length ? options : ["OK"] } });
+                });
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${question || "Pick one:"} → ${choice}` }] }));
+                result = `The user chose: ${choice}`;
+              }
+            } else if (isReadTool(name)) {
+              set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔎 ${describeToolCall(name, args).title}` }] }));
+              result = await reads.get(call.id)!;
+            } else if (isAutoTool(name)) {
+              set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${describeToolCall(name, args).title}` }] }));
+              result = await runToolSafe(name, args);
+            } else {
+              const policy = policyFor(name);
+              const desc = describeToolCall(name, args);
+              if (policy === "off") {
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🚫 ${desc.title} (disabled)` }] }));
+                result = `The user has disabled the "${name}" tool. Do not use it; tell the user it's turned off or find another way.`;
+              } else if (policy === "auto") {
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${desc.title}` }] }));
+                result = await runToolSafe(name, args);
+              } else {
+                const id = crypto.randomUUID();
+                set((s) => ({ proposals: [...s.proposals, { id, name, args, ...desc, status: "pending" }] }));
+                result = `Proposed "${desc.title}: ${desc.detail}" to the user; awaiting their action. Do not assume it ran — you'll be told the outcome once they act.`;
+              }
+            }
+            messages.push({ role: "tool", tool_call_id: call.id, content: result });
+          }
+          continue;
+        }
+
+        set((s) => {
+          const t = [...s.turns];
+          if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: reply.content ?? acc };
+          return { turns: t };
+        });
+        break;
+      }
+      useStatus.getState().set({ ai: "idle" });
+    } catch (e) {
+      if ((e as Error).name === "AbortError") {
+        useStatus.getState().set({ ai: "idle" });
+      } else {
+        useStatus.getState().set({ ai: "error" });
+        notify.error((e as Error).message || "AI request failed");
+      }
+    } finally {
+      set({ streaming: false, controller: null });
+      if (usage.promptTokens || usage.completionTokens) addUsageToActive(usage);
+      syncActive();
+      void nameConversation(get().activeId);
+    }
+  }
+
+  /**
+   * Once every proposed tool has resolved (run or dismissed), feed the outcomes
+   * back to the model and let it continue — use returned ids, take the next step,
+   * or confirm. This is what lets a gated tool's result reach the AI at all.
+   */
+  async function resumeAfterProposals(): Promise<void> {
+    if (get().streaming) return;
+    if (get().proposals.some((p) => p.status === "pending" || p.status === "running")) return;
+    const controller = new AbortController();
+    set({ streaming: true, controller });
+    useStatus.getState().set({ ai: "busy" });
+    const messages = buildMessages();
+    messages.push({
+      role: "system",
+      content:
+        "The action(s) you proposed have now been handled by the user (see the latest [Tool activity] entries — " +
+        "some may have run, some may have been dismissed). Continue accordingly: use any returned ids/results to " +
+        "take the next step, or briefly confirm what's done. Do not re-propose an action the user just ran or dismissed.",
+    });
+    await runAgent(messages, controller);
+  }
+
+  return {
   open: readOpen(),
   turns: initialConv.conversations.find((c) => c.id === initialConv.activeId)?.turns ?? [],
   streaming: false,
@@ -203,14 +374,6 @@ export const useAI = create<AIState>((set, get) => ({
   async send(userText, noteContext) {
     if (get().streaming || !userText.trim()) return;
 
-    // Build the running message list from prior user/assistant turns.
-    const history = get().turns.filter((t) => t.role !== "tool");
-    const messages: AIMessage[] = [
-      SYSTEM(noteContext),
-      ...history.map((t) => ({ role: t.role as "user" | "assistant", content: t.content })),
-      { role: "user", content: userText },
-    ];
-
     const controller = new AbortController();
     recordActivity(`asked AI: "${userText.slice(0, 80)}"`);
     set((s) => ({
@@ -219,6 +382,8 @@ export const useAI = create<AIState>((set, get) => ({
       controller,
     }));
     useStatus.getState().set({ ai: "busy" });
+
+    const messages = buildMessages(noteContext, userText);
 
     // Auto-inject relevant notes from memory (RAG) before the model runs, so it
     // has context without needing to call the recall tool itself.
@@ -233,132 +398,7 @@ export const useAI = create<AIState>((set, get) => ({
       }
     } catch { /* memory unavailable — proceed without it */ }
 
-    // Don't even offer tools the user has switched off — keeps the model from
-    // proposing actions it isn't allowed to take.
-    const activeTools = TOOL_DEFS.filter((d) => policyFor(d.function.name) !== "off");
-
-    const maxToolSteps = Math.max(1, loadSettings().maxToolSteps);
-    const usage: Usage = { promptTokens: 0, completionTokens: 0 };
-
-    try {
-      // Agent loop: stream the model → run any tool calls → feed results back → repeat.
-      for (let step = 0; step < maxToolSteps; step++) {
-        // Stream the assistant's text into a live turn as it arrives.
-        set((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
-        const turnIndex = get().turns.length - 1;
-        let acc = "";
-        const gen = streamChatWithTools(messages, get().model, activeTools, controller.signal);
-        let reply: AssistantReply;
-        for (;;) {
-          const next = await gen.next();
-          if (next.done) {
-            reply = next.value;
-            if (reply.usage) {
-              usage.promptTokens += reply.usage.promptTokens;
-              usage.completionTokens += reply.usage.completionTokens;
-            }
-            break;
-          }
-          acc += next.value;
-          set((s) => {
-            const t = [...s.turns];
-            if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: acc };
-            return { turns: t };
-          });
-        }
-
-        if (reply.tool_calls?.length) {
-          // Drop the empty placeholder turn if the model produced no visible text.
-          if (!acc.trim()) set((s) => ({ turns: s.turns.filter((_, i) => i !== turnIndex) }));
-          messages.push({ role: "assistant", content: reply.content ?? "", tool_calls: reply.tool_calls });
-
-          // Kick off all read tools concurrently; await them in order below.
-          const reads = new Map<string, Promise<string>>();
-          for (const call of reply.tool_calls) {
-            if (call.function.name !== "ask_user" && isReadTool(call.function.name)) {
-              reads.set(call.id, runToolSafe(call.function.name, parseToolArgs(call.function.arguments)));
-            }
-          }
-
-          for (const call of reply.tool_calls) {
-            const name = call.function.name;
-            const args = parseToolArgs(call.function.arguments);
-
-            let result: string;
-            if (name === "ask_user") {
-              // Pause and ask the user; their pick becomes the tool result.
-              const question = String(args.question ?? "").trim();
-              const options = (Array.isArray(args.options) ? args.options.map(String) : typeof args.options === "string" ? [args.options] : [])
-                .map((o) => o.trim())
-                .filter(Boolean);
-              if (!question && !options.length) {
-                // Malformed call — don't render a dead-end empty card.
-                result = "ask_user received no question or options. Ask the user directly in plain text instead.";
-              } else {
-                const choice = await new Promise<string>((resolve) => {
-                  questionResolver = resolve;
-                  set({ pendingQuestion: { question: question || "Pick one:", options: options.length ? options : ["OK"] } });
-                });
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${question || "Pick one:"} → ${choice}` }] }));
-                result = `The user chose: ${choice}`;
-              }
-            } else if (isReadTool(name)) {
-              // Reads run automatically (in parallel) so the assistant can answer.
-              set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔎 ${describeToolCall(name, args).title}` }] }));
-              result = await reads.get(call.id)!;
-            } else if (isAutoTool(name)) {
-              // Study-state writes apply immediately (no proposal card) so the
-              // tutoring flow stays conversational — they're local & non-outbound.
-              set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${describeToolCall(name, args).title}` }] }));
-              result = await runToolSafe(name, args);
-            } else {
-              // Everything else is gated by the user's per-tool policy (Tools tab).
-              const policy = policyFor(name);
-              const desc = describeToolCall(name, args);
-              if (policy === "off") {
-                // The user disabled this tool — tell the model so it can adapt.
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🚫 ${desc.title} (disabled)` }] }));
-                result = `The user has disabled the "${name}" tool. Do not use it; tell the user it's turned off or find another way.`;
-              } else if (policy === "auto") {
-                // Auto-apply: run now and report the outcome inline.
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${desc.title}` }] }));
-                result = await runToolSafe(name, args);
-              } else {
-                // "ask": propose a card the user must Run/Dismiss.
-                const id = crypto.randomUUID();
-                set((s) => ({
-                  proposals: [...s.proposals, { id, name, args, ...desc, status: "pending" }],
-                }));
-                result = `Proposed "${desc.title}: ${desc.detail}" to the user; awaiting their action. Do not assume it ran.`;
-              }
-            }
-            messages.push({ role: "tool", tool_call_id: call.id, content: result });
-          }
-          continue; // let the model use the tool results
-        }
-
-        // Final answer — already streamed into turnIndex; make sure it's complete.
-        set((s) => {
-          const t = [...s.turns];
-          if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: reply.content ?? acc };
-          return { turns: t };
-        });
-        break;
-      }
-      useStatus.getState().set({ ai: "idle" });
-    } catch (e) {
-      if ((e as Error).name === "AbortError") {
-        useStatus.getState().set({ ai: "idle" });
-      } else {
-        useStatus.getState().set({ ai: "error" });
-        notify.error((e as Error).message || "AI request failed");
-      }
-    } finally {
-      set({ streaming: false, controller: null });
-      if (usage.promptTokens || usage.completionTokens) addUsageToActive(usage);
-      syncActive();
-      void nameConversation(get().activeId);
-    }
+    await runAgent(messages, controller);
   },
 
   stop() {
@@ -419,10 +459,21 @@ export const useAI = create<AIState>((set, get) => ({
       syncActive();
       notify.error(`${p.title} failed: ${result}`);
     }
+    // Feed the outcome back to the model so it can take the next step / confirm.
+    await resumeAfterProposals();
   },
 
-  dismissProposal(id) {
-    set((s) => ({ proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "dismissed" } : x)) }));
+  async dismissProposal(id) {
+    const p = get().proposals.find((x) => x.id === id);
+    set((s) => ({
+      proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "dismissed" } : x)),
+      // Record the decline so the model knows it was declined.
+      turns: p ? [...s.turns, { role: "tool", content: `✕ ${p.title}: ${p.detail} — dismissed by user` }] : s.turns,
+    }));
+    if (p) syncActive();
+    // Continue once nothing is left pending — so a "ran A, dismissed B" batch still
+    // gets a single follow-up where the model reacts to both.
+    await resumeAfterProposals();
   },
 
   async complete(instruction, text) {
@@ -449,7 +500,8 @@ export const useAI = create<AIState>((set, get) => ({
       return text;
     }
   },
-}));
+  };
+});
 
 function persistConversations(conversations: Conversation[], activeId: string): void {
   try {

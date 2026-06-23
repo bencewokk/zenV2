@@ -351,7 +351,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                                   }`}
                                 >
                                   {done && (
-                                    <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                    <svg viewBox="0 0 12 12" className="zen-anim-burst h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.2">
                                       <path d="M2.5 6.4l2.4 2.4 4.6-5" strokeLinecap="round" strokeLinejoin="round" />
                                     </svg>
                                   )}
@@ -385,7 +385,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                       )}
                     </div>
                     <button
-                      className="zen-pressable shrink-0 self-start rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(96,165,250,0.24)] hover:brightness-105 disabled:opacity-60"
+                      className="zen-pressable zen-shine shrink-0 self-start rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(96,165,250,0.24)] hover:brightness-105 disabled:opacity-60"
                       onClick={() => void regenerateSummary()}
                       disabled={summaryLoading}
                     >
@@ -411,7 +411,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                       </div>
                     </div>
                     <button
-                      className="rounded-[12px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-dim)] transition hover:text-[var(--text)] disabled:opacity-60"
+                      className="zen-pressable rounded-[12px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-60"
                       onClick={() => openTarget(focusTarget)}
                       disabled={focus.kind === "empty"}
                     >
@@ -428,19 +428,19 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                   {deepWork && focus.kind !== "empty" && (
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button
-                        className="rounded-[12px] border border-[rgba(76,175,114,0.3)] bg-[rgba(76,175,114,0.08)] px-3 py-1.5 text-sm text-[var(--text)] transition hover:bg-[rgba(76,175,114,0.14)]"
+                        className="zen-pressable rounded-[12px] border border-[rgba(76,175,114,0.3)] bg-[rgba(76,175,114,0.08)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[rgba(76,175,114,0.14)]"
                         onClick={() => void handleDone()}
                       >
                         Done
                       </button>
                       <button
-                        className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-3 py-1.5 text-sm text-[var(--text)] transition hover:bg-[rgba(255,255,255,0.05)]"
+                        className="zen-pressable rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[rgba(255,255,255,0.05)]"
                         onClick={handleSnooze}
                       >
                         Snooze
                       </button>
                       <button
-                        className="rounded-[12px] border border-[rgba(246,104,94,0.28)] bg-[rgba(246,104,94,0.08)] px-3 py-1.5 text-sm text-[var(--text)] transition hover:bg-[rgba(246,104,94,0.14)] disabled:opacity-60"
+                        className="zen-pressable rounded-[12px] border border-[rgba(246,104,94,0.28)] bg-[rgba(246,104,94,0.08)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[rgba(246,104,94,0.14)] disabled:opacity-60"
                         onClick={() => void handleBlocked()}
                         disabled={captureSaving}
                       >
@@ -463,7 +463,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                         {deepWorkActions.map((item) => (
                           <button
                             key={item.key}
-                            className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-3 py-3 text-left transition hover:bg-[rgba(255,255,255,0.04)]"
+                            className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-3 py-3 text-left transition hover:-translate-y-0.5 hover:bg-[rgba(255,255,255,0.04)]"
                             onClick={() => {
                               setFocusTarget(item.target);
                               openTarget(item.target);
@@ -504,7 +504,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                           rows={4}
                         />
                         <button
-                          className="zen-pressable shrink-0 rounded-[12px] bg-[#60A5FA] px-4 py-2.5 text-sm font-semibold text-black hover:brightness-105 disabled:opacity-60"
+                          className="zen-pressable zen-shine shrink-0 rounded-[12px] bg-[#60A5FA] px-4 py-2.5 text-sm font-semibold text-black hover:brightness-105 disabled:opacity-60"
                           type="submit"
                           disabled={!quickCapture.trim() || captureSaving}
                         >
@@ -537,7 +537,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                           style={{ borderLeft: `3px solid ${group.accent}` }}
                         >
                           <button
-                            className="w-full text-left disabled:opacity-100"
+                            className="w-full text-left transition-transform duration-150 ease-out enabled:hover:translate-x-1 disabled:opacity-100"
                             disabled={!group.target}
                             onClick={() => {
                               if (!group.target) return;
@@ -554,7 +554,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                               {group.children.map((child) => (
                                 <button
                                   key={child.key}
-                                  className="flex w-full items-start gap-3 rounded-[12px] px-2 py-1.5 text-left transition hover:bg-[rgba(255,255,255,0.03)]"
+                                  className="flex w-full items-start gap-3 rounded-[12px] px-2 py-1.5 text-left transition hover:translate-x-1 hover:bg-[rgba(255,255,255,0.03)]"
                                   onClick={() => {
                                     setFocusTarget(child.target);
                                     openTarget(child.target);
@@ -775,13 +775,13 @@ function DailyQuote() {
       <div className="zen-meta mt-1 text-xs">
         — {quote.author}
         <button
-          className="ml-2 align-middle text-[var(--text-dim)] opacity-0 transition hover:text-[var(--text)] group-hover:opacity-100 disabled:opacity-40"
+          className="ml-2 inline-block align-middle text-[var(--text-dim)] opacity-0 transition hover:text-[var(--text)] group-hover:opacity-100 disabled:opacity-40"
           onClick={() => void refresh(true)}
           disabled={loading}
           title="New quote"
           aria-label="New quote"
         >
-          ↻
+          <span className={loading ? "zen-spin" : ""}>↻</span>
         </button>
       </div>
     </div>
@@ -824,7 +824,7 @@ function DeepWorkRecommendations() {
           {recent.map((s) => (
             <button
               key={s.id}
-              className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:border-[rgba(96,165,250,0.3)] hover:bg-[rgba(96,165,250,0.06)]"
+              className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:translate-x-1 hover:border-[rgba(96,165,250,0.3)] hover:bg-[rgba(96,165,250,0.06)]"
               onClick={() => open(s.id)}
             >
               <span className="min-w-0 flex-1">

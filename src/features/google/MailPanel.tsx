@@ -117,7 +117,7 @@ function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpen
             <button
               key={c.id}
               onClick={() => setCat(c.id)}
-              className={`zen-pressable rounded-full px-2.5 py-0.5 text-xs ${
+              className={`zen-pressable rounded-full px-2.5 py-0.5 text-xs hover:scale-105 ${
                 cat === c.id
                   ? "bg-[var(--accent-dim)] text-[var(--text)]"
                   : "bg-[var(--bg-elev)] text-[var(--text-dim)] hover:text-[var(--text)]"
@@ -145,7 +145,7 @@ function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpen
                     event.preventDefault();
                     setMenu({ x: event.clientX, y: event.clientY, id: t.id });
                   }}
-                  className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left hover:bg-[var(--bg-elev)] ${
+                  className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left transition-colors hover:bg-[var(--bg-elev)] ${
                     openId === t.id ? "bg-[var(--bg-elev)]" : ""
                   }`}
                 >
@@ -153,7 +153,7 @@ function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpen
                     <span className={`truncate text-sm ${t.unread ? "font-semibold" : ""}`}>{t.subject}</span>
                     <span
                       className={`shrink-0 text-[10px] ${aiChecked ? "text-[var(--accent)]" : "text-transparent"}`}
-                      title={aiChecked ? "AI has checked this email for calendar matches" : undefined}
+                      title={aiChecked ? "AI has checked this email against your dashboard labels" : undefined}
                     >
                       ✦
                     </span>
@@ -175,7 +175,7 @@ function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpen
 
         {menu && (
           <div
-            className="zen-anim-pop fixed z-50 min-w-[180px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
+            className="zen-anim-spring fixed z-50 min-w-[180px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
             style={{ left: menu.x, top: menu.y, transformOrigin: "top left" }}
             onPointerDown={(event) => event.stopPropagation()}
           >
@@ -199,7 +199,7 @@ function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpen
         ) : (
           <>
             <button
-              className="zen-pressable mb-3 rounded bg-[var(--accent)] px-3 py-1 text-xs text-black"
+              className="zen-pressable zen-shine mb-3 rounded bg-[var(--accent)] px-3 py-1 text-xs text-black"
               onClick={summarize}
             >
               Summarize with AI

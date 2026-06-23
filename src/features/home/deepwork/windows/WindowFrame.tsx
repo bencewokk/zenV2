@@ -80,7 +80,7 @@ function snapToPeers(g: WindowGeom, peers: WindowGeom[]): WindowGeom {
  * near the canvas edges previews a Windows-style snap (half/quarter/full).
  */
 export function WindowFrame({
-  geom, onCommit, title, glyph, accent, onRemove, onHeaderContextMenu, z, active, onFocus, peers, children,
+  geom, onCommit, title, glyph, accent, onRemove, onHeaderContextMenu, z, active, onFocus, peers, chromeless, children,
 }: {
   geom: WindowGeom;
   onCommit: (geom: WindowGeom) => void;
@@ -93,6 +93,8 @@ export function WindowFrame({
   active?: boolean;
   onFocus?: () => void;
   peers?: WindowGeom[];
+  /** Zen mode: hide the maximize/close header buttons for a distraction-free canvas. */
+  chromeless?: boolean;
   children: ReactNode;
 }) {
   const [live, setLive] = useState(geom);
@@ -196,7 +198,7 @@ export function WindowFrame({
         active
           ? "border-[rgba(255,255,255,0.18)] shadow-[0_28px_70px_rgba(0,0,0,0.55)]"
           : "border-[rgba(255,255,255,0.08)] shadow-[0_18px_50px_rgba(0,0,0,0.4)]"
-      } ${closing ? "zen-exit-pop" : "zen-anim-pop"}`}
+      } ${closing ? "zen-exit-pop" : "zen-anim-spring"}`}
       style={{
         left: display.x,
         top: display.y,
@@ -208,31 +210,33 @@ export function WindowFrame({
           : undefined,
       }}
     >
-      <div
-        className="flex shrink-0 cursor-move select-none items-center gap-2 border-b border-[var(--border)] px-3 py-2"
-        onMouseDown={startDrag}
-        onDoubleClick={toggleMaximize}
-        onContextMenu={onHeaderContextMenu}
-      >
-        <span className="text-sm" style={{ color: accent ?? "var(--text-dim)" }}>{glyph}</span>
-        <span className="flex-1 truncate text-sm font-medium text-[var(--text)]">{title}</span>
-        <button
-          className="zen-pressable shrink-0 rounded-[8px] px-1.5 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={toggleMaximize}
-          title={restoreGeom ? "Restore" : "Maximize"}
+      {!chromeless && (
+        <div
+          className="flex shrink-0 cursor-move select-none items-center gap-2 border-b border-[var(--border)] px-3 py-2"
+          onMouseDown={startDrag}
+          onDoubleClick={toggleMaximize}
+          onContextMenu={onHeaderContextMenu}
         >
-          {restoreGeom ? "❐" : "▢"}
-        </button>
-        <button
-          className="zen-pressable shrink-0 rounded-[8px] px-1.5 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={handleClose}
-          title="Remove from Deep Work"
-        >
-          ✕
-        </button>
-      </div>
+          <span className="text-sm" style={{ color: accent ?? "var(--text-dim)" }}>{glyph}</span>
+          <span className="flex-1 truncate text-sm font-medium text-[var(--text)]">{title}</span>
+          <button
+            className="zen-pressable shrink-0 rounded-[8px] px-1.5 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={toggleMaximize}
+            title={restoreGeom ? "Restore" : "Maximize"}
+          >
+            {restoreGeom ? "❐" : "▢"}
+          </button>
+          <button
+            className="zen-pressable shrink-0 rounded-[8px] px-1.5 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={handleClose}
+            title="Remove from Deep Work"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       <div className="zen-panel-scroll min-h-0 flex-1 overflow-auto">{children}</div>
 

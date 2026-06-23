@@ -11,6 +11,8 @@ import { Home } from "@/features/home/Home";
 import { useHome } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { FocusTimerButton } from "@/features/home/deepwork/FocusTimerButton";
+import { StudyPanel } from "@/features/home/deepwork/StudyPanel";
+import { QuizView } from "@/features/home/deepwork/QuizView";
 import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
 import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
 import { CalendarPanel } from "@/features/google/CalendarPanel";
@@ -21,6 +23,7 @@ import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { usePdfs } from "@/features/pdfs/store";
+import { useStatus } from "@/shared/stores/status";
 
 /**
  * Phase 1 shell — a thin composer of feature modules (the anti-ui.py).
@@ -47,6 +50,7 @@ export function App() {
   const zenMode = useDeepWork((s) => s.zenMode);
   const setZenMode = useDeepWork((s) => s.setZenMode);
   const threads = useHome((s) => s.threads);
+  const aiStatus = useStatus((s) => s.ai);
   const surface = useWorkspace((s) => s.surface);
   const adminFocus = useWorkspace((s) => s.adminFocus);
   const adminMailId = useWorkspace((s) => s.adminMailId);
@@ -54,6 +58,7 @@ export function App() {
   const setAdminFocus = (adminFocus: "calendar" | "mail") => setWs({ adminFocus });
   const setAdminMailId = (adminMailId: string | null) => setWs({ adminMailId });
   const shellRef = useRef<HTMLDivElement>(null);
+  const [showStudy, setShowStudy] = useState(false);
 
   // Selecting a note returns to the editor and resets any shell-only state.
   useEffect(() => {
@@ -166,15 +171,11 @@ export function App() {
 
       <WindowResizeHandles />
 
-      {zen && IS_TAURI && (
-        <div data-tauri-drag-region className="fixed inset-x-0 top-0 z-[55] flex h-7 justify-end">
-          <WindowControls />
-        </div>
-      )}
-
+      {/* Zen mode hides the whole header, including the window controls — the
+          canvas exit-zen button (◑) is the way back. */}
       {!zen && <header data-tauri-drag-region className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
         <button
-          className="zen-pressable inline-flex h-7 items-center font-semibold tracking-tight text-[var(--text)] hover:text-[var(--accent)]"
+          className="zen-pressable zen-shine inline-flex h-7 items-center rounded-[6px] px-1.5 font-semibold tracking-tight text-[var(--text)] hover:text-[var(--accent)]"
           onClick={() => {
             select(null);
             setSurface("home");
@@ -239,19 +240,30 @@ export function App() {
               {label}
             </button>
           ))}
-          {deepWork && <FocusTimerButton />}
           {deepWork && (
-            <button
-              className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
-              onClick={() => setZenMode(true)}
-              title="Zen mode — show only sources"
-              aria-label="Enter zen mode"
-            >
-              ◐
-            </button>
+            // Deep-Work-only controls, lightly grouped so they read as one cluster
+            // that appears when you enter Deep Work.
+            <div className="zen-anim-fade inline-flex items-center gap-1 rounded-[8px] bg-[rgba(255,255,255,0.04)] p-0.5">
+              <FocusTimerButton />
+              <button
+                className={`${HEADER_BTN} ${showStudy ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
+                onClick={() => setShowStudy((v) => !v)}
+                title="Study panel — backbone, mastery & daily goal"
+              >
+                Study
+              </button>
+              <button
+                className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
+                onClick={() => setZenMode(true)}
+                title="Zen mode — show only sources"
+                aria-label="Enter zen mode"
+              >
+                ◐
+              </button>
+            </div>
           )}
           <button
-            className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
+            className={`${HEADER_BTN} ${aiStatus === "busy" ? "zen-glow border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]" : HEADER_BTN_IDLE}`}
             onClick={() => useAI.getState().toggle()}
             title="Toggle AI panel"
           >
@@ -311,7 +323,7 @@ export function App() {
           {/* Keyed by surface so switching views re-mounts and crossfades in. */}
           <div
             key={note ? "note" : showAdmin ? "admin" : showSettings ? "settings" : deepWork ? (zen ? "zen" : "deep") : "home"}
-            className="zen-anim-fade h-full min-h-0"
+            className="zen-anim-rise-scale h-full min-h-0"
           >
             {note ? (
               <NoteSurface note={note} />
@@ -332,6 +344,8 @@ export function App() {
           </div>
         </main>
 
+        {deepWork && showStudy && <StudyPanel onClose={() => setShowStudy(false)} />}
+
         <ChatPanel />
       </div>
 
@@ -341,6 +355,7 @@ export function App() {
         </div>
       )}
       <AddToSessionPicker />
+      <QuizView />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>
   );

@@ -49,14 +49,14 @@ export function Dropdown({
         type="button"
         title={title}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full min-w-0 items-center gap-1 truncate rounded bg-transparent py-0.5 text-left outline-none hover:text-[var(--text)]"
+        className="zen-pressable flex w-full min-w-0 items-center gap-1 truncate rounded bg-transparent py-0.5 text-left outline-none hover:text-[var(--text)]"
       >
         <span className="min-w-0 flex-1 truncate">{current?.label ?? value}</span>
-        <span className="shrink-0 text-[var(--text-dim)]">⌄</span>
+        <span className={`shrink-0 text-[var(--text-dim)] transition-transform duration-200 ${open ? "rotate-180" : ""}`}>⌄</span>
       </button>
       {open && (
         <div
-          className={`zen-anim-rise absolute top-full z-50 mt-1 max-h-64 min-w-[180px] max-w-[280px] overflow-y-auto rounded-[8px] border border-[var(--border)] bg-[var(--bg-elev)] p-1 shadow-[0_12px_40px_rgba(0,0,0,0.45)] ${
+          className={`zen-anim-spring absolute top-full z-50 mt-1 max-h-64 min-w-[180px] max-w-[280px] overflow-y-auto rounded-[8px] border border-[var(--border)] bg-[var(--bg-elev)] p-1 shadow-[0_12px_40px_rgba(0,0,0,0.45)] ${
             align === "right" ? "right-0" : "left-0"
           }`}
         >

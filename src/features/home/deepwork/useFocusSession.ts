@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { notify } from "@/shared/ui/notify";
+import { useStudyLog } from "@/features/home/deepwork/studyLog";
 
 const FOCUS_SESSION_KEY = "zen.focus.session.v1";
 
@@ -93,6 +94,13 @@ export const useFocusStore = create<FocusStore>((set, get) => {
     },
 
     endSession() {
+      const s = get().session;
+      if (s) {
+        // Credit the global daily study log with time actually focused, capped at
+        // the planned duration (so an overrun timer left running doesn't inflate it).
+        const elapsed = Math.min(Date.now() - s.startedAt, s.durationMin * 60000);
+        useStudyLog.getState().logFocus(elapsed);
+      }
       stopTicker();
       writeSession(null);
       set({ session: null });

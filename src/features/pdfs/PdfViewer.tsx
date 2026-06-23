@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePdfs } from "@/features/pdfs/store";
+import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import type { PdfAnnotation } from "@/shared/lib/types";
 
@@ -24,6 +25,11 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<SearchMatch[]>([]);
+  // Chromium often fails to paint the native PDF toolbar when a blob <iframe> is
+  // mounted dynamically (first open), though it works after a full reload. Bump
+  // this once after the URL resolves to force a single remount so the toolbar
+  // initializes without the user having to refresh.
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   const pageCount = pdf?.pageCount ?? pages?.length ?? 0;
 
@@ -39,8 +45,16 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
     });
     void usePdfs.getState().pagesFor(pdfId).then((p) => { if (alive) setPages(p); });
     void usePdfs.getState().loadAnnotations(pdfId);
+    setReloadNonce(0);
     return () => { alive = false; };
   }, [pdfId]);
+
+  // Once the blob URL is available, trigger exactly one remount of the viewer.
+  useEffect(() => {
+    if (!url || reloadNonce > 0) return;
+    const t = window.setTimeout(() => setReloadNonce(1), 50);
+    return () => window.clearTimeout(t);
+  }, [url, reloadNonce]);
 
   const runSearch = (q: string) => {
     setQuery(q);
@@ -57,6 +71,14 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
 
   const go = (p: number) => setPage(Math.min(pageCount || p, Math.max(1, p)));
 
+  // Follow AI/Study/Quiz navigation requests aimed at this PDF.
+  const navNonce = usePdfNav((s) => s.nonce);
+  useEffect(() => {
+    const nav = usePdfNav.getState();
+    if (nav.nonce > 0 && nav.pdfId === pdfId) go(nav.page);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navNonce]);
+
   const addBookmark = () => {
     const snippet = (pages?.[page - 1] ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
     void usePdfs.getState().addAnnotation(pdfId, {
@@ -70,6 +92,18 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
   const removeBookmark = (id: string) => void usePdfs.getState().removeAnnotation(pdfId, id);
 
   const sorted = useMemo(() => [...bookmarks].sort((a, b) => a.page - b.page || a.createdAt - b.createdAt), [bookmarks]);
+
+  // Group highlights by concept (concept-tagged groups first, plain bookmarks last).
+  const grouped = useMemo(() => {
+    const groups = new Map<string, PdfAnnotation[]>();
+    for (const b of sorted) {
+      const key = b.concept?.trim() || "";
+      const arr = groups.get(key) ?? [];
+      arr.push(b);
+      groups.set(key, arr);
+    }
+    return [...groups.entries()].sort((a, b) => (a[0] ? 0 : 1) - (b[0] ? 0 : 1) || a[0].localeCompare(b[0]));
+  }, [sorted]);
 
   if (missing) return <div className="p-4 text-sm text-[var(--text-dim)]">This PDF is no longer available.</div>;
   if (!url) return <div className="p-4 text-sm text-[var(--text-dim)]">Loading PDF…</div>;
@@ -117,14 +151,17 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
                 ))}
               </>
             )}
-            {sorted.length > 0 && (
-              <>
-                <div className="mt-2 px-1 py-1 font-semibold uppercase tracking-wide text-[var(--text-dim)]">Bookmarks</div>
-                {sorted.map((b) => (
+            {grouped.map(([concept, items]) => (
+              <div key={concept || "__plain"}>
+                <div className="mt-2 px-1 py-1 font-semibold uppercase tracking-wide text-[var(--text-dim)]">
+                  {concept || "Bookmarks"}
+                </div>
+                {items.map((b) => (
                   <div key={b.id} className="group flex items-start gap-1 rounded px-1.5 py-1 hover:bg-[var(--bg-elev)]">
                     <button className="min-w-0 flex-1 text-left" onClick={() => go(b.page)} title="Go to page">
                       <span className="text-[var(--accent)]">p{b.page}</span>{" "}
                       <span className="text-[var(--text-dim)]">{b.text || "(bookmark)"}</span>
+                      {b.note && <span className="mt-0.5 block italic text-[var(--text-dim)] opacity-80">— {b.note}</span>}
                     </button>
                     <button
                       className="shrink-0 text-[var(--text-dim)] opacity-0 hover:text-red-400 group-hover:opacity-100"
@@ -135,13 +172,13 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
                     </button>
                   </div>
                 ))}
-              </>
-            )}
+              </div>
+            ))}
           </div>
         )}
 
         {/* native PDF viewer; key forces a reload to honor the #page fragment */}
-        <iframe key={page} title="pdf" src={src} className="min-w-0 flex-1 border-0 bg-white" />
+        <iframe key={`${page}-${reloadNonce}`} title="pdf" src={src} className="min-w-0 flex-1 border-0 bg-white" />
       </div>
     </div>
   );

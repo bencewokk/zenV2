@@ -39,7 +39,7 @@ export function SettingsView() {
         ))}
       </nav>
 
-      <div key={active} className="zen-anim-fade min-h-0 flex-1 overflow-y-auto pr-1">
+      <div key={active} className="zen-anim-rise-scale min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="mx-auto max-w-2xl">{section.render()}</div>
       </div>
     </div>

@@ -7,7 +7,7 @@ export function GoogleGate({ title, children }: { title: string; children: React
 
   if (!configured) {
     return (
-      <div className="mx-auto max-w-md px-8 py-16 text-center text-[var(--text-dim)]">
+      <div className="zen-anim-rise mx-auto max-w-md px-8 py-16 text-center text-[var(--text-dim)]">
         <h2 className="mb-2 text-lg font-semibold text-[var(--text)]">{title}</h2>
         <p className="text-sm">
           No Google Client ID configured. Add your OAuth Web Client ID in
@@ -20,10 +20,10 @@ export function GoogleGate({ title, children }: { title: string; children: React
 
   if (!signedIn) {
     return (
-      <div className="mx-auto max-w-md px-8 py-16 text-center">
+      <div className="zen-anim-rise mx-auto max-w-md px-8 py-16 text-center">
         <h2 className="mb-3 text-lg font-semibold">{title}</h2>
         <button
-          className="rounded-[var(--radius)] bg-[var(--accent)] px-4 py-2 text-sm text-black"
+          className="zen-pressable zen-shine rounded-[var(--radius)] bg-[var(--accent)] px-4 py-2 text-sm text-black"
           onClick={connect}
         >
           Connect Google account

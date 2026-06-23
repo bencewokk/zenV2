@@ -2,8 +2,10 @@ import type { JSONContent } from "@tiptap/react";
 import type { ToolDef } from "./types";
 import { useNotes } from "@/features/notes/store";
 import { useHome, type HomeTarget } from "@/features/home/store";
-import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { useDeepWork, clampPercent } from "@/features/home/deepwork/deepworkStore";
+import { useQuiz, activeQuiz, quizQAList, sessionQuizzes, type Verdict, type QuizInputKind } from "@/features/home/deepwork/quizStore";
 import { usePdfs } from "@/features/pdfs/store";
+import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { allTags, facetValues } from "@/features/filtering/filter";
 import { flattenTree } from "@/features/notes/tree";
@@ -587,24 +589,58 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "read_pdf",
-    "Read the extracted text of a PDF by its id. Pass a page number to read just that page; " +
-      "omit it to read from the start. Long PDFs are truncated — use search_pdf to locate a topic first.",
-    obj({ id: str("pdf id"), page: num("optional 1-based page number") }, ["id"]),
+    "Read the extracted text of a PDF by its id. Pass `page` to read just that page, OR a `pages` " +
+      "range to batch-read several at once (e.g. \"4-9\" or \"1-15\"), or omit both to read from the " +
+      "start. Output is capped (~10k chars) — for very long ranges read in chunks or use search_pdf to locate a topic first.",
+    obj({
+      id: str("pdf id"),
+      page: num("optional 1-based page number (single page)"),
+      pages: str("optional page range like \"4-9\" or \"1-15\" (overrides page)"),
+    }, ["id"]),
     async (a) => {
       const pdf = usePdfs.getState().pdfs[String(a.id)];
       if (!pdf) return "No PDF with that id.";
       const pages = await usePdfs.getState().pagesFor(String(a.id));
       if (!pages || !pages.length) return "Could not extract text from that PDF (it may be scanned images).";
-      if (a.page != null) {
-        const i = Number(a.page) - 1;
-        if (i < 0 || i >= pages.length) return `Page out of range (1–${pages.length}).`;
-        return `# ${pdf.name} — page ${i + 1}/${pages.length}\n${pages[i] || "(no text on this page)"}`;
+      const N = pages.length;
+      const CAP = 10000;
+
+      // Resolve the requested span [start, end] (1-based, inclusive).
+      let start: number | null = null;
+      let end: number | null = null;
+      if (a.pages != null) {
+        const m = String(a.pages).match(/(\d+)\s*(?:[-–—to]+\s*(\d+))?/);
+        if (!m) return 'Could not parse a page range — use a form like "4-9" or "1-15".';
+        start = Number(m[1]);
+        end = m[2] != null ? Number(m[2]) : start;
+      } else if (a.page != null) {
+        start = end = Number(a.page);
       }
-      let out = `# ${pdf.name} (${pages.length} pages)\n`;
-      for (let i = 0; i < pages.length && out.length < 6000; i++) {
-        if (pages[i]) out += `\n[p${i + 1}] ${pages[i]}`;
+
+      // Single page (fast path keeps the original "page X/N" header).
+      if (start != null && end != null && start === end) {
+        const i = start - 1;
+        if (i < 0 || i >= N) return `Page out of range (1–${N}).`;
+        return `# ${pdf.name} — page ${i + 1}/${N}\n${pages[i] || "(no text on this page)"}`;
       }
-      return out.length > 6000 ? out.slice(0, 6000) + "\n…(truncated — read by page)" : out;
+
+      // Range, or whole document when nothing was specified.
+      const lo = start != null ? Math.max(1, Math.min(start, end!)) : 1;
+      const hi = end != null ? Math.min(N, Math.max(start!, end)) : N;
+      if (lo > N) return `Page out of range (1–${N}).`;
+      const label = start != null ? `pages ${lo}–${hi}/${N}` : `${N} pages`;
+      let out = `# ${pdf.name} (${label})\n`;
+      let truncated = false;
+      for (let i = lo - 1; i < hi; i++) {
+        if (!pages[i]) continue;
+        if (out.length + pages[i].length > CAP) {
+          out += `\n[p${i + 1}] ${pages[i].slice(0, Math.max(0, CAP - out.length))}`;
+          truncated = true;
+          break;
+        }
+        out += `\n[p${i + 1}] ${pages[i]}`;
+      }
+      return truncated ? `${out}\n…(truncated at p${hi} — read the rest in another call)` : out;
     }
   ),
   tool(
@@ -650,9 +686,17 @@ const TOOLS: ToolImpl[] = [
   tool(
     "highlight_pdf",
     "Bookmark a passage in a PDF. Pass the exact text (copied from the PDF — use " +
-      "read_pdf/find_in_pdf first) and the page it's on. The bookmark shows in the viewer's " +
-      "side panel; clicking it jumps to that page. Keep the passage short (a phrase or sentence).",
-    obj({ id: str("pdf id"), page: num("1-based page number"), text: str("exact text to bookmark") }, ["id", "page", "text"]),
+      "read_pdf/find_in_pdf first) and the page it's on. Optionally tag it with the backbone " +
+      "`concept` it supports and a one-line `why` it matters — these group the bookmark under that " +
+      "concept in the viewer and power the Study panel's concept→page links. The bookmark shows in " +
+      "the viewer's side panel; clicking it jumps to that page. Keep the passage short.",
+    obj({
+      id: str("pdf id"),
+      page: num("1-based page number"),
+      text: str("exact text to bookmark"),
+      concept: str("optional: the backbone concept this passage supports"),
+      why: str("optional: one line on why this passage matters"),
+    }, ["id", "page", "text"]),
     async (a) => {
       const pdf = usePdfs.getState().pdfs[String(a.id)];
       if (!pdf) return "No PDF with that id.";
@@ -668,9 +712,26 @@ const TOOLS: ToolImpl[] = [
         id: crypto.randomUUID(),
         page,
         text: text.slice(0, 200),
+        concept: a.concept ? String(a.concept).slice(0, 80) : undefined,
+        note: a.why ? String(a.why).slice(0, 160) : undefined,
         createdAt: Date.now(),
       });
-      return `Bookmarked on page ${page}.`;
+      return `Bookmarked on page ${page}${a.concept ? ` under "${a.concept}"` : ""}.`;
+    }
+  ),
+  tool(
+    "pdf_goto",
+    "Show the user a specific PDF page in the Deep Work viewer while you explain — opens the PDF on " +
+      "the canvas (if needed) and scrolls the viewer to that page. Use this to point at the exact page " +
+      "you're referring to during tutoring.",
+    obj({ id: str("pdf id"), page: num("1-based page number") }, ["id", "page"]),
+    async (a) => {
+      const pdf = usePdfs.getState().pdfs[String(a.id)];
+      if (!pdf) return "No PDF with that id.";
+      const page = Math.max(1, Math.round(Number(a.page)) || 1);
+      useHome.getState().launchDeepWork({ type: "pdf", id: String(a.id) });
+      usePdfNav.getState().goTo(String(a.id), page);
+      return `Showing ${pdf.name} page ${page}.`;
     }
   ),
   tool(
@@ -799,6 +860,18 @@ const TOOLS: ToolImpl[] = [
           if (t) sections.push(`EMAIL — ${t.subject}: ${clipText(t.snippet, 300)}`);
         }
       }
+
+      // Past quiz reviews stored in THIS session — use them to target weak spots.
+      const reviewed = sessionQuizzes(useQuiz.getState(), useDeepWork.getState().activeId).filter((q) => q.review);
+      if (reviewed.length) {
+        const summaries = reviewed
+          .slice(0, 4)
+          .map((q) => `- "${q.title}" (${q.overall}%): strong — ${q.review!.strengths || "—"}; mistakes — ${q.review!.mistakes || "—"}`);
+        let block = `PAST QUIZ REVIEWS (this session — target these weak spots):\n${summaries.join("\n")}`;
+        block += `\n\nMost recent attempt detail:\n${clipText(quizQAList(reviewed[0]), 2000)}`;
+        sections.push(block);
+      }
+
       return sections.join("\n\n") || "No readable material on the canvas.";
     }
   ),
@@ -849,6 +922,124 @@ const TOOLS: ToolImpl[] = [
         : [];
       useDeepWork.getState().setMastery(updates, a.overall != null ? Number(a.overall) : undefined);
       return "Updated mastery.";
+    }
+  ),
+  tool(
+    "deepwork_start_quiz",
+    "Start a quiz on the Deep Work material — opens a full quiz surface the user answers. " +
+      "Call deepwork_read_material first so questions are grounded in their notes/PDFs. Size the " +
+      "quiz to the material (a few up to ~80 questions). Each question has a `kind` that picks the " +
+      "input type: 'choice' (multiple-choice A–D or true/false — put answers in options), 'text' " +
+      "(numerical answer, fill-in-the-blank, short answer, written step-by-step, or error analysis), " +
+      "'math' (the user types LaTeX working you then follow), 'order' (arrange steps — put the " +
+      "shuffled steps in items), or 'match' (match pairs — left[] to right[]). Tag each question with " +
+      "the `concept` it tests (match a backbone concept title) and a hidden `rubric` (expected answer " +
+      "/ grading guidance). Use $...$ for math in prompts/options. Mix types for breadth.",
+    obj({
+      title: str("short quiz title, e.g. 'Derivatives — checkpoint'"),
+      questions: {
+        type: "array",
+        description: "the questions, in order",
+        items: obj({
+          kind: str("choice | text | math | order | match"),
+          category: str("optional pedagogical label, e.g. 'Numerical', 'Error Analysis'"),
+          concept: str("the backbone concept title this tests (optional but recommended)"),
+          prompt: str("the question text (may contain $...$ math)"),
+          options: arr("choice: the answer options (include the correct one)"),
+          items: arr("order: the steps in their CORRECT sequence — the app shuffles them for the user"),
+          left: arr("match: left-column items"),
+          right: arr("match: right-column items to match against"),
+          rubric: str("hidden expected answer / grading guidance"),
+        }, ["kind", "prompt"]),
+      },
+    }, ["questions"]),
+    async (a) => {
+      const kinds: QuizInputKind[] = ["choice", "text", "math", "order", "match"];
+      const strArr = (v: unknown) => (Array.isArray(v) ? v.map(String) : undefined);
+      const questions = (Array.isArray(a.questions) ? a.questions : [])
+        .map((q) => (q && typeof q === "object" ? (q as Record<string, unknown>) : null))
+        .filter(Boolean)
+        .map((q) => ({
+          kind: (kinds.includes(String(q!.kind) as QuizInputKind) ? String(q!.kind) : "text") as QuizInputKind,
+          category: q!.category ? String(q!.category) : undefined,
+          concept: q!.concept ? String(q!.concept) : undefined,
+          prompt: String(q!.prompt ?? ""),
+          options: strArr(q!.options),
+          items: strArr(q!.items),
+          left: strArr(q!.left),
+          right: strArr(q!.right),
+          rubric: q!.rubric ? String(q!.rubric) : undefined,
+        }))
+        .filter((q) => q.prompt.trim());
+      if (!questions.length) return "No questions provided.";
+      useQuiz.getState().start(String(a.title ?? "Quiz"), questions, useDeepWork.getState().activeId);
+      return `Started a ${questions.length}-question quiz. The user is answering it now; wait for their submission, then grade it.`;
+    }
+  ),
+  tool(
+    "deepwork_grade_quiz",
+    "Grade the quiz the user just submitted. Pass a result for every question by its id. Mastery " +
+      "for each tagged concept is recomputed automatically from the scores, so you don't need to call " +
+      "deepwork_set_mastery separately for a quiz. Where a question came from a PDF, include pdfId + " +
+      "page so the report links the user to the page to review. ALSO pass `strengths` and `mistakes` — " +
+      "short summaries of what the user did well and where they slipped; these (with the questions and " +
+      "their answers) are saved as a persistent study memory so future sessions can target weak spots.",
+    obj({
+      results: {
+        type: "array",
+        description: "one entry per question",
+        items: obj({
+          id: str("the question id, e.g. 'q3'"),
+          verdict: str("correct | partial | incorrect"),
+          score: num("0-100 score for this question"),
+          feedback: str("one-sentence feedback (may contain $...$ math)"),
+          pdfId: str("optional: the source PDF id to cite"),
+          page: num("optional: 1-based page in that PDF to review"),
+        }, ["id", "verdict", "score"]),
+      },
+      strengths: str("1-2 sentences: what the user understood well"),
+      mistakes: str("1-2 sentences: the user's mistakes / weak spots to revisit"),
+    }, ["results"]),
+    async (a) => {
+      const verdicts = ["correct", "partial", "incorrect"];
+      const results = (Array.isArray(a.results) ? a.results : [])
+        .map((r) => (r && typeof r === "object" ? (r as Record<string, unknown>) : null))
+        .filter(Boolean)
+        .map((r) => ({
+          id: String(r!.id ?? ""),
+          verdict: (verdicts.includes(String(r!.verdict)) ? String(r!.verdict) : "incorrect") as Verdict,
+          score: clampPercent(r!.score),
+          feedback: r!.feedback ? String(r!.feedback) : "",
+          pdfId: r!.pdfId ? String(r!.pdfId) : undefined,
+          page: r!.page != null ? Math.max(1, Math.round(Number(r!.page)) || 1) : undefined,
+        }))
+        .filter((r) => r.id);
+      if (!results.length) return "No results to apply.";
+      const quiz = activeQuiz();
+      const overall = Math.round(results.reduce((sum, r) => sum + r.score, 0) / results.length);
+      useQuiz.getState().applyResults(results, overall);
+      // Recompute per-concept mastery as the mean score of that concept's questions.
+      const byConcept: Record<string, number[]> = {};
+      for (const r of results) {
+        const concept = quiz?.questions.find((q) => q.id === r.id)?.concept;
+        if (concept) (byConcept[concept] ??= []).push(r.score);
+      }
+      const updates = Object.entries(byConcept).map(([concept, scores]) => ({
+        concept,
+        mastery: Math.round(scores.reduce((s, n) => s + n, 0) / scores.length),
+      }));
+      if (updates.length) useDeepWork.getState().setMastery(updates, overall);
+
+      // Store the review on the quiz record — it lives inside this study session
+      // (the quiz is session-tagged), surfaced in the report and to deepwork_read_material.
+      const strengths = a.strengths ? String(a.strengths).trim() : "";
+      const mistakes = a.mistakes ? String(a.mistakes).trim() : "";
+      let note = "";
+      if (quiz && (strengths || mistakes)) {
+        useQuiz.getState().setReview(strengths, mistakes);
+        note = " Saved your strong points & mistakes to this study session.";
+      }
+      return `Graded ${results.length} questions — overall ${overall}%.${note}`;
     }
   ),
   tool(
@@ -970,7 +1161,10 @@ export function isReadTool(name: string): boolean {
  * mastery, intent). They auto-apply during the agent loop instead of becoming
  * proposal cards, so the tutoring chat stays smooth — nothing here is outbound.
  */
-export const STUDY_AUTO = new Set(["deepwork_set_backbone", "deepwork_set_mastery", "deepwork_set_intent"]);
+export const STUDY_AUTO = new Set([
+  "deepwork_set_backbone", "deepwork_set_mastery", "deepwork_set_intent",
+  "deepwork_start_quiz", "deepwork_grade_quiz", "pdf_goto",
+]);
 
 export function isAutoTool(name: string): boolean {
   return STUDY_AUTO.has(name);
@@ -1016,11 +1210,11 @@ const CATEGORY_SETS: Array<[string, Set<string>]> = [
   ])],
   ["PDF", new Set([
     "list_pdfs", "find_in_pdf", "read_pdf", "search_pdf", "cite_pdf", "highlight_pdf",
-    "unhighlight_pdf", "rename_pdf", "tag_pdf", "delete_pdf", "attach_pdf", "detach_pdf",
+    "unhighlight_pdf", "rename_pdf", "tag_pdf", "delete_pdf", "attach_pdf", "detach_pdf", "pdf_goto",
   ])],
   ["Deep Work", new Set([
     "deepwork_add", "deepwork_remove", "deepwork_set_intent", "deepwork_read_material",
-    "deepwork_set_backbone", "deepwork_set_mastery",
+    "deepwork_set_backbone", "deepwork_set_mastery", "deepwork_start_quiz", "deepwork_grade_quiz",
   ])],
   ["Navigation", new Set(["apply_filter", "clear_filter", "list_tags", "list_facets", "open_view"])],
 ];
@@ -1113,6 +1307,7 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     }
     case "cite_pdf": return d("Cite PDF into note", `${pdfName(s("pdfId"))} p${s("page")} → ${noteTitle(s("noteId"))}`);
     case "highlight_pdf": return d("Bookmark in PDF", `${pdfName(s("id"))} p${s("page")}: "${s("text").slice(0, 40)}"`);
+    case "pdf_goto": return d("Show PDF page", `${pdfName(s("id"))} p${s("page")}`);
     case "unhighlight_pdf": return d("Remove PDF bookmarks", s("text") ? `${pdfName(s("id"))}: "${s("text")}"` : pdfName(s("id")));
     case "rename_pdf": return d("Rename PDF", `${pdfName(s("id"))} → ${s("name")}`);
     case "tag_pdf": return d("Tag PDF", `${pdfName(s("id"))}: ${Array.isArray(a.tags) ? a.tags.join(", ") : ""}`);
@@ -1124,6 +1319,8 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "deepwork_read_material": return d("Read Deep Work material", "notes, PDFs, highlights");
     case "deepwork_set_backbone": return d("Build study backbone", Array.isArray(a.concepts) ? `${a.concepts.length} concepts` : "");
     case "deepwork_set_mastery": return d("Update mastery", Array.isArray(a.updates) ? `${a.updates.length} concept(s)` : "");
+    case "deepwork_start_quiz": return d("Start quiz", Array.isArray(a.questions) ? `${a.questions.length} questions` : s("title"));
+    case "deepwork_grade_quiz": return d("Grade quiz", Array.isArray(a.results) ? `${a.results.length} answers` : "");
     case "add_email_label": return d("Add email label", s("label"));
     case "remove_email_label": return d("Remove email label", s("label"));
     // Filtering & navigation

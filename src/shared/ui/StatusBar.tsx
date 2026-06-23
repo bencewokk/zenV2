@@ -10,10 +10,22 @@ const DOT: Record<Conn | AiStatus, string> = {
   error: "var(--danger)",
 };
 
+// box-shadow can't alpha-blend a var(--token) reference directly, so the pulse
+// ring color is spelled out as rgba — same hue as DOT, just with alpha baked in.
+const GLOW_COLOR: Partial<Record<Conn | AiStatus, string>> = {
+  busy: "rgba(110, 168, 254, 0.45)",
+  connecting: "rgba(110, 168, 254, 0.45)",
+  error: "rgba(246, 104, 94, 0.45)",
+};
+
 function Badge({ label, state }: { label: string; state: Conn | AiStatus }) {
+  const glow = GLOW_COLOR[state];
   return (
     <span className="flex items-center gap-1">
-      <span className="inline-block h-2 w-2 rounded-full" style={{ background: DOT[state] }} />
+      <span
+        className={`inline-block h-2 w-2 rounded-full transition-colors duration-300 ${glow ? "zen-glow" : ""}`}
+        style={{ background: DOT[state], "--zen-glow-color": glow } as React.CSSProperties}
+      />
       {label}: {state}
     </span>
   );
@@ -29,8 +41,8 @@ export function StatusBar() {
       {selectedId && (
         <span className="flex items-center gap-1">
           <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ background: dirty ? "var(--accent)" : "var(--ok)" }}
+            className={`inline-block h-2 w-2 rounded-full transition-colors duration-300 ${dirty ? "zen-glow" : ""}`}
+            style={{ background: dirty ? "var(--accent)" : "var(--ok)", "--zen-glow-color": "rgba(110, 168, 254, 0.45)" } as React.CSSProperties}
           />
           {dirty ? "Unsaved…" : "Saved"}
         </span>

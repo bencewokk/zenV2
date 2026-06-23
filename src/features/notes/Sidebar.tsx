@@ -112,7 +112,7 @@ export function Sidebar() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-1 pb-3">
+      <div className="zen-stagger flex-1 overflow-y-auto px-1 pb-3">
         {flat.length === 0 && (
           <div className="px-3 py-2 text-sm text-[var(--text-dim)]">
             {filtering ? "No matches" : "No notes yet — click +"}
@@ -153,7 +153,7 @@ export function Sidebar() {
 
       {menu && (
         <div
-          className="zen-anim-pop fixed z-50 min-w-[180px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
+          className="zen-anim-spring fixed z-50 min-w-[180px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
           style={{ left: menu.x, top: menu.y, transformOrigin: "top left" }}
           onPointerDown={(event) => event.stopPropagation()}
         >
@@ -244,11 +244,13 @@ function Row(props: {
 
       {node.hasChildren ? (
         <button
-          className="zen-pressable w-4 shrink-0 self-center text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
+          className={`zen-pressable w-4 shrink-0 self-center text-xs text-[var(--text-dim)] hover:text-[var(--text)] ${
+            node.note.collapsed ? "" : "rotate-90"
+          }`}
           onClick={props.onToggle}
           title="Collapse / expand"
         >
-          {node.note.collapsed ? "▸" : "▾"}
+          ▸
         </button>
       ) : (
         <span className="w-4 shrink-0" />
@@ -286,14 +288,14 @@ function Row(props: {
       )}
 
       <button
-        className="zen-pressable hidden shrink-0 self-center px-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)] group-hover:block"
+        className="zen-pressable shrink-0 scale-75 self-center px-1 text-xs text-[var(--text-dim)] opacity-0 hover:text-[var(--text)] group-hover:scale-100 group-hover:opacity-100"
         title="Add child note"
         onClick={props.onAddChild}
       >
         +
       </button>
       <button
-        className="zen-pressable hidden shrink-0 self-center px-1 text-xs text-[var(--text-dim)] hover:text-[var(--danger)] group-hover:block"
+        className="zen-pressable shrink-0 scale-75 self-center px-1 text-xs text-[var(--text-dim)] opacity-0 hover:text-[var(--danger)] group-hover:scale-100 group-hover:opacity-100"
         title="Delete note"
         onClick={props.onDelete}
       >

@@ -75,7 +75,8 @@ interface HomeState {
   processedThreadIds: string[]; // threads the AI has checked for event matching
   matchedThreadLabels: Record<string, string>; // threadId → matched event/label name
   customLabels: LabelDef[]; // user-defined topics (+ metadata) the AI can also match emails to
-  knownLabelOptions: string[]; // event/label names the AI has scanned emails against
+  knownLabelOptions: string[]; // label names the AI has scanned emails against
+  eventTags: Record<string, string[]>; // normalized event title → manual tags (shared by every future occurrence of that title)
   focusTarget: HomeTarget | null;
   manualDeepWork: boolean;
   deepWorkLaunchNonce: number;
@@ -90,7 +91,16 @@ interface HomeState {
   addCustomLabel: (label: string) => void;
   updateCustomLabel: (name: string, hint: string) => void;
   removeCustomLabel: (label: string) => void;
+  setEventTags: (titleKey: string, tags: string[]) => void;
   markBriefItemDone: (key: string, text?: string) => void;
+}
+
+/** Calendar events are matched by their (normalized) title throughout this app —
+ *  Google expands recurring events into instances that share a summary but get
+ *  distinct ids, so keying tags by title is what makes tagging one occurrence
+ *  apply to every future occurrence of the same event. */
+export function normalizeEventTitle(summary: string): string {
+  return summary.toLowerCase().trim();
 }
 
 const STORAGE_KEY = "zen.home.v1";
@@ -399,6 +409,7 @@ function buildFallbackBrief(_notes: Note[], events: CalEvent[], threads: MailThr
 const LABELED_THREADS_KEY = "zen.home.autolabeled.v1";
 const MATCHED_LABELS_KEY = "zen.home.matchedlabels.v1";
 const CUSTOM_LABELS_KEY = "zen.home.customlabels.v1";
+const EVENT_TAGS_KEY = "zen.home.eventtags.v1";
 const KNOWN_LABEL_OPTIONS_KEY = "zen.home.knownlabeloptions.v1";
 
 function readKnownLabelOptions(): Set<string> {
@@ -449,6 +460,20 @@ function saveCustomLabels(labels: LabelDef[]): void {
   } catch { /* ignore */ }
 }
 
+function readEventTags(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(EVENT_TAGS_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, string[]>;
+  } catch { /* ignore */ }
+  return {};
+}
+
+function saveEventTags(tags: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(EVENT_TAGS_KEY, JSON.stringify(tags));
+  } catch { /* ignore */ }
+}
+
 function readMatchedLabels(): Record<string, string> {
   try {
     const raw = localStorage.getItem(MATCHED_LABELS_KEY);
@@ -481,17 +506,20 @@ function saveLabeledSet(ids: Set<string>): void {
   } catch { /* ignore */ }
 }
 
-async function matchThreadToEvent(thread: MailThread, labelOptions: LabelDef[]): Promise<string | null> {
+async function matchThreadToLabel(thread: MailThread, labelOptions: LabelDef[]): Promise<string | null> {
   const model = useAI.getState().model;
   const messages: AIMessage[] = [
     {
       role: "system",
       content:
-        "You match emails to topics. Each topic may list matching criteria (senders, keywords, context) after an em dash — use them to decide. Reply with ONLY the exact topic name from the list below, or the word 'none' if nothing matches. No punctuation, no explanation.",
+        "You match emails to a fixed list of topic labels defined by the user. Each label may list matching criteria (senders, keywords, context) after an em dash — those criteria are the ONLY basis for a match. " +
+        "Be strict: only reply with a label if the email clearly and unambiguously satisfies that label's criteria. A label with no criteria can only match on an exact, unmistakable topic match — never guess from a vague thematic resemblance. " +
+        "If you are not highly confident, or more than one label could plausibly apply, reply 'none'. Most emails should get 'none'. " +
+        "Reply with ONLY the exact label name copied verbatim from the list below, or the single word 'none'. No punctuation, no explanation, no partial names.",
     },
     {
       role: "user",
-      content: `Subject: ${thread.subject}\nFrom: ${thread.from}\nSnippet: ${thread.snippet}\n\nTopics:\n${labelOptions
+      content: `Subject: ${thread.subject}\nFrom: ${thread.from}\nSnippet: ${thread.snippet}\n\nLabels:\n${labelOptions
         .map((o, i) => `${i + 1}. ${o.name}${o.hint.trim() ? ` — matches when: ${o.hint.trim()}` : ""}`)
         .join("\n")}`,
     },
@@ -501,34 +529,22 @@ async function matchThreadToEvent(thread: MailThread, labelOptions: LabelDef[]):
   const response = (reply.content ?? "").trim();
   if (!response || response.toLowerCase() === "none") return null;
 
+  // Strict: the model must echo a label name exactly (case-insensitive). No fuzzy
+  // substring fallback — that was the main source of false-positive matches.
   const normalized = response.toLowerCase();
-  const names = labelOptions.map((o) => o.name);
-  return (
-    names.find((name) => name.toLowerCase() === normalized) ??
-    names.find(
-      (name) => normalized.includes(name.toLowerCase()) || name.toLowerCase().includes(normalized)
-    ) ??
-    null
-  );
+  return labelOptions.find((o) => o.name.toLowerCase() === normalized)?.name ?? null;
 }
 
-async function autoLabelThreads(threads: MailThread[], events: CalEvent[], customLabels: LabelDef[]): Promise<void> {
+async function autoLabelThreads(threads: MailThread[], customLabels: LabelDef[]): Promise<void> {
   if (!isSignedIn() || threads.length === 0) return;
 
   const labeled = readLabeledSet();
   const matched = readMatchedLabels();
 
-  // The AI can match emails to calendar events AND user-defined topic labels.
-  // Events contribute their summary as a name (no metadata); custom labels carry hints.
+  // Emails are matched ONLY against the user's dashboard "AI Labels" — calendar
+  // events are tagged manually now (see eventTags) and no longer feed the matcher.
   const labelOptions: LabelDef[] = [];
   const seenNames = new Set<string>();
-  for (const e of events) {
-    const name = e.summary?.trim();
-    if (name && !seenNames.has(name.toLowerCase())) {
-      seenNames.add(name.toLowerCase());
-      labelOptions.push({ name, hint: "" });
-    }
-  }
   for (const c of customLabels) {
     const name = c.name?.trim();
     if (name && !seenNames.has(name.toLowerCase())) {
@@ -554,7 +570,7 @@ async function autoLabelThreads(threads: MailThread[], events: CalEvent[], custo
 
   // Try to apply a match to a thread (record it + tag in Gmail). Best-effort.
   async function apply(thread: MailThread, options: LabelDef[]): Promise<void> {
-    const match = await matchThreadToEvent(thread, options);
+    const match = await matchThreadToLabel(thread, options);
     if (match) {
       matched[thread.id] = match;
       const labelId = await ensureLabel(match);
@@ -711,6 +727,7 @@ export const useHome = create<HomeState>((set, get) => ({
   matchedThreadLabels: readMatchedLabels(),
   customLabels: readCustomLabels(),
   knownLabelOptions: [...readKnownLabelOptions()],
+  eventTags: readEventTags(),
   focusTarget: persistedDeepWork.focusTarget,
   manualDeepWork: persistedDeepWork.manualDeepWork,
   deepWorkLaunchNonce: 0,
@@ -743,7 +760,7 @@ export const useHome = create<HomeState>((set, get) => ({
       });
       persistDeepWork(get().manualDeepWork, focusTarget);
 
-      void autoLabelThreads(threads, events, get().customLabels);
+      void autoLabelThreads(threads, get().customLabels);
       await maybeRefreshSummary(forceSummary, notes, events, threads);
       set({ loading: false });
     })().finally(() => {
@@ -809,6 +826,15 @@ export const useHome = create<HomeState>((set, get) => ({
     const next = get().customLabels.filter((l) => l.name !== label);
     set({ customLabels: next });
     saveCustomLabels(next);
+  },
+
+  setEventTags(titleKey, tags) {
+    const cleaned = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
+    const next = { ...get().eventTags };
+    if (cleaned.length) next[titleKey] = cleaned;
+    else delete next[titleKey];
+    set({ eventTags: next });
+    saveEventTags(next);
   },
 
   markBriefItemDone(key, text) {

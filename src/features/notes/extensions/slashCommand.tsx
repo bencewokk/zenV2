@@ -126,6 +126,8 @@ export const SlashCommand = Extension.create({
                 interactive: true,
                 trigger: "manual",
                 placement: "bottom-start",
+                animation: "scale",
+                duration: [140, 100],
               });
             },
             onUpdate: (props) => {

@@ -29,16 +29,20 @@ export function AIBubbleMenu({ editor }: { editor: Editor }) {
     <BubbleMenu
       editor={editor}
       shouldShow={({ from, to }) => to > from}
-      tippyOptions={{ placement: "top" }}
+      tippyOptions={{ placement: "top", animation: "scale", duration: [150, 100] }}
     >
       <div className="flex items-center gap-1 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-elev)] p-1 shadow-lg">
         {busy ? (
-          <span className="px-2 py-1 text-xs text-[var(--text-dim)]">Thinking…</span>
+          <span className="zen-typing px-2 py-1 text-xs text-[var(--text-dim)]">
+            <span />
+            <span />
+            <span />
+          </span>
         ) : (
           ACTIONS.map((a) => (
             <button
               key={a.label}
-              className="rounded px-2 py-1 text-xs text-[var(--text-dim)] hover:bg-[var(--accent-dim)] hover:text-[var(--text)]"
+              className="zen-pressable rounded px-2 py-1 text-xs text-[var(--text-dim)] hover:bg-[var(--accent-dim)] hover:text-[var(--text)]"
               onClick={() => void run(a.instruction)}
             >
               {a.label}

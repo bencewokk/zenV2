@@ -46,7 +46,7 @@ export function AddToSessionPicker() {
       onPointerDown={cancelAdd}
     >
       <div
-        className="mt-24 flex w-full max-w-sm flex-col overflow-hidden rounded-[16px] border border-[var(--border)] bg-[rgba(18,19,24,0.98)] shadow-[0_24px_60px_rgba(0,0,0,0.4)]"
+        className="zen-anim-spring mt-24 flex w-full max-w-sm flex-col overflow-hidden rounded-[16px] border border-[var(--border)] bg-[rgba(18,19,24,0.98)] shadow-[0_24px_60px_rgba(0,0,0,0.4)]"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="border-b border-[var(--border)] px-4 py-3">
@@ -61,7 +61,7 @@ export function AddToSessionPicker() {
             open.map((s) => (
               <button
                 key={s.id}
-                className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left hover:bg-[var(--bg-elev)]"
+                className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left transition hover:translate-x-1 hover:bg-[var(--bg-elev)]"
                 onClick={() => addToExisting(s.id)}
               >
                 <span className="min-w-0 flex-1">
@@ -88,7 +88,7 @@ export function AddToSessionPicker() {
             className="flex-1 rounded-[10px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[rgba(96,165,250,0.5)]"
           />
           <button
-            className="rounded-[10px] border border-[rgba(96,165,250,0.4)] bg-[rgba(96,165,250,0.12)] px-3 py-2 text-sm text-[var(--text)] transition hover:bg-[rgba(96,165,250,0.2)]"
+            className="zen-pressable zen-shine rounded-[10px] border border-[rgba(96,165,250,0.4)] bg-[rgba(96,165,250,0.12)] px-3 py-2 text-sm text-[var(--text)] hover:bg-[rgba(96,165,250,0.2)]"
             onClick={addToNew}
           >
             New

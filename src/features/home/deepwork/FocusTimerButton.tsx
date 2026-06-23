@@ -33,7 +33,7 @@ export function FocusTimerButton() {
   if (sessionActive) {
     return (
       <button
-        className="zen-pressable inline-flex h-7 items-center rounded-[6px] border border-[var(--accent)] bg-[var(--bg)] px-2.5 text-xs tabular-nums text-[var(--accent)]"
+        className="zen-pressable zen-glow inline-flex h-7 items-center rounded-[6px] border border-[var(--accent)] bg-[var(--bg)] px-2.5 text-xs tabular-nums text-[var(--accent)]"
         onClick={endSession}
         title="End focus session"
       >
@@ -44,7 +44,7 @@ export function FocusTimerButton() {
 
   if (editing) {
     return (
-      <span className="inline-flex h-7 items-center gap-1 rounded-[6px] border border-[var(--accent)] bg-[var(--bg-elev)] px-1.5 text-xs">
+      <span className="zen-anim-spring inline-flex h-7 items-center gap-1 rounded-[6px] border border-[var(--accent)] bg-[var(--bg-elev)] px-1.5 text-xs">
         <input
           ref={inputRef}
           value={draft}

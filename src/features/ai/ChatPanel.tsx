@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { useAI } from "@/features/ai/store";
 import { useNotes } from "@/features/notes/store";
-import { useDeepWork, readinessColor, type StudyBackbone } from "@/features/home/deepwork/deepworkStore";
 import { docToText } from "@/shared/lib/docText";
 import { ProfilePanel } from "@/features/memory/ProfilePanel";
 import { ToolSettings } from "@/features/ai/ToolSettings";
@@ -50,12 +49,17 @@ export function ChatPanel() {
   const switchConversation = useAI((s) => s.switchConversation);
   const deleteConversation = useAI((s) => s.deleteConversation);
   const memStatus = useMemoryStatus();
-  const backbone = useDeepWork((s) => s.backbone);
 
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // True once the in-flight assistant turn has visible text — at that point the
+  // streaming bubble itself is the live indicator, so the "Thinking" dots below
+  // it would be redundant noise rather than useful signal.
+  const lastTurn = turns[turns.length - 1];
+  const hasLiveContent = !!lastTurn && lastTurn.role === "assistant" && !!lastTurn.content;
 
   useEffect(() => {
     if (open && models.length === 0) void refreshModels();
@@ -161,8 +165,6 @@ export function ChatPanel() {
         </div>
       </div>
 
-      {backbone && <StudyCard backbone={backbone} />}
-
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {turns.length === 0 && (
           <div className="text-sm text-[var(--text-dim)]">
@@ -256,7 +258,16 @@ export function ChatPanel() {
             </div>
           </div>
         )}
-        {streaming && !pendingQuestion && <div className="text-xs text-[var(--text-dim)]">Working…</div>}
+        {streaming && !pendingQuestion && !hasLiveContent && (
+          <div className="flex items-center gap-1.5 text-xs text-[var(--text-dim)]">
+            <span>Thinking</span>
+            <span className="zen-typing">
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="border-t border-[var(--border)] p-2">
@@ -293,48 +304,5 @@ export function ChatPanel() {
         </div>
       </div>
     </aside>
-  );
-}
-
-/** Read-only Study overview: the AI-built backbone with per-concept + overall mastery. */
-function StudyCard({ backbone }: { backbone: StudyBackbone }) {
-  const [open, setOpen] = useState(true);
-  const color = readinessColor(backbone.overall);
-  return (
-    <div className="border-b border-[var(--border)] px-3 py-2 text-sm">
-      <button
-        className="zen-pressable flex w-full items-center gap-2 text-left"
-        onClick={() => setOpen((o) => !o)}
-        title={open ? "Collapse" : "Expand"}
-      >
-        <span className="text-xs text-[var(--text-dim)]">{open ? "▾" : "▸"}</span>
-        <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Study</span>
-        <span className="ml-auto text-base font-bold tabular-nums" style={{ color }}>{backbone.overall}%</span>
-      </button>
-      {open && (
-        <div className="mt-2 space-y-2">
-          {backbone.intent && <div className="truncate text-xs text-[var(--text-dim)]" title={backbone.intent}>{backbone.intent}</div>}
-          <div className="h-1.5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.07)]">
-            <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${backbone.overall}%`, background: color }} />
-          </div>
-          <ul className="space-y-1.5">
-            {backbone.concepts.map((c) => {
-              const cColor = readinessColor(c.mastery);
-              return (
-                <li key={c.id} title={c.summary}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-xs text-[var(--text)]">{c.title}</span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-[var(--text-dim)]">{c.mastery}%</span>
-                  </div>
-                  <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-[rgba(255,255,255,0.06)]">
-                    <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${c.mastery}%`, background: cColor }} />
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-    </div>
   );
 }

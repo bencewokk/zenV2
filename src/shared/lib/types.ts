@@ -47,7 +47,8 @@ export interface PdfAnnotation {
   page: number; // 1-based
   rects?: { x: number; y: number; w: number; h: number }[];
   text?: string; // the quoted/highlighted text
-  note?: string;
+  note?: string; // "why this matters" — the AI's reason for highlighting
+  concept?: string; // backbone concept this passage supports (for concept↔page links)
   color?: string;
   createdAt: number;
 }

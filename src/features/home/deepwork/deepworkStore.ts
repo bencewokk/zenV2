@@ -19,6 +19,8 @@ export interface StudyConcept {
   title: string;
   summary: string;
   mastery: number; // 0..100, AI-tracked from tutoring/quizzes
+  lastReviewed?: number; // epoch ms of the last mastery update (a drill/quiz)
+  reviewCount?: number; // how many times this concept has been drilled
 }
 
 /** The backbone of the study material: the key concepts the AI synthesized. */
@@ -241,9 +243,14 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
       mutateActive((s) => {
         if (!s.backbone) return s;
         const norm = (str: string) => str.toLowerCase().trim();
+        const now = Date.now();
         const concepts = s.backbone.concepts.map((c) => {
           const hit = updates.find((u) => norm(u.concept) === norm(c.title) || u.concept === c.id);
-          return hit ? { ...c, mastery: clampPercent(hit.mastery) } : c;
+          // A mastery update means the concept was just drilled/quizzed — stamp it
+          // so the Study card can surface stale concepts for spaced review.
+          return hit
+            ? { ...c, mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: (c.reviewCount ?? 0) + 1 }
+            : c;
         });
         const backbone: StudyBackbone = {
           ...s.backbone,
@@ -355,8 +362,48 @@ export function fmtDuration(ms: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
+/** Short relative time like "just now", "5m ago", "3h ago", "2d ago". */
+export function fmtAgo(ts: number | undefined, now: number = Date.now()): string {
+  if (ts == null) return "never";
+  const diff = Math.max(0, now - ts);
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
 export function clampPercent(n: unknown): number {
   return Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
+}
+
+/**
+ * A concept is "due" for review when it's not yet mastered (mastery < 80) and
+ * either has never been drilled or was last drilled over `staleMs` ago. Used to
+ * nudge spaced repetition from the Study card.
+ */
+export const REVIEW_STALE_MS = 20 * 60 * 1000; // 20 minutes
+
+export function isConceptDue(c: StudyConcept, now: number): boolean {
+  if (c.mastery >= 80) return false;
+  if (c.lastReviewed == null) return true;
+  return now - c.lastReviewed >= REVIEW_STALE_MS;
+}
+
+/**
+ * The single concept the user should review next: lowest mastery first, then the
+ * one drilled longest ago (never-drilled counts as oldest). Returns null when the
+ * backbone is empty or everything is already mastered (>= 80%).
+ */
+export function nextToReview(backbone: StudyBackbone | null): StudyConcept | null {
+  if (!backbone || !backbone.concepts.length) return null;
+  const candidates = backbone.concepts.filter((c) => c.mastery < 80);
+  if (!candidates.length) return null;
+  return candidates
+    .slice()
+    .sort((a, b) => a.mastery - b.mastery || (a.lastReviewed ?? 0) - (b.lastReviewed ?? 0))[0];
 }
 
 export function readinessColor(percent: number): string {

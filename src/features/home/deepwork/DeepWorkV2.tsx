@@ -233,7 +233,7 @@ export function DeepWorkV2({
             const peers = Object.entries(windows)
               .filter(([k]) => k !== key)
               .map(([, g]) => g);
-            const stack = { z: zMap[key], active: activeKey === key, onFocus: () => focusWindow(key), peers };
+            const stack = { z: zMap[key], active: activeKey === key, onFocus: () => focusWindow(key), peers, chromeless: zenMode };
 
             if (item.type === "note") {
               const note = notes[item.id];
@@ -296,6 +296,7 @@ export function DeepWorkV2({
                 geom={geom}
                 onCommit={commit}
                 onRemove={onRemove}
+                {...stack}
                 glyph="✉"
                 accent="#b073e0"
                 title={thread?.subject || "Email"}

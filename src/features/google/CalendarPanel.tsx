@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { GoogleGate } from "@/features/google/GoogleGate";
 import { listEvents, createEvent, deleteEvent, type CalEvent } from "@/services/google/calendar";
-import { useHome } from "@/features/home/store";
+import { useHome, normalizeEventTitle } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { notify } from "@/shared/ui/notify";
 import { SkeletonRows } from "@/shared/ui/Skeleton";
@@ -22,16 +22,16 @@ export function CalendarPanel({ embedded = false }: { embedded?: boolean }) {
 
 function CalendarInner({ embedded }: { embedded: boolean }) {
   const requestAdd = useDeepWork((s) => s.requestAdd);
-  const knownLabelOptions = useHome((s) => s.knownLabelOptions);
-  const scanned = useMemo(
-    () => new Set(knownLabelOptions.map((o) => o.toLowerCase().trim())),
-    [knownLabelOptions]
-  );
+  const eventTags = useHome((s) => s.eventTags);
+  const setEventTags = useHome((s) => s.setEventTags);
+  const tagsFor = (ev: CalEvent) => eventTags[normalizeEventTitle(ev.summary)] ?? [];
   const [days, setDays] = useState(7);
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [quick, setQuick] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [editingTagsId, setEditingTagsId] = useState<string | null>(null);
+  const [tagInput, setTagInput] = useState("");
 
   useEffect(() => {
     if (!menu) return;
@@ -111,7 +111,7 @@ function CalendarInner({ embedded }: { embedded: boolean }) {
           placeholder="Quick add event (starts next hour)…"
           className="flex-1 rounded bg-[var(--bg-elev)] px-3 py-1.5 text-sm outline-none placeholder:text-[var(--text-dim)]"
         />
-        <button className="zen-pressable rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-black" onClick={addQuick}>
+        <button className="zen-pressable zen-shine rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-black" onClick={addQuick}>
           Add
         </button>
       </div>
@@ -129,7 +129,7 @@ function CalendarInner({ embedded }: { embedded: boolean }) {
               {evs.map((e) => (
                 <div
                   key={e.id}
-                  className="group flex items-center gap-3 rounded px-2 py-1.5 [transition:background-color_var(--motion-fast)_var(--ease-out)] hover:bg-[var(--bg-elev)]"
+                  className="group flex items-center gap-3 rounded px-2 py-1.5 [transition:background-color_var(--motion-fast)_var(--ease-out),transform_var(--motion-fast)_var(--ease-out)] hover:translate-x-1 hover:bg-[var(--bg-elev)]"
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setMenu({ x: event.clientX, y: event.clientY, id: e.id });
@@ -138,15 +138,48 @@ function CalendarInner({ embedded }: { embedded: boolean }) {
                   <span className="w-16 shrink-0 text-sm tabular-nums text-[var(--text-dim)]">
                     {e.allDay ? "all-day" : new Date(e.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
-                  <span className="flex flex-1 items-center gap-1.5 truncate text-sm">
-                    <span className="truncate">{e.summary}</span>
-                    <span
-                      className={`shrink-0 text-[10px] ${scanned.has(e.summary.toLowerCase().trim()) ? "text-[var(--accent)]" : "text-transparent"}`}
-                      title={scanned.has(e.summary.toLowerCase().trim()) ? "AI has scanned emails for matches to this event" : undefined}
-                    >
-                      ✦
-                    </span>
-                  </span>
+                  <span className="flex-1 truncate text-sm">{e.summary}</span>
+                  {editingTagsId === e.id ? (
+                    <input
+                      autoFocus
+                      value={tagInput}
+                      onChange={(ev) => setTagInput(ev.target.value)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter") (ev.target as HTMLInputElement).blur();
+                        if (ev.key === "Escape") setEditingTagsId(null);
+                      }}
+                      onBlur={() => {
+                        setEventTags(
+                          normalizeEventTitle(e.summary),
+                          tagInput.split(",").map((t) => t.trim()).filter(Boolean)
+                        );
+                        setEditingTagsId(null);
+                      }}
+                      placeholder="tags, comma, separated"
+                      className="w-32 shrink-0 rounded bg-[var(--bg)] px-1.5 py-0.5 text-xs outline-none placeholder:text-[var(--text-dim)]"
+                    />
+                  ) : (
+                    <>
+                      {tagsFor(e).length > 0 && (
+                        <span
+                          className="max-w-[120px] shrink-0 truncate text-xs text-[var(--text-dim)]"
+                          title={tagsFor(e).join(", ")}
+                        >
+                          {tagsFor(e).join(", ")}
+                        </span>
+                      )}
+                      <button
+                        className="hidden shrink-0 text-xs text-[var(--text-dim)] hover:text-[var(--accent)] group-hover:block"
+                        title="Tag this event (applies to every future occurrence of the same title)"
+                        onClick={() => {
+                          setTagInput(tagsFor(e).join(", "));
+                          setEditingTagsId(e.id);
+                        }}
+                      >
+                        🏷
+                      </button>
+                    </>
+                  )}
                   {e.location && <span className="truncate text-xs text-[var(--text-dim)]">{e.location}</span>}
                   <button
                     className="hidden text-xs text-[var(--text-dim)] hover:text-[var(--danger)] group-hover:block"
@@ -167,7 +200,7 @@ function CalendarInner({ embedded }: { embedded: boolean }) {
 
       {menu && (
         <div
-          className="zen-anim-pop fixed z-50 min-w-[180px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
+          className="zen-anim-spring fixed z-50 min-w-[180px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
           style={{ left: menu.x, top: menu.y, transformOrigin: "top left" }}
           onPointerDown={(event) => event.stopPropagation()}
         >

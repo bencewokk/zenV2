@@ -17,6 +17,11 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
     if (!mf) return;
     if (mf.value !== node.attrs.latex) mf.value = node.attrs.latex ?? "";
 
+    // Inline math: don't pop the virtual keyboard on focus — it's intrusive for a
+    // small in-text field. Show it only on an explicit double-click (below). Block
+    // equations keep the default auto behaviour.
+    mf.mathVirtualKeyboardPolicy = inline ? "manual" : "auto";
+
     const onInput = () => updateAttributes({ latex: mf.value });
 
     // When the caret moves past an edge of the field, hand focus back to the
@@ -78,6 +83,17 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
         e.stopPropagation();
         ref.current?.focus();
       }}
+      // Inline math suppresses the virtual keyboard on focus; a double-click is the
+      // explicit gesture to summon it.
+      onDoubleClick={
+        inline
+          ? (e: React.MouseEvent) => {
+              e.stopPropagation();
+              ref.current?.focus();
+              window.mathVirtualKeyboard?.show();
+            }
+          : undefined
+      }
     >
       {createElement("math-field", {
         ref,
