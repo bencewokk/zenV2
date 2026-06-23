@@ -9,6 +9,24 @@ import { ToolSettings } from "@/features/ai/ToolSettings";
 import { useMemoryStatus } from "@/features/memory/useMemoryStatus";
 import { usePresence } from "@/shared/ui/usePresence";
 import { Dropdown } from "@/shared/ui/Dropdown";
+import { loadSettings } from "@/services/ai/settings";
+
+/** Compact "12.3k tok · ~$0.004" readout for a conversation's cumulative usage. */
+function UsageBadge({ promptTokens, completionTokens }: { promptTokens?: number; completionTokens?: number }) {
+  const total = (promptTokens ?? 0) + (completionTokens ?? 0);
+  if (!total) return null;
+  const { priceInputPerM, priceOutputPerM } = loadSettings();
+  const cost = ((promptTokens ?? 0) * priceInputPerM + (completionTokens ?? 0) * priceOutputPerM) / 1_000_000;
+  const tok = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
+  return (
+    <span
+      className="shrink-0 tabular-nums"
+      title={`${promptTokens ?? 0} prompt + ${completionTokens ?? 0} completion tokens (estimated cost, edit rates in Settings → AI Behavior)`}
+    >
+      {tok} tok · ~${cost.toFixed(3)}
+    </span>
+  );
+}
 
 export function ChatPanel() {
   const open = useAI((s) => s.open);
@@ -114,6 +132,10 @@ export function ChatPanel() {
           title="Model"
           className="min-w-0 max-w-[40%] text-[11px]"
           options={(models.length ? models : [model]).map((m) => ({ value: m, label: m }))}
+        />
+        <UsageBadge
+          promptTokens={conversations.find((c) => c.id === activeId)?.promptTokens}
+          completionTokens={conversations.find((c) => c.id === activeId)?.completionTokens}
         />
         {memStatus !== "idle" && (
           <span className="flex items-center gap-1" title={`Embedding model: ${memStatus}`}>

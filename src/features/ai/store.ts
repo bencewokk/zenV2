@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AIMessage } from "@/services/ai/types";
-import { deepseek, streamChatWithTools, chatOnce, type AssistantReply } from "@/services/ai/deepseek";
+import { deepseek, streamChatWithTools, chatOnce, type AssistantReply, type Usage } from "@/services/ai/deepseek";
 import { TOOL_DEFS, runTool, isReadTool, isAutoTool, describeToolCall, parseToolArgs } from "@/services/ai/tools";
 import { policyFor } from "@/services/ai/toolPolicy";
 import { loadSettings } from "@/services/ai/settings";
@@ -37,6 +37,23 @@ export interface Conversation {
   turns: ChatTurn[];
   createdAt: number;
   updatedAt: number;
+  /** Cumulative token usage for this conversation (best-effort, from API responses). */
+  promptTokens?: number;
+  completionTokens?: number;
+}
+
+/** One retry on a thrown tool call, then surface the failure as a tool result
+ *  (instead of aborting the whole agent loop) so the model can adapt. */
+async function runToolSafe(name: string, args: Record<string, unknown>): Promise<string> {
+  try {
+    return await runTool(name, args);
+  } catch {
+    try {
+      return await runTool(name, args);
+    } catch (e2) {
+      return `Tool "${name}" failed twice: ${(e2 as Error).message || "unknown error"}. Try a different approach or ask the user.`;
+    }
+  }
 }
 
 const CONV_KEY = "zen.ai.conversations.v1";
@@ -145,7 +162,8 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "options in prose. " +
     "Today is " + new Date().toString() + "." +
     memoryContext() +
-    (ctx ? `\n\nThe user's current note (for context):\n"""\n${ctx.slice(0, 6000)}\n"""` : ""),
+    (ctx ? `\n\nThe user's current note (for context):\n"""\n${ctx.slice(0, 6000)}\n"""` : "") +
+    (loadSettings().systemPromptExtra.trim() ? `\n\n${loadSettings().systemPromptExtra.trim()}` : ""),
 });
 
 const initialConv = readConversations();
@@ -220,6 +238,7 @@ export const useAI = create<AIState>((set, get) => ({
     const activeTools = TOOL_DEFS.filter((d) => policyFor(d.function.name) !== "off");
 
     const maxToolSteps = Math.max(1, loadSettings().maxToolSteps);
+    const usage: Usage = { promptTokens: 0, completionTokens: 0 };
 
     try {
       // Agent loop: stream the model → run any tool calls → feed results back → repeat.
@@ -232,7 +251,14 @@ export const useAI = create<AIState>((set, get) => ({
         let reply: AssistantReply;
         for (;;) {
           const next = await gen.next();
-          if (next.done) { reply = next.value; break; }
+          if (next.done) {
+            reply = next.value;
+            if (reply.usage) {
+              usage.promptTokens += reply.usage.promptTokens;
+              usage.completionTokens += reply.usage.completionTokens;
+            }
+            break;
+          }
           acc += next.value;
           set((s) => {
             const t = [...s.turns];
@@ -250,7 +276,7 @@ export const useAI = create<AIState>((set, get) => ({
           const reads = new Map<string, Promise<string>>();
           for (const call of reply.tool_calls) {
             if (call.function.name !== "ask_user" && isReadTool(call.function.name)) {
-              reads.set(call.id, runTool(call.function.name, parseToolArgs(call.function.arguments)));
+              reads.set(call.id, runToolSafe(call.function.name, parseToolArgs(call.function.arguments)));
             }
           }
 
@@ -284,7 +310,7 @@ export const useAI = create<AIState>((set, get) => ({
               // Study-state writes apply immediately (no proposal card) so the
               // tutoring flow stays conversational — they're local & non-outbound.
               set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${describeToolCall(name, args).title}` }] }));
-              result = await runTool(name, args);
+              result = await runToolSafe(name, args);
             } else {
               // Everything else is gated by the user's per-tool policy (Tools tab).
               const policy = policyFor(name);
@@ -296,7 +322,7 @@ export const useAI = create<AIState>((set, get) => ({
               } else if (policy === "auto") {
                 // Auto-apply: run now and report the outcome inline.
                 set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${desc.title}` }] }));
-                result = await runTool(name, args);
+                result = await runToolSafe(name, args);
               } else {
                 // "ask": propose a card the user must Run/Dismiss.
                 const id = crypto.randomUUID();
@@ -329,6 +355,7 @@ export const useAI = create<AIState>((set, get) => ({
       }
     } finally {
       set({ streaming: false, controller: null });
+      if (usage.promptTokens || usage.completionTokens) addUsageToActive(usage);
       syncActive();
       void nameConversation(get().activeId);
     }
@@ -429,6 +456,17 @@ function persistConversations(conversations: Conversation[], activeId: string): 
     const max = Math.max(1, loadSettings().maxConversations);
     localStorage.setItem(CONV_KEY, JSON.stringify({ conversations: conversations.slice(-max), activeId }));
   } catch { /* ignore */ }
+}
+
+/** Add to the active conversation's cumulative token usage. */
+function addUsageToActive(usage: Usage): void {
+  const s = useAI.getState();
+  const conversations = s.conversations.map((c) =>
+    c.id === s.activeId
+      ? { ...c, promptTokens: (c.promptTokens ?? 0) + usage.promptTokens, completionTokens: (c.completionTokens ?? 0) + usage.completionTokens }
+      : c
+  );
+  useAI.setState({ conversations });
 }
 
 /** Fold the live `turns` back into the active conversation and persist. */

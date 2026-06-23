@@ -13,6 +13,11 @@ export interface AISettings {
   /** Default working-hours window for find_free_slots (0-23). */
   freeSlotDayStart: number;
   freeSlotDayEnd: number;
+  /** Extra instructions appended to the built-in system prompt. */
+  systemPromptExtra: string;
+  /** Approximate $ per 1M input/output tokens, for the cost estimate shown in chat. */
+  priceInputPerM: number;
+  priceOutputPerM: number;
 }
 
 const KEY = "zen.ai.settings.v1";
@@ -25,6 +30,9 @@ const DEFAULTS: AISettings = {
   maxConversations: 30,
   freeSlotDayStart: 9,
   freeSlotDayEnd: 18,
+  systemPromptExtra: "",
+  priceInputPerM: 0.27,
+  priceOutputPerM: 1.10,
 };
 
 export function loadSettings(): AISettings {

@@ -53,6 +53,46 @@ export function AiBehavior() {
         <SaveBar onSave={() => { saveSettings(s); notify.success("AI settings saved"); }} />
       </SettingsSection>
 
+      <SettingsSection title="System prompt" hint="Extra instructions appended after the built-in prompt, on every message.">
+        <Field label="Custom instructions" hint="e.g. tone, language, how verbose to be. Leave blank to use the defaults only.">
+          <textarea
+            value={s.systemPromptExtra}
+            onChange={(e) => setS({ ...s, systemPromptExtra: e.target.value })}
+            rows={4}
+            className="zen-input w-full resize-none"
+            placeholder="e.g. Prefer terse answers. Always suggest a follow-up question."
+            spellCheck={false}
+          />
+        </Field>
+        <SaveBar onSave={() => { saveSettings(s); notify.success("AI settings saved"); }} />
+      </SettingsSection>
+
+      <SettingsSection title="Cost estimate" hint="$ per 1M tokens, used only to estimate cost shown next to the model picker — check your provider's pricing page for exact rates.">
+        <div className="flex gap-4">
+          <Field label="Input $/1M">
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={s.priceInputPerM}
+              onChange={(e) => setS({ ...s, priceInputPerM: Math.max(0, Number(e.target.value) || 0) })}
+              className="zen-input w-28"
+            />
+          </Field>
+          <Field label="Output $/1M">
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={s.priceOutputPerM}
+              onChange={(e) => setS({ ...s, priceOutputPerM: Math.max(0, Number(e.target.value) || 0) })}
+              className="zen-input w-28"
+            />
+          </Field>
+        </div>
+        <SaveBar onSave={() => { saveSettings(s); notify.success("AI settings saved"); }} />
+      </SettingsSection>
+
       <SettingsSection title="Tools & memory" hint="Per-tool permissions and your profile/memory live in the AI chat panel.">
         <button className="zen-btn-ghost" onClick={() => { if (!useAI.getState().open) useAI.getState().toggle(); }}>
           Open AI panel → Tools / Profile

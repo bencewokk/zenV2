@@ -2,9 +2,15 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { AIMessage, AIProvider, ToolCall, ToolDef } from "./types";
 import { loadSettings } from "./settings";
 
+export interface Usage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
 export interface AssistantReply {
   content: string | null;
   tool_calls?: ToolCall[];
+  usage?: Usage;
 }
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -67,6 +73,7 @@ export async function* streamChatWithTools(
       model,
       messages,
       stream: true,
+      stream_options: { include_usage: true },
       ...(tools.length ? { tools, tool_choice: "auto" } : {}),
     }),
     signal,
@@ -82,6 +89,7 @@ export async function* streamChatWithTools(
   let content = "";
   // Accumulate streamed tool calls by their index.
   const toolAcc = new Map<number, { id: string; name: string; args: string }>();
+  let usage: Usage | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -98,6 +106,7 @@ export async function* streamChatWithTools(
       try {
         const json = JSON.parse(data) as {
           choices?: { delta?: { content?: string; tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[];
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
         };
         const delta = json.choices?.[0]?.delta;
         if (delta?.content) {
@@ -111,6 +120,9 @@ export async function* streamChatWithTools(
           if (tc.function?.arguments) cur.args += tc.function.arguments;
           toolAcc.set(tc.index, cur);
         }
+        if (json.usage) {
+          usage = { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0 };
+        }
       } catch {
         /* ignore keep-alive / partial frames */
       }
@@ -123,7 +135,7 @@ export async function* streamChatWithTools(
     .filter((t) => t.name)
     .map((t, i) => ({ id: t.id || `call_${i}`, type: "function" as const, function: { name: t.name, arguments: t.args } }));
 
-  return { content: content || null, tool_calls: tool_calls.length ? tool_calls : undefined };
+  return { content: content || null, tool_calls: tool_calls.length ? tool_calls : undefined, usage };
 }
 
 /** Non-streaming completion that can return tool calls (for the agent loop). */
