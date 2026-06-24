@@ -56,10 +56,12 @@ export async function createEvent(input: {
   startISO: string;
   endISO: string;
   location?: string;
+  description?: string;
 }): Promise<CalEvent> {
   const body = {
     summary: input.summary,
     location: input.location,
+    description: input.description,
     start: { dateTime: input.startISO },
     end: { dateTime: input.endISO },
   };

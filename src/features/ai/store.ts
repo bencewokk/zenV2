@@ -213,9 +213,24 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "deepwork_read_material so you can target weak spots in later quizzes). " +
     "Concept mastery updates automatically from the scores, so don't also call deepwork_set_mastery for a quiz. " +
     "Ask the user if they're ready to be evaluated before starting a quiz. " +
-    "PLANNING STUDY: when the user wants to plan or schedule studying, call deepwork_weak_concepts to see " +
-    "their weakest concepts, then offer to book review sessions — use find_free_slots to find time and " +
-    "create_event titled 'Review: <concept>' (with the weak concepts in the description). " +
+    "PLANNING STUDY (adaptive weekly plan): when the user opens a study session, wants to plan/schedule " +
+    "studying, or prepare for an exam by a date, build an ADAPTIVE STUDY PLAN — a schedule of study " +
+    "sessions across the coming days. FIRST call deepwork_plan_status (it returns the deadline & days " +
+    "left, current mastery and the gap to target, time still needed, the weakest concepts, and any " +
+    "existing planned sessions with ids). If there's no backbone yet, read the material and build one " +
+    "first. If no exam date is known, use ask_user to get the deadline (and optionally the daily study " +
+    "budget). Then call find_free_slots to find real open calendar time and create the plan with " +
+    "deepwork_set_plan: one entry per study block (startISO + durationMin + kind learn|review|quiz|catchup " +
+    "+ the focus concept titles). SCALE THE INTENSITY to deadline proximity AND the mastery gap — schedule " +
+    "more and longer sessions when the exam is near or the gap is large, fewer when the user is ahead; " +
+    "front-load the weakest concepts, interleave review, and put a quiz session shortly before the exam. " +
+    "The plan is CALENDAR-NATIVE — each session is added to Google Calendar automatically, so DON'T use " +
+    "raw create_event for study sessions; use deepwork_set_plan so they stay tracked. " +
+    "ADAPTING THE PLAN: after the user finishes quizzes/sessions, or asks to update, or when " +
+    "deepwork_plan_status reports the user is BEHIND/AHEAD or has MISSED sessions, call deepwork_plan_status " +
+    "then deepwork_revise_plan — ADD sessions for newly-weak or missed concepts, REMOVE or shorten sessions " +
+    "for concepts now mastered, and RESCHEDULE missed time into free slots. Revise (don't rebuild from " +
+    "scratch) so the user's calendar stays stable. " +
     "PDF SEARCH TYPES: search_pdf is KEYWORD/text match (works as soon as text is extracted — it says " +
     "NOTHING about whether a PDF is semantically indexed). find_in_pdf is SEMANTIC and needs the embedding " +
     "index built. To answer 'is this PDF indexed?', check the 'semantic: ready/not built' status from " +

@@ -1,0 +1,242 @@
+import type { StudyBackbone } from "@/features/home/deepwork/deepworkStore";
+import { dayKey } from "@/features/home/deepwork/studyLog";
+
+/**
+ * Adaptive weekly STUDY PLAN for a Deep Work session — a schedule of study
+ * sessions over a horizon (default a week), generated and revised by the AI.
+ *
+ * **Calendar-native:** each PlannedSession is backed by a real Google Calendar
+ * event (`calendarEventId`); the plan also stores enough (date / startMin /
+ * duration / focus) to render and reason about offline, so it survives a sign-out.
+ *
+ * **Adaptive intensity** is driven here, by `planHealth`: a function of how far
+ * the exam is (deadline proximity) AND how much is still un-mastered (the mastery
+ * gap). The AI plans/revises from the same numbers (via deepwork_plan_status), and
+ * the Study panel shows the resulting verdict. This module is pure logic + types —
+ * no zustand, no React — so it's trivially testable and shared by store/tools/UI.
+ */
+
+/** What a planned session is for. */
+export type PlanSessionKind = "learn" | "review" | "quiz" | "catchup";
+export type PlanSessionStatus = "planned" | "done" | "skipped" | "missed";
+
+export interface PlannedSession {
+  id: string;
+  date: string; // local YYYY-MM-DD (matches studyLog.dayKey)
+  startMin: number; // minutes from local midnight (for the calendar event time)
+  durationMin: number;
+  kind: PlanSessionKind;
+  focus: string[]; // backbone concept titles this session targets
+  status: PlanSessionStatus;
+  rationale?: string; // why the AI scheduled this
+  completedMs?: number; // focus time credited toward this session
+  quizId?: string; // a quiz taken for this session
+  calendarEventId?: string; // the backing Google Calendar event, when synced
+}
+
+export interface StudyPlan {
+  goal: string; // what we're preparing for
+  examDate?: string; // YYYY-MM-DD deadline anchor (optional)
+  horizonDays: number; // planning window when there's no deadline
+  dailyTargetMin: number; // the user's daily study budget (seeds from studyLog)
+  sessions: PlannedSession[];
+  generatedAt: number;
+  revisedAt: number;
+}
+
+// ── Tunables for the deadline×mastery pressure model ──────────────────────────
+
+/** Readiness (overall mastery %) we aim to reach by the deadline. */
+export const TARGET_READINESS = 85;
+/** Rough study minutes needed to gain one point of overall mastery. */
+export const MIN_PER_POINT = 9;
+export const DEFAULT_HORIZON_DAYS = 7;
+/** Under-booked by more than this (min) → the plan has drifted, offer a re-plan. */
+const DRIFT_DEFICIT_MIN = 30;
+/** Over-booked by more than this (min) while nearly mastered → trim, offer re-plan. */
+const DRIFT_SURPLUS_MIN = 120;
+
+export const KIND_META: Record<PlanSessionKind, { label: string; glyph: string }> = {
+  learn: { label: "Learn", glyph: "📘" },
+  review: { label: "Review", glyph: "🔁" },
+  quiz: { label: "Quiz", glyph: "✎" },
+  catchup: { label: "Catch-up", glyph: "⏱" },
+};
+
+// ── Date helpers (local time, mirroring studyLog's local-day convention) ──────
+
+/** Parse a YYYY-MM-DD key into a local Date at the given minutes-from-midnight. */
+export function planSessionStart(s: Pick<PlannedSession, "date" | "startMin">): Date {
+  const [y, m, d] = s.date.split("-").map(Number);
+  const date = new Date(y || 1970, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+  date.setMinutes(s.startMin || 0);
+  return date;
+}
+
+export function planSessionEnd(s: PlannedSession): Date {
+  return new Date(planSessionStart(s).getTime() + s.durationMin * 60000);
+}
+
+/** Whole local days from `now` until the exam date (0 = exam is today; ≥1 future). */
+export function daysUntilExam(examDate: string | undefined, now: number): number | null {
+  if (!examDate) return null;
+  const today = new Date(dayKey(new Date(now)) + "T00:00:00");
+  const exam = new Date(examDate + "T00:00:00");
+  return Math.round((exam.getTime() - today.getTime()) / 86400000);
+}
+
+/** Sessions still ahead (today or later) that haven't been completed/skipped, time-ordered. */
+export function upcomingSessions(plan: StudyPlan | null, now: number): PlannedSession[] {
+  if (!plan) return [];
+  return plan.sessions
+    .filter((s) => (s.status === "planned" || s.status === "missed") && planSessionEnd(s).getTime() >= now)
+    .sort((a, b) => planSessionStart(a).getTime() - planSessionStart(b).getTime());
+}
+
+/** The very next session to act on, or null. */
+export function nextSession(plan: StudyPlan | null, now: number): PlannedSession | null {
+  return upcomingSessions(plan, now)[0] ?? null;
+}
+
+/**
+ * Mark planned sessions whose end-time has passed as "missed" (so they surface for
+ * rescheduling and feed drift detection). Pure: returns a new plan + whether
+ * anything changed (so callers can skip a needless store write).
+ */
+export function reconcilePlan(plan: StudyPlan, now: number): { plan: StudyPlan; changed: boolean } {
+  let changed = false;
+  const sessions = plan.sessions.map((s) => {
+    if (s.status === "planned" && planSessionEnd(s).getTime() < now) {
+      changed = true;
+      return { ...s, status: "missed" as PlanSessionStatus };
+    }
+    return s;
+  });
+  return changed ? { plan: { ...plan, sessions }, changed } : { plan, changed };
+}
+
+export interface PlanHealth {
+  daysLeft: number; // until exam, or the horizon when there's no deadline
+  hasDeadline: boolean;
+  overall: number; // current overall readiness
+  masteryGap: number; // points still to gain to hit TARGET_READINESS
+  requiredMin: number; // estimated study minutes still needed
+  neededPerDayMin: number; // requiredMin spread over the days left
+  plannedRemainingMin: number; // minutes booked in upcoming (non-missed) sessions
+  deficitMin: number; // requiredMin shortfall vs what's booked
+  pressure: number; // neededPerDay / dailyTarget (>1 = need more than your daily budget)
+  missedCount: number;
+  onTrack: boolean;
+  drift: boolean; // the plan should be revised
+  verdict: "ahead" | "on-track" | "behind";
+}
+
+/**
+ * The deadline×mastery pressure model. Intensity rises as the exam nears
+ * (`daysLeft` ↓) or the gap stays wide (`masteryGap` ↑), and eases when mastery
+ * outpaces the schedule. Drives both the AI's planning and the panel's verdict.
+ */
+export function planHealth(plan: StudyPlan | null, backbone: StudyBackbone | null, now: number): PlanHealth {
+  const overall = backbone?.overall ?? 0;
+  const masteryGap = Math.max(0, TARGET_READINESS - overall);
+  const examDays = daysUntilExam(plan?.examDate, now);
+  const hasDeadline = examDays != null;
+  const horizon = plan?.horizonDays ?? DEFAULT_HORIZON_DAYS;
+  const daysLeft = Math.max(1, examDays != null ? examDays : horizon);
+
+  const requiredMin = Math.round(masteryGap * MIN_PER_POINT);
+  const neededPerDayMin = Math.ceil(requiredMin / daysLeft);
+  const dailyTargetMin = Math.max(1, plan?.dailyTargetMin ?? 0);
+
+  const upcoming = upcomingSessions(plan, now).filter((s) => s.status === "planned");
+  const plannedRemainingMin = upcoming.reduce((sum, s) => sum + s.durationMin, 0);
+  const deficitMin = Math.max(0, requiredMin - plannedRemainingMin);
+  const surplusMin = Math.max(0, plannedRemainingMin - requiredMin);
+  const pressure = neededPerDayMin / dailyTargetMin;
+  const missedCount = plan ? plan.sessions.filter((s) => s.status === "missed").length : 0;
+  const examPassed = hasDeadline && examDays! < 0;
+
+  const onTrack = deficitMin <= 0 && pressure <= 1.15;
+  const verdict: PlanHealth["verdict"] = masteryGap <= 5 || (surplusMin > DRIFT_SURPLUS_MIN && pressure < 0.6)
+    ? "ahead"
+    : onTrack
+      ? "on-track"
+      : "behind";
+  const drift =
+    missedCount > 0 ||
+    deficitMin > DRIFT_DEFICIT_MIN ||
+    (verdict === "ahead" && surplusMin > DRIFT_SURPLUS_MIN) ||
+    examPassed;
+
+  return {
+    daysLeft: examDays != null ? examDays : horizon,
+    hasDeadline,
+    overall,
+    masteryGap,
+    requiredMin,
+    neededPerDayMin,
+    plannedRemainingMin,
+    deficitMin,
+    pressure,
+    missedCount,
+    onTrack,
+    drift,
+    verdict,
+  };
+}
+
+// ── Display helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Credit `ms` of focus time to today's earliest still-open session (planned, or a
+ * missed one being made up today), marking it done once it reaches its planned
+ * duration. Pure — returns a new plan, or the same reference when nothing applies.
+ */
+export function creditFocusToPlan(plan: StudyPlan, ms: number, now: number): StudyPlan {
+  if (ms <= 0) return plan;
+  const today = dayKey(new Date(now));
+  const idx = plan.sessions
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => s.date === today && (s.status === "planned" || s.status === "missed"))
+    .sort((a, b) => a.s.startMin - b.s.startMin)[0]?.i;
+  if (idx == null) return plan;
+  const sessions = plan.sessions.slice();
+  const s = sessions[idx];
+  const completedMs = (s.completedMs ?? 0) + ms;
+  const done = completedMs >= s.durationMin * 60000;
+  sessions[idx] = { ...s, completedMs, status: done ? "done" : "planned" };
+  return { ...plan, sessions };
+}
+
+/** "Today" / "Tomorrow" / "Wed 25" for a YYYY-MM-DD key, relative to now. */
+export function fmtPlanDay(date: string, now: number = Date.now()): string {
+  const todayKey = dayKey(new Date(now));
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (date === todayKey) return "Today";
+  if (date === dayKey(tomorrow)) return "Tomorrow";
+  const d = planSessionStart({ date, startMin: 0 });
+  return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
+}
+
+/** "14:30" from minutes-from-midnight. */
+export function fmtStartMin(startMin: number): string {
+  const h = Math.floor(startMin / 60) % 24;
+  const m = startMin % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** A short, human verdict line for the plan header. */
+export function verdictLabel(h: PlanHealth): string {
+  if (h.hasDeadline && h.daysLeft < 0) return "Exam date passed — re-plan";
+  if (h.verdict === "ahead") return "Ahead of schedule";
+  if (h.verdict === "behind")
+    return `Behind — aim for ~${Math.round(h.neededPerDayMin / 6) / 10}h/day`;
+  return "On track";
+}
+
+export function verdictColor(h: PlanHealth): string {
+  if (h.verdict === "behind" || (h.hasDeadline && h.daysLeft < 0)) return "#f6685e";
+  if (h.verdict === "ahead") return "#4ade80";
+  return "#60A5FA";
+}

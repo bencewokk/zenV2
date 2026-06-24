@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { HomeTarget } from "@/features/home/store";
+import type { PlannedSession, StudyPlan } from "@/features/home/deepwork/studyPlan";
+import { creditFocusToPlan, reconcilePlan as reconcilePlanPure } from "@/features/home/deepwork/studyPlan";
 
 /**
  * Deep Work — a collection of named **sessions**. Each session is a curated canvas:
@@ -46,6 +48,9 @@ export interface SessionStudyState {
   backbone: StudyBackbone | null;
   focusMs: number;
   focusSessions: number;
+  /** The adaptive weekly study plan (calendar-backed). Optional — sessions from
+   *  before this feature, and sessions never planned, simply have none. */
+  plan?: StudyPlan | null;
 }
 
 /** A named Deep Work session. */
@@ -75,7 +80,7 @@ function defaultGeom(index: number): WindowGeom {
 }
 
 function emptyStudyState(): SessionStudyState {
-  return { items: [], windows: {}, intent: "", backbone: null, focusMs: 0, focusSessions: 0 };
+  return { items: [], windows: {}, intent: "", backbone: null, focusMs: 0, focusSessions: 0, plan: null };
 }
 
 interface PersistedV3 {
@@ -108,6 +113,7 @@ function mirrorOf(s: DeepWorkSession | null): SessionStudyState {
         backbone: s.backbone,
         focusMs: s.focusMs,
         focusSessions: s.focusSessions,
+        plan: s.plan ?? null,
       }
     : emptyStudyState();
 }
@@ -133,6 +139,12 @@ interface DeepWorkState extends SessionStudyState {
   setMastery: (updates: { concept: string; mastery: number }[], overall?: number) => void;
   clearBackbone: () => void;
   logFocus: (ms: number) => void;
+
+  // Study plan (adaptive weekly schedule) — operate on the active session.
+  setPlan: (plan: StudyPlan) => void;
+  clearPlan: () => void;
+  markPlanSession: (id: string, patch: Partial<PlannedSession>) => void;
+  reconcilePlan: () => void;
 
   // Session management
   createSession: (name?: string) => string;
@@ -267,7 +279,36 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
 
     logFocus(ms) {
       if (ms <= 0) return;
-      mutateActive((s) => ({ ...s, focusMs: s.focusMs + ms, focusSessions: s.focusSessions + 1 }));
+      mutateActive((s) => {
+        const next = { ...s, focusMs: s.focusMs + ms, focusSessions: s.focusSessions + 1 };
+        // Credit the focused time toward today's planned study session, if any.
+        if (s.plan) next.plan = creditFocusToPlan(s.plan, ms, Date.now());
+        return next;
+      });
+    },
+
+    setPlan(plan) {
+      mutateActive((s) => ({ ...s, plan }));
+    },
+
+    clearPlan() {
+      mutateActive((s) => ({ ...s, plan: null }));
+    },
+
+    markPlanSession(id, patch) {
+      mutateActive((s) => {
+        if (!s.plan) return s;
+        const sessions = s.plan.sessions.map((ps) => (ps.id === id ? { ...ps, ...patch } : ps));
+        return { ...s, plan: { ...s.plan, sessions, revisedAt: Date.now() } };
+      });
+    },
+
+    reconcilePlan() {
+      const st = get();
+      const active = st.activeId ? st.sessions[st.activeId] : null;
+      if (!active?.plan) return;
+      const { plan, changed } = reconcilePlanPure(active.plan, Date.now());
+      if (changed) mutateActive((s) => ({ ...s, plan }));
     },
 
     createSession(name) {

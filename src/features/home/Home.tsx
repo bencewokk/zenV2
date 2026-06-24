@@ -12,6 +12,10 @@ import {
 import { DeepWorkV2 } from "@/features/home/deepwork/DeepWorkV2";
 import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
 import { fmtClock, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import {
+  reconcilePlan as reconcilePlanPure, nextSession, planHealth,
+  fmtPlanDay, fmtStartMin, verdictColor, KIND_META,
+} from "@/features/home/deepwork/studyPlan";
 import { useQuote } from "@/features/home/quote";
 import { useNotes } from "@/features/notes/store";
 import { docToText } from "@/shared/lib/docText";
@@ -821,22 +825,37 @@ function DeepWorkRecommendations() {
         </div>
       ) : (
         <div className="mt-2 space-y-1.5">
-          {recent.map((s) => (
-            <button
-              key={s.id}
-              className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:translate-x-1 hover:border-[rgba(96,165,250,0.3)] hover:bg-[rgba(96,165,250,0.06)]"
-              onClick={() => open(s.id)}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-[var(--text)]">{s.name}</span>
-                <span className="block truncate text-xs text-[var(--text-dim)]">
-                  {s.items.length} source{s.items.length === 1 ? "" : "s"}
-                  {s.backbone ? ` · ${s.backbone.overall}% ready` : ""}
+          {recent.map((s) => {
+            const now = Date.now();
+            const plan = s.plan ? reconcilePlanPure(s.plan, now).plan : null;
+            const next = nextSession(plan, now);
+            const h = plan ? planHealth(plan, s.backbone, now) : null;
+            return (
+              <button
+                key={s.id}
+                className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:translate-x-1 hover:border-[rgba(96,165,250,0.3)] hover:bg-[rgba(96,165,250,0.06)]"
+                onClick={() => open(s.id)}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-[var(--text)]">{s.name}</span>
+                  <span className="block truncate text-xs text-[var(--text-dim)]">
+                    {s.items.length} source{s.items.length === 1 ? "" : "s"}
+                    {s.backbone ? ` · ${s.backbone.overall}% ready` : ""}
+                  </span>
+                  {next && (
+                    <span
+                      className="mt-0.5 block truncate text-[11px]"
+                      style={{ color: h ? verdictColor(h) : "var(--text-dim)" }}
+                    >
+                      Next: {fmtPlanDay(next.date, now)} {fmtStartMin(next.startMin)} · {KIND_META[next.kind].label}
+                      {h?.drift ? " · adjust" : ""}
+                    </span>
+                  )}
                 </span>
-              </span>
-              <span className="shrink-0 text-sm text-[var(--text-dim)]">→</span>
-            </button>
-          ))}
+                <span className="shrink-0 text-sm text-[var(--text-dim)]">→</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

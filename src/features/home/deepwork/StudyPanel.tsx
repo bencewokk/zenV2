@@ -11,8 +11,14 @@ import {
   fmtDuration,
   fmtAgo,
 } from "@/features/home/deepwork/deepworkStore";
-import { useStudyLog, todayMs, computeStreak, HOUR_MS } from "@/features/home/deepwork/studyLog";
+import { useStudyLog, todayMs, computeStreak, HOUR_MS, dayKey } from "@/features/home/deepwork/studyLog";
 import { useQuiz, sessionQuizzes, type QuizRecord } from "@/features/home/deepwork/quizStore";
+import {
+  planHealth, upcomingSessions, fmtPlanDay, fmtStartMin, KIND_META, verdictLabel, verdictColor,
+  type PlannedSession,
+} from "@/features/home/deepwork/studyPlan";
+import { useFocusStore } from "@/features/home/deepwork/useFocusSession";
+import { isSignedIn } from "@/services/google/auth";
 
 /** {pdfId, page} pages highlighted for a given concept, keyed by concept title. */
 type ConceptPages = Record<string, { pdfId: string; page: number }[]>;
@@ -40,6 +46,11 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   );
   const now = Date.now();
   const next = nextToReview(backbone);
+
+  // Mark any past-due plan sessions as "missed" whenever this study session opens.
+  useEffect(() => {
+    useDeepWork.getState().reconcilePlan();
+  }, [activeSessionId]);
 
   // Load highlights for every PDF in the session so concept→page links resolve.
   const pdfIds = useMemo(() => items.filter((i) => i.type === "pdf").map((i) => i.id), [items]);
@@ -114,6 +125,8 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
 
       <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
         <DailyGoalBar />
+
+        <PlanSection />
 
         <div className="flex gap-2">
           <button
@@ -286,6 +299,181 @@ function ConceptPageLinks({
         </button>
       ))}
     </div>
+  );
+}
+
+/** Hours, one decimal, from minutes — for compact "1.5h" labels. */
+function hrs(min: number): string {
+  return `${Math.round(min / 6) / 10}h`;
+}
+
+/**
+ * The adaptive weekly study plan: a verdict header (deadline × mastery), an
+ * optional "re-plan" nudge when the plan has drifted, and the upcoming sessions.
+ * Generation and revision are AI-driven (calendar-native) — the buttons here send
+ * the assistant a request; the panel just reflects the stored plan.
+ */
+function PlanSection() {
+  const plan = useDeepWork((s) => s.plan);
+  const backbone = useDeepWork((s) => s.backbone);
+  const streaming = useAI((s) => s.streaming);
+  const now = Date.now();
+
+  function ask(prompt: string) {
+    const ai = useAI.getState();
+    if (!ai.open) ai.toggle();
+    void ai.send(prompt);
+  }
+
+  // The empty-state hint below the backbone already covers "no backbone yet".
+  if (!backbone) return null;
+
+  if (!plan) {
+    return (
+      <div className="rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-3 py-2.5">
+        <div className="text-xs font-medium text-[var(--text)]">Plan your week</div>
+        <div className="mt-1 text-[11px] text-[var(--text-dim)]">
+          Let the AI lay out study sessions across the next days — adapting as your mastery changes and the deadline nears.
+        </div>
+        <button
+          className="zen-pressable mt-2 w-full rounded-[6px] border border-[var(--accent)] bg-[var(--bg)] px-2.5 py-1.5 text-xs text-[var(--text)] disabled:opacity-50"
+          onClick={() =>
+            ask(
+              "Plan my study week for this Deep Work material. Check my plan status and free time, ask me for " +
+                "my exam date if you don't know it, then build an adaptive study plan."
+            )
+          }
+          disabled={streaming}
+          title="AI builds a week of study sessions"
+        >
+          📅 Plan my week
+        </button>
+        {!isSignedIn() && (
+          <div className="mt-1.5 text-[10px] text-[var(--text-dim)]">
+            Connect Google (Calendar tab) to add sessions to your calendar.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const h = planHealth(plan, backbone, now);
+  const upcoming = upcomingSessions(plan, now).slice(0, 8);
+
+  return (
+    <div className="space-y-2">
+      <div className="rounded-[8px] border border-[var(--border)] px-2.5 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">This week</span>
+          <span className="ml-auto text-[11px] font-medium" style={{ color: verdictColor(h) }}>
+            {verdictLabel(h)}
+          </span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--text-dim)]">
+          <span>{h.hasDeadline ? (h.daysLeft <= 0 ? "Exam today / passed" : `${h.daysLeft}d to exam`) : `${h.daysLeft}d horizon`}</span>
+          <span>·</span>
+          <span>{hrs(h.plannedRemainingMin)} booked</span>
+          {h.deficitMin > 0 && <span>· need +{hrs(h.deficitMin)}</span>}
+          {h.missedCount > 0 && <span className="text-[#f6685e]">· {h.missedCount} missed</span>}
+        </div>
+      </div>
+
+      {h.drift && (
+        <button
+          className="zen-pressable w-full rounded-[8px] border border-[#f5b14c] bg-[rgba(245,177,76,0.12)] px-2.5 py-1.5 text-left text-[11px] text-[var(--text)] disabled:opacity-50"
+          onClick={() =>
+            ask(
+              "My study plan needs updating — check deepwork_plan_status and revise the plan based on how I'm doing " +
+                "(add sessions for weak/missed concepts, remove or shorten ones I've mastered, reschedule missed time)."
+            )
+          }
+          disabled={streaming}
+          title="AI adjusts the plan to your progress"
+        >
+          ⟳ Your plan needs adjusting — re-plan
+        </button>
+      )}
+
+      {upcoming.length ? (
+        <ul className="space-y-1">
+          {upcoming.map((s) => (
+            <PlanSessionRow key={s.id} s={s} now={now} disabled={streaming} ask={ask} />
+          ))}
+        </ul>
+      ) : (
+        <div className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-[11px] text-[var(--text-dim)]">
+          No upcoming sessions{h.drift ? " — re-plan to add some." : "."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One upcoming plan session: start it (focus timer + tutor/quiz), mark done, or skip. */
+function PlanSessionRow({
+  s,
+  now,
+  disabled,
+  ask,
+}: {
+  s: PlannedSession;
+  now: number;
+  disabled: boolean;
+  ask: (prompt: string) => void;
+}) {
+  const markPlanSession = useDeepWork((st) => st.markPlanSession);
+  const meta = KIND_META[s.kind];
+  const isToday = s.date === dayKey(new Date(now));
+  const missed = s.status === "missed";
+
+  function start() {
+    useFocusStore.getState().startSession(s.durationMin);
+    const focus = s.focus.length ? s.focus.join(", ") : "this material";
+    if (s.kind === "quiz") {
+      ask(`Start a quiz on ${focus} from my Deep Work material.`);
+    } else {
+      ask(`Tutor me on ${focus} from my Deep Work material — a ${s.durationMin}-minute ${meta.label.toLowerCase()} session.`);
+    }
+  }
+
+  return (
+    <li className={`rounded-[8px] border px-2.5 py-1.5 ${isToday ? "border-[var(--accent)]" : "border-[var(--border)]"}`}>
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs" aria-hidden>{meta.glyph}</span>
+        <span className="text-[11px] font-medium text-[var(--text)]">{fmtPlanDay(s.date, now)}</span>
+        <span className="text-[11px] tabular-nums text-[var(--text-dim)]">{fmtStartMin(s.startMin)} · {s.durationMin}m</span>
+        {missed && <span className="text-[10px] text-[#f6685e]">missed</span>}
+        <span className="ml-auto flex items-center gap-1">
+          <button
+            className="zen-pressable rounded border border-[var(--accent)] px-1.5 py-0.5 text-[10px] text-[var(--text)] disabled:opacity-50"
+            onClick={start}
+            disabled={disabled}
+            title="Start a focus timer and begin this session"
+          >
+            Start
+          </button>
+          <button
+            className="zen-pressable rounded px-1 text-[11px] text-[var(--text-dim)] hover:text-[#4ade80]"
+            onClick={() => markPlanSession(s.id, { status: "done" })}
+            title="Mark done"
+          >
+            ✓
+          </button>
+          <button
+            className="zen-pressable rounded px-1 text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]"
+            onClick={() => markPlanSession(s.id, { status: "skipped" })}
+            title="Skip this session"
+          >
+            ✕
+          </button>
+        </span>
+      </div>
+      {s.focus.length > 0 && (
+        <div className="mt-0.5 ml-5 truncate text-[10px] text-[var(--text-dim)]" title={s.focus.join(", ")}>
+          {s.focus.join(", ")}
+        </div>
+      )}
+    </li>
   );
 }
 
