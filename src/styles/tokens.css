@@ -144,6 +144,15 @@ body {
 .zen-anim-rise-scale { animation: zen-rise-scale var(--motion-slow) var(--ease-out) both; }
 .zen-anim-burst { animation: zen-burst 360ms var(--ease-spring) both; }
 
+/* Brief accent wash over a surface to draw the eye after a programmatic jump
+   (e.g. the AI navigating the PDF viewer to a page). */
+@keyframes zen-flash {
+  0% { opacity: 0; }
+  18% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.zen-flash { animation: zen-flash 0.7s var(--ease-out) both; }
+
 .zen-spin { display: inline-block; animation: zen-spin 0.9s linear infinite; }
 
 /* Pulsing accent ring for "live" state: running timer, busy badge, active tab. */
@@ -879,6 +888,34 @@ math-field:focus-within { border-color: var(--accent); }
 }
 .zen-md pre code { border: none; padding: 0; background: none; }
 .zen-md a { color: var(--accent); }
+
+/* AI-drawn diagram (```svg fenced block) rendered inline in chat. */
+.zen-svg {
+  margin: 0.5em 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+.zen-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Clickable inline citation chip in AI replies ([id:..] / [pdf:.. p3]). */
+.zen-cite {
+  display: inline;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0 2px;
+  border: none;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transition: background 0.15s var(--ease-out);
+}
+.zen-cite:hover { background: var(--accent-dim); }
 .zen-editor p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: var(--text-dim);

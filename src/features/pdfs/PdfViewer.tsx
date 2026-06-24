@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { usePdfs } from "@/features/pdfs/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
-import type { PdfAnnotation } from "@/shared/lib/types";
+import { useIndexProgress } from "@/features/memory/useIndexProgress";
+import { isPdfIndexed, primeIndex, buildPdfIndex } from "@/services/memory";
+import { notify } from "@/shared/ui/notify";
+import type { PdfAnnotation, PdfOutlineItem } from "@/shared/lib/types";
 
 const EMPTY: PdfAnnotation[] = []; // stable empty ref to avoid re-renders
 
@@ -25,6 +28,8 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<SearchMatch[]>([]);
+  const [outline, setOutline] = useState<PdfOutlineItem[]>([]);
+  const [showToc, setShowToc] = useState(true);
   // Chromium often fails to paint the native PDF toolbar when a blob <iframe> is
   // mounted dynamically (first open), though it works after a full reload. Bump
   // this once after the URL resolves to force a single remount so the toolbar
@@ -44,6 +49,7 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
       else setMissing(true);
     });
     void usePdfs.getState().pagesFor(pdfId).then((p) => { if (alive) setPages(p); });
+    void usePdfs.getState().outlineFor(pdfId).then((o) => { if (alive) setOutline(o ?? []); });
     void usePdfs.getState().loadAnnotations(pdfId);
     setReloadNonce(0);
     return () => { alive = false; };
@@ -71,11 +77,16 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
 
   const go = (p: number) => setPage(Math.min(pageCount || p, Math.max(1, p)));
 
-  // Follow AI/Study/Quiz navigation requests aimed at this PDF.
+  // Follow AI/Study/Quiz navigation requests aimed at this PDF, flashing the
+  // viewer so a programmatic jump is noticeable.
   const navNonce = usePdfNav((s) => s.nonce);
+  const [flash, setFlash] = useState(0);
   useEffect(() => {
     const nav = usePdfNav.getState();
-    if (nav.nonce > 0 && nav.pdfId === pdfId) go(nav.page);
+    if (nav.nonce > 0 && nav.pdfId === pdfId) {
+      go(nav.page);
+      setFlash((f) => f + 1);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navNonce]);
 
@@ -111,7 +122,7 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
   // Toolbar/nav hash drives the native viewer's page. Changing the fragment
   // reloads the embedded viewer at that page.
   const src = `${url}#page=${page}&zoom=page-width`;
-  const hasPanel = sorted.length > 0 || matches.length > 0;
+  const hasPanel = sorted.length > 0 || matches.length > 0 || outline.length > 0;
 
   return (
     <div className="flex h-full flex-col bg-[var(--bg)]">
@@ -136,11 +147,37 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
           className="min-w-[110px] flex-1 rounded bg-[var(--bg-elev)] px-2 py-0.5 outline-none placeholder:text-[var(--text-dim)]"
         />
         {query.trim() && <span className="text-[var(--text-dim)]">{matches.length} hit{matches.length === 1 ? "" : "s"}</span>}
+        <IndexBadge pdfId={pdfId} pageCount={pageCount} />
       </div>
 
       <div className="flex min-h-0 flex-1">
         {hasPanel && (
           <div className="w-52 shrink-0 overflow-auto border-r border-[var(--border)] p-1 text-[11px]">
+            {outline.length > 0 && (
+              <>
+                <button
+                  className="flex w-full items-center gap-1 px-1 py-1 font-semibold uppercase tracking-wide text-[var(--text-dim)] hover:text-[var(--text)]"
+                  onClick={() => setShowToc((v) => !v)}
+                  title={showToc ? "Collapse contents" : "Expand contents"}
+                >
+                  <span>{showToc ? "▾" : "▸"}</span> Contents
+                </button>
+                {showToc &&
+                  outline.map((o, i) => (
+                    <button
+                      key={i}
+                      className="block w-full truncate rounded px-1.5 py-0.5 text-left hover:bg-[var(--bg-elev)] disabled:opacity-40"
+                      style={{ paddingLeft: `${6 + o.level * 10}px` }}
+                      onClick={() => o.page && go(o.page)}
+                      disabled={!o.page}
+                      title={o.title}
+                    >
+                      <span className="text-[var(--text)]">{o.title}</span>
+                      {o.page > 0 && <span className="ml-1 text-[var(--text-dim)]">p{o.page}</span>}
+                    </button>
+                  ))}
+              </>
+            )}
             {matches.length > 0 && (
               <>
                 <div className="px-1 py-1 font-semibold uppercase tracking-wide text-[var(--text-dim)]">Matches</div>
@@ -178,8 +215,74 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
         )}
 
         {/* native PDF viewer; key forces a reload to honor the #page fragment */}
-        <iframe key={`${page}-${reloadNonce}`} title="pdf" src={src} className="min-w-0 flex-1 border-0 bg-white" />
+        <div className="relative min-w-0 flex-1">
+          <iframe key={`${page}-${reloadNonce}`} title="pdf" src={src} className="h-full w-full border-0 bg-white" />
+          {flash > 0 && (
+            <div
+              key={flash}
+              className="zen-flash pointer-events-none absolute inset-0 z-10"
+              style={{ boxShadow: "inset 0 0 0 3px var(--accent)", background: "var(--accent-dim)" }}
+            />
+          )}
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Semantic-index status for this PDF: "Indexed" (semantic search ready), a live
+ * "Indexing x/total" while embedding, or "Index" to build it on demand. Re-checks
+ * on every index-progress tick (so it flips to Indexed when a build completes).
+ */
+function IndexBadge({ pdfId, pageCount }: { pdfId: string; pageCount: number }) {
+  const progress = useIndexProgress();
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void primeIndex().then(() => { if (alive) setReady(true); });
+    return () => { alive = false; };
+  }, []);
+
+  const indexingThis = !!progress && progress.pdfId === pdfId;
+  if (indexingThis) {
+    const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+    return (
+      <span className="ml-auto flex items-center gap-1 text-[var(--accent)]" title="Building the semantic index for this PDF">
+        <span className="inline-block h-1.5 w-1.5 rounded-full zen-glow" style={{ background: "var(--accent)", "--zen-glow-color": "rgba(110,168,254,0.45)" } as React.CSSProperties} />
+        Indexing {pct}%
+      </span>
+    );
+  }
+
+  const indexed = ready && isPdfIndexed(pdfId, pageCount || undefined);
+  if (indexed) {
+    return (
+      <span className="ml-auto flex items-center gap-1 text-[var(--text-dim)]" title="Semantic (AI) search is ready for this PDF">
+        <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "var(--ok)" }} />
+        Indexed
+      </span>
+    );
+  }
+
+  return (
+    <button
+      className="zen-pressable ml-auto flex items-center gap-1 rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
+      onClick={async () => {
+        const { pdfs, pagesFor } = usePdfs.getState();
+        try {
+          await buildPdfIndex(pdfId, pdfs, pagesFor);
+        } catch (e) {
+          console.error("[index] buildPdfIndex failed:", e);
+          notify.error(`Indexing failed: ${(e as Error)?.message || e}`);
+        }
+      }}
+      disabled={!ready || !!progress}
+      title="Build the on-device semantic index so the AI can search this PDF by meaning (one-time)"
+    >
+      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "var(--text-dim)" }} />
+      {progress ? "Indexing…" : "Index"}
+    </button>
   );
 }

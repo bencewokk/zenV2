@@ -9,9 +9,13 @@ import { useNotes } from "@/features/notes/store";
 import { useStatus } from "@/shared/stores/status";
 import { notify } from "@/shared/ui/notify";
 
+/** Visual tone for a tool-activity turn (drives the chip's dot colour). */
+export type ToolTone = "read" | "run" | "done" | "error" | "info" | "blocked";
+
 export interface ChatTurn {
   role: "user" | "assistant" | "tool";
   content: string;
+  tone?: ToolTone;
 }
 
 /** A mutating tool call the assistant suggests; the user runs or dismisses it. */
@@ -58,6 +62,41 @@ async function runToolSafe(name: string, args: Record<string, unknown>): Promise
 
 const CONV_KEY = "zen.ai.conversations.v1";
 const OPEN_KEY = "zen.ai.open.v1";
+
+// Guard against oversized requests (e.g. after reading a big PDF) — a too-large
+// body fails the fetch outright ("failed to fetch"). Cap each tool result and the
+// total context, truncating oldest tool/system content so the request stays valid.
+const MAX_TOOL_RESULT = 6000; // chars per tool result returned to the model
+const CONTEXT_BUDGET = 220_000; // chars of total request body before trimming
+
+function clampToolResult(s: string): string {
+  return s.length > MAX_TOOL_RESULT ? `${s.slice(0, MAX_TOOL_RESULT)}\n…(truncated — re-read a smaller part if needed)` : s;
+}
+
+/** Shrink an over-budget message list by truncating the OLDEST tool/system contents,
+ *  preserving message structure (and tool_call ↔ tool_call_id pairing) so it stays valid. */
+function boundContext(messages: AIMessage[]): void {
+  let size = JSON.stringify(messages).length;
+  if (size <= CONTEXT_BUDGET) return;
+  // Leave the system header (0) and the last few messages intact; trim the middle.
+  for (let i = 1; i < messages.length - 3 && size > CONTEXT_BUDGET; i++) {
+    const m = messages[i];
+    if ((m.role === "tool" || m.role === "system") && typeof m.content === "string" && m.content.length > 400) {
+      const trimmed = `${m.content.slice(0, 300)}…(older context trimmed)`;
+      size -= m.content.length - trimmed.length;
+      m.content = trimmed;
+    }
+  }
+}
+
+/** A user-facing reason for a failed AI request — network failures read as "failed to fetch". */
+function describeAIError(e: unknown): string {
+  const msg = (e as Error)?.message || "";
+  if (/failed to fetch|networkerror|load failed|fetch failed/i.test(msg)) {
+    return "Couldn't reach the AI (network request failed after retries). The request may be too large, the connection dropped, or the API/proxy is unreachable.";
+  }
+  return msg || "AI request failed";
+}
 
 function readOpen(): boolean {
   try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; }
@@ -126,6 +165,11 @@ const SYSTEM = (ctx?: string): AIMessage => ({
   content:
     "You are Zen's built-in assistant. Always respond in English, even if the user writes " +
     "in another language. Be concise and helpful. Format replies in Markdown. " +
+    "You can DRAW a diagram to explain something visually: emit a ```svg fenced code block " +
+    "containing one compact inline <svg> (set a viewBox; use simple shapes/paths/lines/text and " +
+    "theme-friendly strokes like #6ea8fe / currentColor) — it renders inline in the chat. Use it for " +
+    "geometry sketches, number lines, function-graph sketches, vectors, simple charts. Keep it small; " +
+    "don't include scripts. Prefer $...$ math for formulas and an SVG only when a picture helps. " +
     "Write ALL mathematics as LaTeX wrapped in $...$ for inline or $$...$$ for display math " +
     "(e.g. $\\frac{1}{x}$, $$\\int_0^1 x^2\\,dx$$) — never write bare LaTeX without $ delimiters " +
     "and never paste raw \\frac/\\int outside math delimiters. This applies in chat AND in notes. " +
@@ -169,6 +213,18 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "deepwork_read_material so you can target weak spots in later quizzes). " +
     "Concept mastery updates automatically from the scores, so don't also call deepwork_set_mastery for a quiz. " +
     "Ask the user if they're ready to be evaluated before starting a quiz. " +
+    "PLANNING STUDY: when the user wants to plan or schedule studying, call deepwork_weak_concepts to see " +
+    "their weakest concepts, then offer to book review sessions — use find_free_slots to find time and " +
+    "create_event titled 'Review: <concept>' (with the weak concepts in the description). " +
+    "PDF SEARCH TYPES: search_pdf is KEYWORD/text match (works as soon as text is extracted — it says " +
+    "NOTHING about whether a PDF is semantically indexed). find_in_pdf is SEMANTIC and needs the embedding " +
+    "index built. To answer 'is this PDF indexed?', check the 'semantic: ready/not built' status from " +
+    "list_pdfs — never infer indexing from search_pdf returning hits. " +
+    "READING PDFs EFFICIENTLY: to study material already on the Deep Work canvas, call deepwork_read_material " +
+    "ONCE (it returns all of it). For a long/standalone PDF, call pdf_outline FIRST — use the table of contents " +
+    "to jump to the right chapter (pdf_goto) and read just that page range with read_pdf `pages` (e.g. \"120-145\"). " +
+    "Use find_in_pdf (semantic, uses the index) to locate topics when there's no useful outline. NEVER make many " +
+    "one-page read_pdf calls — always batch with a `pages` range. " +
     "PDF TOOLING WHILE TEACHING: when you reference a PDF, call pdf_goto to scroll the user's viewer to " +
     "the exact page you're discussing. When a passage is important, highlight_pdf it and tag the `concept` " +
     "it supports plus a one-line `why` — these become concept→page links in the Study panel. When grading " +
@@ -212,11 +268,16 @@ export const useAI = create<AIState>((set, get) => {
     const activeTools = TOOL_DEFS.filter((d) => policyFor(d.function.name) !== "off");
     const maxToolSteps = Math.max(1, loadSettings().maxToolSteps);
     const usage: Usage = { promptTokens: 0, completionTokens: 0 };
+    // Cache read-tool results for this turn keyed by name+args — identical reads
+    // (across steps) reuse the result instead of re-running, saving the depth budget.
+    const readCache = new Map<string, Promise<string>>();
+    const readKey = (name: string, args: Record<string, unknown>) => `${name}:${JSON.stringify(args)}`;
     try {
       for (let step = 0; step < maxToolSteps; step++) {
         set((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
         const turnIndex = get().turns.length - 1;
         let acc = "";
+        boundContext(messages);
         const gen = streamChatWithTools(messages, get().model, activeTools, controller.signal);
         let reply: AssistantReply;
         for (;;) {
@@ -241,10 +302,13 @@ export const useAI = create<AIState>((set, get) => {
           if (!acc.trim()) set((s) => ({ turns: s.turns.filter((_, i) => i !== turnIndex) }));
           messages.push({ role: "assistant", content: reply.content ?? "", tool_calls: reply.tool_calls });
 
-          const reads = new Map<string, Promise<string>>();
+          // Kick off this step's reads concurrently, deduped against the turn cache.
           for (const call of reply.tool_calls) {
-            if (call.function.name !== "ask_user" && isReadTool(call.function.name)) {
-              reads.set(call.id, runToolSafe(call.function.name, parseToolArgs(call.function.arguments)));
+            const n = call.function.name;
+            if (n !== "ask_user" && isReadTool(n)) {
+              const args = parseToolArgs(call.function.arguments);
+              const key = readKey(n, args);
+              if (!readCache.has(key)) readCache.set(key, runToolSafe(n, args));
             }
           }
 
@@ -265,23 +329,25 @@ export const useAI = create<AIState>((set, get) => {
                   questionResolver = resolve;
                   set({ pendingQuestion: { question: question || "Pick one:", options: options.length ? options : ["OK"] } });
                 });
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${question || "Pick one:"} → ${choice}` }] }));
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${question || "Pick one:"} → ${choice}`, tone: "info" }] }));
                 result = `The user chose: ${choice}`;
               }
             } else if (isReadTool(name)) {
-              set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔎 ${describeToolCall(name, args).title}` }] }));
-              result = await reads.get(call.id)!;
+              set((s) => ({ turns: [...s.turns, { role: "tool", content: describeToolCall(name, args).title, tone: "read" }] }));
+              const key = readKey(name, args);
+              if (!readCache.has(key)) readCache.set(key, runToolSafe(name, args));
+              result = await readCache.get(key)!;
             } else if (isAutoTool(name)) {
-              set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${describeToolCall(name, args).title}` }] }));
+              set((s) => ({ turns: [...s.turns, { role: "tool", content: describeToolCall(name, args).title, tone: "run" }] }));
               result = await runToolSafe(name, args);
             } else {
               const policy = policyFor(name);
               const desc = describeToolCall(name, args);
               if (policy === "off") {
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🚫 ${desc.title} (disabled)` }] }));
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${desc.title} (disabled)`, tone: "blocked" }] }));
                 result = `The user has disabled the "${name}" tool. Do not use it; tell the user it's turned off or find another way.`;
               } else if (policy === "auto") {
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `🔧 ${desc.title}` }] }));
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: desc.title, tone: "run" }] }));
                 result = await runToolSafe(name, args);
               } else {
                 const id = crypto.randomUUID();
@@ -289,7 +355,7 @@ export const useAI = create<AIState>((set, get) => {
                 result = `Proposed "${desc.title}: ${desc.detail}" to the user; awaiting their action. Do not assume it ran — you'll be told the outcome once they act.`;
               }
             }
-            messages.push({ role: "tool", tool_call_id: call.id, content: result });
+            messages.push({ role: "tool", tool_call_id: call.id, content: clampToolResult(result) });
           }
           continue;
         }
@@ -307,7 +373,7 @@ export const useAI = create<AIState>((set, get) => {
         useStatus.getState().set({ ai: "idle" });
       } else {
         useStatus.getState().set({ ai: "error" });
-        notify.error((e as Error).message || "AI request failed");
+        notify.error(describeAIError(e));
       }
     } finally {
       set({ streaming: false, controller: null });
@@ -446,7 +512,7 @@ export const useAI = create<AIState>((set, get) => {
       set((s) => ({
         proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "done", result } : x)),
         // Record the outcome so later turns have context.
-        turns: [...s.turns, { role: "tool", content: `✓ ${p.title}: ${p.detail} — ${result}` }],
+        turns: [...s.turns, { role: "tool", content: `${p.title}: ${p.detail} — ${result}`, tone: "done" }],
       }));
       syncActive();
     } catch (e) {
@@ -454,7 +520,7 @@ export const useAI = create<AIState>((set, get) => {
       set((s) => ({
         proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "error", result } : x)),
         // Record the failure inline so the card can leave the bottom of the chat.
-        turns: [...s.turns, { role: "tool", content: `✕ ${p.title}: ${p.detail} — ${result}` }],
+        turns: [...s.turns, { role: "tool", content: `${p.title}: ${p.detail} — ${result}`, tone: "error" }],
       }));
       syncActive();
       notify.error(`${p.title} failed: ${result}`);
@@ -468,7 +534,7 @@ export const useAI = create<AIState>((set, get) => {
     set((s) => ({
       proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "dismissed" } : x)),
       // Record the decline so the model knows it was declined.
-      turns: p ? [...s.turns, { role: "tool", content: `✕ ${p.title}: ${p.detail} — dismissed by user` }] : s.turns,
+      turns: p ? [...s.turns, { role: "tool", content: `${p.title}: ${p.detail} — dismissed by user`, tone: "blocked" }] : s.turns,
     }));
     if (p) syncActive();
     // Continue once nothing is left pending — so a "ran A, dismissed B" batch still

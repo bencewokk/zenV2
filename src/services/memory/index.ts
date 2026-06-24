@@ -18,6 +18,23 @@ export {
   loadMemories, saveMemory, updateMemory, deleteMemory, type MemoryEntry,
 } from "./store";
 export { getModelStatus, onModelStatus, type ModelStatus } from "./vector";
+export { getIndexProgress, onIndexProgress, type IndexProgress } from "./vector";
+export { cancelIndexing, isPdfIndexed, primeIndex } from "./vector";
+
+/** Build (or refresh) the semantic index for a single PDF — used by the viewer's
+ *  "Index now" action. Best-effort; reports progress via onIndexProgress. */
+export async function buildPdfIndex(
+  pdfId: string,
+  pdfs: Record<string, PdfDoc>,
+  getPages: (id: string) => Promise<string[] | null>
+): Promise<void> {
+  const pdf = pdfs[pdfId];
+  if (!pdf) throw new Error("PDF not found.");
+  const pages = await getPages(pdfId);
+  if (!pages || !pages.length) throw new Error("No extractable text in this PDF (it may be scanned images).");
+  // Let errors propagate so the caller (the Index button) can surface them.
+  await syncPdfIndex({ [pdfId]: pdf }, getPages);
+}
 
 /** Persistent + episodic context for the system prompt. */
 export function memoryContext(): string {

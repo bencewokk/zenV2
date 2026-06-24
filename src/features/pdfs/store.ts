@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { PdfDoc, PdfAnnotation } from "@/shared/lib/types";
+import type { PdfDoc, PdfAnnotation, PdfOutlineItem } from "@/shared/lib/types";
 import { pdfStore } from "@/services/pdfStore";
-import { extractPages } from "@/services/pdf/pdfjs";
+import { extractPages, extractOutline } from "@/services/pdf/pdfjs";
 import { notify } from "@/shared/ui/notify";
 
 // Object URLs are created lazily and cached for the session (revoked on remove).
@@ -10,6 +10,8 @@ const urlCache = new Map<string, string>();
 const pagesCache = new Map<string, string[]>();
 // In-flight backfills, so concurrent callers share one extraction.
 const pagesInFlight = new Map<string, Promise<string[] | null>>();
+// Per-id table of contents, cached once fetched/backfilled.
+const outlineCache = new Map<string, PdfOutlineItem[]>();
 
 interface PdfState {
   pdfs: Record<string, PdfDoc>;
@@ -25,6 +27,8 @@ interface PdfState {
   urlFor: (id: string) => Promise<string | null>;
   /** Per-page text, extracting + persisting on first access (lazy backfill). */
   pagesFor: (id: string) => Promise<string[] | null>;
+  /** Table of contents, extracting + persisting on first access ([] if none). */
+  outlineFor: (id: string) => Promise<PdfOutlineItem[] | null>;
   /** Load a PDF's highlights into the reactive cache (no-op if already loaded). */
   loadAnnotations: (id: string) => Promise<void>;
   addAnnotation: (id: string, ann: PdfAnnotation) => Promise<void>;
@@ -75,6 +79,12 @@ export const usePdfs = create<PdfState>((set, get) => ({
             const cur = s.pdfs[doc.id];
             return cur ? { pdfs: { ...s.pdfs, [doc.id]: { ...cur, pageCount: pages.length } } } : {};
           });
+          // Table of contents (best-effort; empty if the PDF has no outline).
+          try {
+            const outline = await extractOutline(buf);
+            await pdfStore.putOutline(doc.id, outline);
+            outlineCache.set(doc.id, outline);
+          } catch { /* outlineFor will retry on demand */ }
         } catch {
           /* extraction failed — pagesFor will retry on demand */
         }
@@ -107,6 +117,7 @@ export const usePdfs = create<PdfState>((set, get) => ({
     const url = urlCache.get(id);
     if (url) { URL.revokeObjectURL(url); urlCache.delete(id); }
     pagesCache.delete(id);
+    outlineCache.delete(id);
     set((s) => {
       const pdfs = { ...s.pdfs };
       delete pdfs[id];
@@ -161,6 +172,27 @@ export const usePdfs = create<PdfState>((set, get) => ({
       return await job;
     } finally {
       pagesInFlight.delete(id);
+    }
+  },
+
+  async outlineFor(id) {
+    const cached = outlineCache.get(id);
+    if (cached) return cached;
+    const stored = await pdfStore.getOutline(id);
+    if (stored) {
+      outlineCache.set(id, stored);
+      return stored;
+    }
+    // Lazy backfill (legacy PDFs added before outlines were extracted).
+    const blob = await pdfStore.getBlob(id);
+    if (!blob) return null;
+    try {
+      const outline = await extractOutline(await blob.arrayBuffer());
+      await pdfStore.putOutline(id, outline);
+      outlineCache.set(id, outline);
+      return outline;
+    } catch {
+      return null;
     }
   },
 

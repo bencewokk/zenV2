@@ -16,10 +16,10 @@ export function MailPanel({ embedded = false, initialOpenId = null }: { embedded
 }
 
 const CATEGORIES: { id: string; label: string; q: string }[] = [
+  { id: "primary", label: "Primary", q: "in:inbox category:primary" },
   // "All" scopes to the inbox (not Sent/Spam/Trash/archived) and ignores the
   // category tabs, so mail Gmail filed under Promotions/Social/etc still shows.
   { id: "all", label: "All", q: "in:inbox" },
-  { id: "primary", label: "Primary", q: "in:inbox category:primary" },
   { id: "unread", label: "Unread", q: "in:inbox is:unread" },
   { id: "promotions", label: "Promotions", q: "in:inbox category:promotions" },
   { id: "social", label: "Social", q: "in:inbox category:social" },
@@ -29,7 +29,7 @@ const CATEGORIES: { id: string; label: string; q: string }[] = [
 
 function MailInner({ embedded, initialOpenId }: { embedded: boolean; initialOpenId: string | null }) {
   const [query, setQuery] = useState("");
-  const [cat, setCat] = useState("all");
+  const [cat, setCat] = useState("primary");
   const processedIdsArr = useHome((s) => s.processedThreadIds);
   const processedIds = useMemo(() => new Set(processedIdsArr), [processedIdsArr]);
   const matchedLabels = useHome((s) => s.matchedThreadLabels);

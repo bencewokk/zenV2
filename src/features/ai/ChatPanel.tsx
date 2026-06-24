@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
-import { useAI } from "@/features/ai/store";
+import { linkifyCitations } from "@/features/ai/citations";
+import { useAI, type ToolTone, type ChatTurn } from "@/features/ai/store";
 import { useNotes } from "@/features/notes/store";
+import { useHome } from "@/features/home/store";
+import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { docToText } from "@/shared/lib/docText";
 import { ProfilePanel } from "@/features/memory/ProfilePanel";
 import { ToolSettings } from "@/features/ai/ToolSettings";
@@ -9,6 +12,19 @@ import { useMemoryStatus } from "@/features/memory/useMemoryStatus";
 import { usePresence } from "@/shared/ui/usePresence";
 import { Dropdown } from "@/shared/ui/Dropdown";
 import { loadSettings } from "@/services/ai/settings";
+
+/** Dot colour for a tool-activity tone (no emojis — a small status dot instead). */
+const TONE_DOT: Record<ToolTone, string> = {
+  read: "var(--text-dim)",
+  run: "var(--accent)",
+  done: "var(--ok)",
+  error: "var(--danger)",
+  info: "var(--accent)",
+  blocked: "var(--text-dim)",
+};
+function toneColor(tone?: ToolTone): string {
+  return tone ? TONE_DOT[tone] : "var(--text-dim)";
+}
 
 /** Compact "12.3k tok · ~$0.004" readout for a conversation's cumulative usage. */
 function UsageBadge({ promptTokens, completionTokens }: { promptTokens?: number; completionTokens?: number }) {
@@ -53,6 +69,7 @@ export function ChatPanel() {
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
   const [showTools, setShowTools] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // True once the in-flight assistant turn has visible text — at that point the
@@ -68,6 +85,26 @@ export function ChatPanel() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [turns, proposals, pendingQuestion]);
+
+  // Clickable citations: open the cited note, or the cited PDF page on the canvas.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onClick = (e: MouseEvent) => {
+      const cite = (e.target as HTMLElement).closest<HTMLElement>("[data-cite-note],[data-cite-pdf]");
+      if (!cite) return;
+      const noteId = cite.getAttribute("data-cite-note");
+      const pdfId = cite.getAttribute("data-cite-pdf");
+      if (noteId) {
+        useNotes.getState().select(noteId);
+      } else if (pdfId) {
+        useHome.getState().launchDeepWork({ type: "pdf", id: pdfId });
+        usePdfNav.getState().goTo(pdfId, Number(cite.getAttribute("data-cite-page")) || 1);
+      }
+    };
+    el.addEventListener("click", onClick);
+    return () => el.removeEventListener("click", onClick);
+  }, []);
 
   const { mounted, state } = usePresence(open, 200);
   if (!mounted) return null;
@@ -94,6 +131,14 @@ export function ChatPanel() {
     return (
       <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
         <ToolSettings onClose={() => setShowTools(false)} />
+      </aside>
+    );
+  }
+
+  if (showActivity) {
+    return (
+      <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
+        <ActivityPanel turns={turns} onClose={() => setShowActivity(false)} />
       </aside>
     );
   }
@@ -153,6 +198,9 @@ export function ChatPanel() {
           </span>
         )}
         <div className="ml-auto flex items-center gap-3">
+          <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowActivity(true)} title="AI activity log">
+            Activity
+          </button>
           <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowTools(true)} title="Tool permissions">
             Tools
           </button>
@@ -174,9 +222,9 @@ export function ChatPanel() {
         )}
         {turns.map((t, i) =>
           t.role === "tool" ? (
-            <div key={i} className="zen-anim-rise flex items-center gap-1.5 text-xs text-[var(--text-dim)]">
-              <span>🔧</span>
-              <span className="truncate font-mono">{t.content}</span>
+            <div key={i} className="zen-anim-rise flex items-center gap-2 text-xs text-[var(--text-dim)]">
+              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: toneColor(t.tone) }} />
+              <span className="min-w-0 flex-1 truncate">{t.content}</span>
             </div>
           ) : (
             <div key={i} className={`zen-anim-rise ${t.role === "user" ? "text-right" : ""}`}>
@@ -188,7 +236,7 @@ export function ChatPanel() {
                 {t.role === "assistant" ? (
                   <div
                     className="zen-md"
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(t.content || "…") }}
+                    dangerouslySetInnerHTML={{ __html: linkifyCitations(renderMarkdown(t.content || "…")) }}
                   />
                 ) : (
                   <span className="whitespace-pre-wrap">{t.content}</span>
@@ -208,8 +256,11 @@ export function ChatPanel() {
                 p.danger ? "border-[var(--danger)]" : "border-[var(--border)]"
               }`}
             >
-              <div className="mb-1 flex items-center gap-1.5">
-                <span>{p.danger ? "⚠️" : "🔧"}</span>
+              <div className="mb-1 flex items-center gap-2">
+                <span
+                  className={`inline-block h-2 w-2 shrink-0 rounded-full ${p.status === "running" ? "zen-glow" : ""}`}
+                  style={{ background: p.danger ? "var(--danger)" : "var(--accent)", "--zen-glow-color": "rgba(110, 168, 254, 0.45)" } as React.CSSProperties}
+                />
                 <span className="font-semibold">{p.title}</span>
               </div>
               {p.detail && <div className="mb-2 truncate text-[var(--text-dim)]">{p.detail}</div>}
@@ -236,7 +287,7 @@ export function ChatPanel() {
                 </div>
               ) : (
                 <div className={`text-xs ${p.status === "error" ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}>
-                  {p.status === "running" ? "Running…" : p.status === "done" ? `✓ ${p.result ?? "Done"}` : `✕ ${p.result ?? "Failed"}`}
+                  {p.status === "running" ? "Running…" : p.status === "done" ? (p.result ?? "Done") : (p.result ?? "Failed")}
                 </div>
               )}
             </div>
@@ -304,5 +355,37 @@ export function ChatPanel() {
         </div>
       </div>
     </aside>
+  );
+}
+
+/** A persistent log of every tool the AI ran/proposed in this conversation. */
+function ActivityPanel({ turns, onClose }: { turns: ChatTurn[]; onClose: () => void }) {
+  const acts = turns.filter((t) => t.role === "tool");
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Activity</span>
+        <span className="text-[11px] text-[var(--text-dim)]">{acts.length}</span>
+        <button
+          className="zen-pressable ml-auto rounded px-1.5 text-sm leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
+          onClick={onClose}
+          title="Back to chat"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="zen-stagger flex-1 space-y-1.5 overflow-y-auto p-3 text-xs">
+        {acts.length === 0 ? (
+          <div className="text-[var(--text-dim)]">No tool activity yet in this conversation.</div>
+        ) : (
+          acts.map((t, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: toneColor(t.tone) }} />
+              <span className="min-w-0 flex-1 break-words text-[var(--text-dim)]">{t.content}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   );
 }

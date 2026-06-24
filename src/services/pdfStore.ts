@@ -1,4 +1,4 @@
-import type { PdfDoc, PdfAnnotation } from "@/shared/lib/types";
+import type { PdfDoc, PdfAnnotation, PdfOutlineItem } from "@/shared/lib/types";
 
 /**
  * PDF storage on IndexedDB — PDFs are multi-MB blobs that don't fit in the
@@ -20,6 +20,7 @@ interface PdfRecord extends PdfDoc {
   pages?: string[]; // per-page plain text; index 0 = page 1
   textExtractedAt?: number;
   annotations?: PdfAnnotation[];
+  outline?: PdfOutlineItem[]; // embedded table of contents (may be empty)
 }
 
 let dbP: Promise<IDBDatabase> | null = null;
@@ -124,6 +125,28 @@ export const pdfStore = {
         if (!rec) return resolve();
         const next: PdfRecord = { ...rec, pages, pageCount: pages.length, textExtractedAt: Date.now() };
         const p = store.put(next);
+        p.onsuccess = () => resolve();
+        p.onerror = () => reject(p.error);
+      };
+      g.onerror = () => reject(g.error);
+    });
+  },
+
+  async getOutline(id: string): Promise<PdfOutlineItem[] | null> {
+    const db = await openDb();
+    const rec = await get<PdfRecord>(tx(db, "readonly"), id);
+    return rec?.outline ?? null;
+  },
+
+  async putOutline(id: string, outline: PdfOutlineItem[]): Promise<void> {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const store = tx(db, "readwrite");
+      const g = store.get(id);
+      g.onsuccess = () => {
+        const rec = g.result as PdfRecord | undefined;
+        if (!rec) return resolve();
+        const p = store.put({ ...rec, outline });
         p.onsuccess = () => resolve();
         p.onerror = () => reject(p.error);
       };

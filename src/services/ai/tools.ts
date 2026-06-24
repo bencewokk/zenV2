@@ -14,8 +14,10 @@ import { mdToDoc } from "@/shared/lib/markdownDoc";
 import {
   recall, formatRecall, findInPdf, updateProfile,
   loadMemories, saveMemory, deleteMemory,
+  primeIndex, isPdfIndexed,
 } from "@/services/memory";
 import { isSignedIn } from "@/services/google/auth";
+import { notify } from "@/shared/ui/notify";
 import { loadSettings } from "@/services/ai/settings";
 import { listEvents, createEvent, updateEvent, deleteEvent } from "@/services/google/calendar";
 import {
@@ -547,7 +549,10 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "list_pdfs",
-    "List the user's uploaded PDFs with their tags and ids. Use to find a PDF to add to Deep Work.",
+    "List the user's uploaded PDFs with their tags, ids, and SEMANTIC-INDEX status. " +
+      "'semantic: ready' = the embedding index is built, so find_in_pdf (meaning-based search) " +
+      "works; 'semantic: not built' = only keyword search_pdf works until it's indexed. NOTE: " +
+      "search_pdf returning hits does NOT mean a PDF is semantically indexed — check this status.",
     obj({ tag: str("optional: only PDFs with this tag") }),
     async (a) => {
       const wanted = a.tag ? String(a.tag).toLowerCase().trim() : null;
@@ -555,8 +560,12 @@ const TOOLS: ToolImpl[] = [
         (p) => !wanted || p.tags.some((t) => t.toLowerCase().trim() === wanted)
       );
       if (!list.length) return wanted ? `No PDFs tagged "${a.tag}".` : "No PDFs uploaded.";
+      await primeIndex(); // hydrate the persisted index so the status is accurate
       return list
-        .map((p) => `- ${p.name}${p.pageCount ? ` (${p.pageCount}p)` : ""}${p.tags.length ? ` [tags: ${p.tags.join(", ")}]` : ""} [id:${p.id}]`)
+        .map((p) => {
+          const sem = isPdfIndexed(p.id, p.pageCount) ? "semantic: ready" : "semantic: not built";
+          return `- ${p.name}${p.pageCount ? ` (${p.pageCount}p)` : ""}${p.tags.length ? ` [tags: ${p.tags.join(", ")}]` : ""} [${sem}] [id:${p.id}]`;
+        })
         .join("\n");
     }
   ),
@@ -589,9 +598,12 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "read_pdf",
-    "Read the extracted text of a PDF by its id. Pass `page` to read just that page, OR a `pages` " +
-      "range to batch-read several at once (e.g. \"4-9\" or \"1-15\"), or omit both to read from the " +
-      "start. Output is capped (~10k chars) — for very long ranges read in chunks or use search_pdf to locate a topic first.",
+    "Read the extracted text of a PDF by its id. To read several pages, pass a `pages` RANGE in ONE " +
+      "call (e.g. \"4-9\" or \"1-15\") — do NOT make many single-page calls. Pass `page` for a single " +
+      "page, or omit both to read from the start. Output is capped (~10k chars) — for long ranges read " +
+      "in chunks. Prefer find_in_pdf (semantic, uses the index) to LOCATE the relevant pages first, " +
+      "then read just that range; and for studying material already on the Deep Work canvas, use " +
+      "deepwork_read_material instead (it returns everything in one call).",
     obj({
       id: str("pdf id"),
       page: num("optional 1-based page number (single page)"),
@@ -641,6 +653,23 @@ const TOOLS: ToolImpl[] = [
         out += `\n[p${i + 1}] ${pages[i]}`;
       }
       return truncated ? `${out}\n…(truncated at p${hi} — read the rest in another call)` : out;
+    }
+  ),
+  tool(
+    "pdf_outline",
+    "Get a PDF's table of contents (chapters/sections with page numbers). For a long PDF, call this " +
+      "FIRST: use it to jump to the right chapter (pdf_goto) and read just that page range (read_pdf " +
+      "pages) instead of scanning the whole document.",
+    obj({ id: str("pdf id") }, ["id"]),
+    async (a) => {
+      const pdf = usePdfs.getState().pdfs[String(a.id)];
+      if (!pdf) return "No PDF with that id.";
+      const outline = await usePdfs.getState().outlineFor(String(a.id));
+      if (!outline || !outline.length) return `"${pdf.name}" has no embedded table of contents. Use find_in_pdf to locate topics instead.`;
+      return (
+        `Table of contents for "${pdf.name}":\n` +
+        outline.map((o) => `${"  ".repeat(o.level)}- ${o.title}${o.page ? ` (p${o.page})` : ""}`).join("\n")
+      );
     }
   ),
   tool(
@@ -716,6 +745,7 @@ const TOOLS: ToolImpl[] = [
         note: a.why ? String(a.why).slice(0, 160) : undefined,
         createdAt: Date.now(),
       });
+      notify.success(`Highlighted ${pdf.name} · p${page}${a.concept ? ` (${a.concept})` : ""}`);
       return `Bookmarked on page ${page}${a.concept ? ` under "${a.concept}"` : ""}.`;
     }
   ),
@@ -731,6 +761,7 @@ const TOOLS: ToolImpl[] = [
       const page = Math.max(1, Math.round(Number(a.page)) || 1);
       useHome.getState().launchDeepWork({ type: "pdf", id: String(a.id) });
       usePdfNav.getState().goTo(String(a.id), page);
+      notify.info(`${pdf.name} · page ${page}`);
       return `Showing ${pdf.name} page ${page}.`;
     }
   ),
@@ -973,6 +1004,7 @@ const TOOLS: ToolImpl[] = [
         .filter((q) => q.prompt.trim());
       if (!questions.length) return "No questions provided.";
       useQuiz.getState().start(String(a.title ?? "Quiz"), questions, useDeepWork.getState().activeId);
+      notify.info(`Quiz started · ${questions.length} questions`);
       return `Started a ${questions.length}-question quiz. The user is answering it now; wait for their submission, then grade it.`;
     }
   ),
@@ -1039,7 +1071,26 @@ const TOOLS: ToolImpl[] = [
         useQuiz.getState().setReview(strengths, mistakes);
         note = " Saved your strong points & mistakes to this study session.";
       }
+      notify.success(`Quiz graded · ${overall}%${note ? " · review saved" : ""}`);
       return `Graded ${results.length} questions — overall ${overall}%.${note}`;
+    }
+  ),
+  tool(
+    "deepwork_weak_concepts",
+    "List the active study session's weakest concepts (lowest mastery first). Use this to PLAN " +
+      "what to study — e.g. offer to schedule review sessions on the calendar: call find_free_slots " +
+      "to find time, then create_event titled 'Review: <concept>' for the weak ones.",
+    obj({ max: num("how many concepts to return (default 5)") }),
+    async (a) => {
+      const bb = useDeepWork.getState().backbone;
+      if (!bb || !bb.concepts.length) return "No study backbone yet — read the material and build one first.";
+      const n = Math.max(1, Math.min(20, Number(a.max ?? 5)));
+      const weak = bb.concepts.slice().sort((x, y) => x.mastery - y.mastery).slice(0, n);
+      const header = bb.intent ? `Goal: ${bb.intent}\n` : "";
+      return (
+        `${header}Overall readiness ${bb.overall}%. Weakest concepts (review these):\n` +
+        weak.map((c) => `- ${c.title} (${c.mastery}%)${c.summary ? ` — ${c.summary}` : ""}`).join("\n")
+      );
     }
   ),
   tool(
@@ -1148,8 +1199,8 @@ export const READ_TOOLS = new Set([
   "search_notes", "read_note", "get_tree", "recall", "list_memories",
   "list_events", "find_free_slots", "search_mail", "read_mail",
   "list_tags", "list_facets", // added in phase 3
-  "list_pdfs", "read_pdf", "search_pdf", "find_in_pdf",
-  "deepwork_read_material",
+  "list_pdfs", "read_pdf", "search_pdf", "find_in_pdf", "pdf_outline",
+  "deepwork_read_material", "deepwork_weak_concepts",
 ]);
 
 export function isReadTool(name: string): boolean {
@@ -1210,11 +1261,12 @@ const CATEGORY_SETS: Array<[string, Set<string>]> = [
   ])],
   ["PDF", new Set([
     "list_pdfs", "find_in_pdf", "read_pdf", "search_pdf", "cite_pdf", "highlight_pdf",
-    "unhighlight_pdf", "rename_pdf", "tag_pdf", "delete_pdf", "attach_pdf", "detach_pdf", "pdf_goto",
+    "unhighlight_pdf", "rename_pdf", "tag_pdf", "delete_pdf", "attach_pdf", "detach_pdf", "pdf_goto", "pdf_outline",
   ])],
   ["Deep Work", new Set([
     "deepwork_add", "deepwork_remove", "deepwork_set_intent", "deepwork_read_material",
     "deepwork_set_backbone", "deepwork_set_mastery", "deepwork_start_quiz", "deepwork_grade_quiz",
+    "deepwork_weak_concepts",
   ])],
   ["Navigation", new Set(["apply_filter", "clear_filter", "list_tags", "list_facets", "open_view"])],
 ];
@@ -1308,6 +1360,7 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "cite_pdf": return d("Cite PDF into note", `${pdfName(s("pdfId"))} p${s("page")} → ${noteTitle(s("noteId"))}`);
     case "highlight_pdf": return d("Bookmark in PDF", `${pdfName(s("id"))} p${s("page")}: "${s("text").slice(0, 40)}"`);
     case "pdf_goto": return d("Show PDF page", `${pdfName(s("id"))} p${s("page")}`);
+    case "pdf_outline": return d("Read PDF contents", pdfName(s("id")));
     case "unhighlight_pdf": return d("Remove PDF bookmarks", s("text") ? `${pdfName(s("id"))}: "${s("text")}"` : pdfName(s("id")));
     case "rename_pdf": return d("Rename PDF", `${pdfName(s("id"))} → ${s("name")}`);
     case "tag_pdf": return d("Tag PDF", `${pdfName(s("id"))}: ${Array.isArray(a.tags) ? a.tags.join(", ") : ""}`);
@@ -1321,6 +1374,7 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "deepwork_set_mastery": return d("Update mastery", Array.isArray(a.updates) ? `${a.updates.length} concept(s)` : "");
     case "deepwork_start_quiz": return d("Start quiz", Array.isArray(a.questions) ? `${a.questions.length} questions` : s("title"));
     case "deepwork_grade_quiz": return d("Grade quiz", Array.isArray(a.results) ? `${a.results.length} answers` : "");
+    case "deepwork_weak_concepts": return d("Find weak concepts", "to plan review");
     case "add_email_label": return d("Add email label", s("label"));
     case "remove_email_label": return d("Remove email label", s("label"));
     // Filtering & navigation

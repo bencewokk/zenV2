@@ -33,6 +33,13 @@ export interface PdfDoc {
   pageCount?: number; // populated after text extraction
 }
 
+/** One entry in a PDF's embedded table of contents (outline). */
+export interface PdfOutlineItem {
+  title: string;
+  page: number; // 1-based; 0 if the destination couldn't be resolved
+  level: number; // nesting depth, 0 = top level
+}
+
 /**
  * A PDF annotation, used two ways:
  * - In the native (Read) viewer it's a bookmark: page + quoted text, shown in a

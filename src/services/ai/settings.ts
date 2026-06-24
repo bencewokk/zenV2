@@ -26,7 +26,7 @@ const DEFAULTS: AISettings = {
   apiKey: DEEPSEEK_API_KEY,
   baseUrl: "/deepseek", // Vite dev proxy → https://api.deepseek.com
   model: "deepseek-chat",
-  maxToolSteps: 8,
+  maxToolSteps: 20, // agentic study tasks (locating many topics, building a quiz) need headroom
   maxConversations: 30,
   freeSlotDayStart: 9,
   freeSlotDayEnd: 18,

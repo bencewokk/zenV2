@@ -7,6 +7,7 @@
  */
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import type { PdfOutlineItem } from "@/shared/lib/types";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -37,6 +38,46 @@ export async function extractPages(data: ArrayBuffer): Promise<string[]> {
       page.cleanup();
     }
     return pages;
+  } finally {
+    await task.destroy();
+  }
+}
+
+interface RawOutline {
+  title: string;
+  dest: string | unknown[] | null;
+  items?: RawOutline[];
+}
+
+/**
+ * Extract the PDF's embedded table of contents (outline), flattened with nesting
+ * level and resolved to 1-based page numbers. Empty if the PDF has no outline.
+ */
+export async function extractOutline(data: ArrayBuffer): Promise<PdfOutlineItem[]> {
+  const task = pdfjs.getDocument({ data: data.slice(0) });
+  const doc = await task.promise;
+  try {
+    const raw = (await doc.getOutline()) as RawOutline[] | null;
+    if (!raw?.length) return [];
+    const out: PdfOutlineItem[] = [];
+    const walk = async (items: RawOutline[], level: number): Promise<void> => {
+      for (const it of items) {
+        let page = 0;
+        try {
+          const dest = typeof it.dest === "string" ? await doc.getDestination(it.dest) : it.dest;
+          const ref = Array.isArray(dest) ? dest[0] : null;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if (ref) page = (await doc.getPageIndex(ref as any)) + 1;
+        } catch {
+          /* unresolved destination — leave page = 0 */
+        }
+        const title = (it.title || "").replace(/\s+/g, " ").trim().slice(0, 200);
+        if (title) out.push({ title, page, level });
+        if (it.items?.length) await walk(it.items, level + 1);
+      }
+    };
+    await walk(raw, 0);
+    return out;
   } finally {
     await task.destroy();
   }
