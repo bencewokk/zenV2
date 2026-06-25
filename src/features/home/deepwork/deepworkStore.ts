@@ -15,14 +15,26 @@ import { creditFocusToPlan, reconcilePlan as reconcilePlanPure } from "@/feature
  * unchanged. Persisted to localStorage under `zen.deepwork.v3`.
  */
 
+/** A sub-skill (facet) within a concept, with its own mastery. Created on the fly
+ *  by the tutor as it teaches/tests a specific facet, so a lesson on one facet
+ *  doesn't clobber the others. */
+export interface SubSkill {
+  id: string;
+  title: string;
+  mastery: number; // 0..100
+  lastReviewed?: number;
+  reviewCount?: number;
+}
+
 /** One key concept in the study backbone, with its own mastery score. */
 export interface StudyConcept {
   id: string;
   title: string;
   summary: string;
-  mastery: number; // 0..100, AI-tracked from tutoring/quizzes
+  mastery: number; // 0..100 — DERIVED (avg of subs) when subs exist, else AI-set directly
   lastReviewed?: number; // epoch ms of the last mastery update (a drill/quiz)
   reviewCount?: number; // how many times this concept has been drilled
+  subs?: SubSkill[]; // sub-skills; concept mastery is their average when present
 }
 
 /** The backbone of the study material: the key concepts the AI synthesized. */
@@ -136,15 +148,23 @@ interface DeepWorkState extends SessionStudyState {
   setWindow: (key: string, geom: WindowGeom) => void;
   setIntent: (intent: string) => void;
   setBackbone: (intent: string, concepts: { title: string; summary: string }[], overall?: number) => void;
-  setMastery: (updates: { concept: string; mastery: number }[], overall?: number) => void;
+  setMastery: (updates: { concept: string; sub?: string; mastery: number }[], overall?: number) => void;
   clearBackbone: () => void;
   logFocus: (ms: number) => void;
 
   // Study plan (adaptive weekly schedule) — operate on the active session.
   setPlan: (plan: StudyPlan) => void;
+  /** Commit a plan to an EXPLICIT session id (no active-session auto-create) — used
+   *  by AI tools that await long calendar round-trips and must not write to whatever
+   *  session happens to be active when they finish. */
+  setPlanFor: (id: string, plan: StudyPlan) => void;
   clearPlan: () => void;
   markPlanSession: (id: string, patch: Partial<PlannedSession>) => void;
   reconcilePlan: () => void;
+  /** The plan session the user explicitly started, so focus time credits that row
+   *  (not just today's earliest). Ephemeral — not persisted. */
+  activePlanSessionId: string | null;
+  setActivePlanSession: (id: string | null) => void;
 
   // Session management
   createSession: (name?: string) => string;
@@ -205,6 +225,7 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
     activeId: initial.activeId,
     zenMode: initial.zenMode,
     pendingAdd: null,
+    activePlanSessionId: null,
     ...mirrorOf(activeSession),
 
     requestAdd(t) {
@@ -257,18 +278,40 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
         const norm = (str: string) => str.toLowerCase().trim();
         const now = Date.now();
         const concepts = s.backbone.concepts.map((c) => {
-          const hit = updates.find((u) => norm(u.concept) === norm(c.title) || u.concept === c.id);
-          // A mastery update means the concept was just drilled/quizzed — stamp it
-          // so the Study card can surface stale concepts for spaced review.
-          return hit
-            ? { ...c, mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: (c.reviewCount ?? 0) + 1 }
-            : c;
+          const hits = updates.filter((u) => norm(u.concept) === norm(c.title) || u.concept === c.id);
+          if (!hits.length) return c;
+          let next: StudyConcept = { ...c, subs: c.subs ? [...c.subs] : c.subs };
+          for (const hit of hits) {
+            if (hit.sub && hit.sub.trim()) {
+              // Credit a specific sub-skill — upsert by title; siblings untouched.
+              const subs = next.subs ? [...next.subs] : [];
+              const i = subs.findIndex((x) => norm(x.title) === norm(hit.sub!));
+              if (i >= 0) {
+                subs[i] = { ...subs[i], mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: (subs[i].reviewCount ?? 0) + 1 };
+              } else {
+                subs.push({ id: crypto.randomUUID(), title: hit.sub!.trim(), mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: 1 });
+              }
+              next = { ...next, subs };
+            } else if (!next.subs?.length) {
+              // Legacy flat update — only when the concept has no sub-skills.
+              next = { ...next, mastery: clampPercent(hit.mastery) };
+            }
+            // (A flat update on a concept that HAS subs is ignored — the average wins.)
+          }
+          // Concept mastery is the average of its subs when present; stamp the review.
+          next.mastery = conceptMastery(next);
+          next.lastReviewed = now;
+          next.reviewCount = (c.reviewCount ?? 0) + 1;
+          return next;
         });
         const backbone: StudyBackbone = {
           ...s.backbone,
           concepts,
-          overall: overall != null ? clampPercent(overall) : s.backbone.overall,
+          // Overall is derived from the concepts (now the source of truth); the
+          // explicit `overall` arg is kept for API compatibility but ignored.
+          overall: recomputeOverall(concepts),
         };
+        void overall;
         return { ...s, backbone };
       });
     },
@@ -279,16 +322,30 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
 
     logFocus(ms) {
       if (ms <= 0) return;
+      const preferred = get().activePlanSessionId;
       mutateActive((s) => {
         const next = { ...s, focusMs: s.focusMs + ms, focusSessions: s.focusSessions + 1 };
-        // Credit the focused time toward today's planned study session, if any.
-        if (s.plan) next.plan = creditFocusToPlan(s.plan, ms, Date.now());
+        // Credit the focused time toward the started (or today's earliest) plan session.
+        if (s.plan) next.plan = creditFocusToPlan(s.plan, ms, Date.now(), preferred);
         return next;
       });
+      if (get().activePlanSessionId) set({ activePlanSessionId: null });
     },
 
     setPlan(plan) {
       mutateActive((s) => ({ ...s, plan }));
+    },
+
+    setPlanFor(id, plan) {
+      const st = get();
+      const session = st.sessions[id];
+      if (!session) return; // session gone (deleted/archived during a calendar round-trip)
+      const updated = { ...session, plan, updatedAt: Date.now() };
+      commit({ sessions: { ...st.sessions, [id]: updated }, order: st.order, activeId: st.activeId, zenMode: st.zenMode });
+    },
+
+    setActivePlanSession(id) {
+      set({ activePlanSessionId: id });
     },
 
     clearPlan() {
@@ -418,6 +475,19 @@ export function fmtAgo(ts: number | undefined, now: number = Date.now()): string
 
 export function clampPercent(n: unknown): number {
   return Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
+}
+
+/** A concept's mastery = the average of its sub-skills when it has any, else its
+ *  own directly-set value (backward compatible with sub-less concepts). */
+export function conceptMastery(c: StudyConcept): number {
+  if (!c.subs?.length) return clampPercent(c.mastery);
+  return clampPercent(c.subs.reduce((sum, s) => sum + s.mastery, 0) / c.subs.length);
+}
+
+/** Overall readiness = the average of the concepts' (derived) masteries. */
+export function recomputeOverall(concepts: StudyConcept[]): number {
+  if (!concepts.length) return 0;
+  return clampPercent(concepts.reduce((sum, c) => sum + conceptMastery(c), 0) / concepts.length);
 }
 
 /**

@@ -299,5 +299,10 @@ export async function gapiFetch<T>(url: string, init: RequestInit = {}): Promise
     const body = await res.text().catch(() => "");
     throw new Error(`Google ${res.status}: ${body.slice(0, 200)}`);
   }
-  return (await res.json()) as T;
+  // A successful DELETE (and some PATCH/PUT) returns 204 / an empty body — calling
+  // res.json() on that throws. Treat empty bodies as success (undefined) so real
+  // HTTP/network failures still surface to callers.
+  if (res.status === 204 || res.headers.get("content-length") === "0") return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }

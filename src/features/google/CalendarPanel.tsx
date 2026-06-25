@@ -184,7 +184,11 @@ function CalendarInner({ embedded }: { embedded: boolean }) {
                   <button
                     className="hidden text-xs text-[var(--text-dim)] hover:text-[var(--danger)] group-hover:block"
                     onClick={async () => {
-                      await deleteEvent(e.id);
+                      try {
+                        await deleteEvent(e.id);
+                      } catch (err) {
+                        notify.error(`Couldn't delete event: ${(err as Error).message}`);
+                      }
                       void load();
                     }}
                   >

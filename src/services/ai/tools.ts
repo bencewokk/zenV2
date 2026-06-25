@@ -6,9 +6,10 @@ import { useDeepWork, clampPercent } from "@/features/home/deepwork/deepworkStor
 import {
   planHealth, planSessionStart, fmtPlanDay, fmtStartMin,
   KIND_META, TARGET_READINESS, DEFAULT_HORIZON_DAYS,
-  type PlannedSession, type StudyPlan, type PlanSessionKind,
+  type PlannedSession, type StudyPlan, type PlanSessionKind, type PlanSessionStatus,
 } from "@/features/home/deepwork/studyPlan";
 import { useStudyLog, dayKey } from "@/features/home/deepwork/studyLog";
+import { useLesson, type LessonBlock } from "@/features/home/deepwork/lessonStore";
 import { useQuiz, activeQuiz, quizQAList, sessionQuizzes, type Verdict, type QuizInputKind } from "@/features/home/deepwork/quizStore";
 import { usePdfs } from "@/features/pdfs/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
@@ -25,7 +26,7 @@ import {
 import { isSignedIn } from "@/services/google/auth";
 import { notify } from "@/shared/ui/notify";
 import { loadSettings } from "@/services/ai/settings";
-import { listEvents, createEvent, updateEvent, deleteEvent } from "@/services/google/calendar";
+import { listEvents, createEvent, createEvents, updateEvent, deleteEvent, deleteEvents } from "@/services/google/calendar";
 import {
   listThreads, getThread, createDraft,
   sendEmail, replyInThread, modifyThread,
@@ -82,20 +83,33 @@ function needGoogle(): string | null {
 
 const PLAN_KINDS: PlanSessionKind[] = ["learn", "review", "quiz", "catchup"];
 
+/** Calendar event title/body for a plan session — shared by create and reschedule
+ *  so the backing event never drifts from the session. */
+function planEventSummary(kind: PlanSessionKind, focus: string[]): string {
+  return `Study · ${focus.length ? focus.join(", ") : KIND_META[kind].label}`;
+}
+function planEventDescription(kind: PlanSessionKind, focus: string[], rationale?: string): string {
+  return (
+    `${KIND_META[kind].label}${focus.length ? " — " + focus.join(", ") : ""}` +
+    `${rationale ? "\n" + rationale : ""}\n[Zen study plan]`
+  );
+}
+
 /**
- * Turn a raw {startISO, durationMin, kind, focus, rationale} from the model into a
- * PlannedSession, and — when signed into Google — create the backing calendar event
- * (calendar-native plan). Returns null if the start time can't be parsed. Calendar
- * failures are swallowed so the session is still saved locally (just unsynced).
+ * Build a PlannedSession from a raw {startISO, durationMin, kind, focus, rationale}
+ * model entry — PURE, no calendar I/O (events are created in batch by the caller).
+ * Returns null if the start can't be parsed OR is in the past (so a plan never books
+ * a session that's instantly "missed").
  */
-async function buildPlannedSession(raw: Record<string, unknown>, signedIn: boolean): Promise<PlannedSession | null> {
+function makePlannedSession(raw: Record<string, unknown>): PlannedSession | null {
   const start = new Date(String(raw.startISO ?? ""));
   if (isNaN(start.getTime())) return null;
+  if (start.getTime() < Date.now() - 5 * 60000) return null; // reject past sessions (5-min grace)
   const durationMin = Math.max(5, Math.min(600, Math.round(Number(raw.durationMin) || 45)));
   const kind = (PLAN_KINDS.includes(String(raw.kind) as PlanSessionKind) ? String(raw.kind) : "review") as PlanSessionKind;
   const focus = Array.isArray(raw.focus) ? raw.focus.map(String).filter(Boolean) : [];
   const rationale = raw.rationale ? String(raw.rationale) : undefined;
-  const session: PlannedSession = {
+  return {
     id: crypto.randomUUID(),
     date: dayKey(start),
     startMin: start.getHours() * 60 + start.getMinutes(),
@@ -105,20 +119,58 @@ async function buildPlannedSession(raw: Record<string, unknown>, signedIn: boole
     status: "planned",
     rationale,
   };
-  if (signedIn) {
-    const endISO = new Date(start.getTime() + durationMin * 60000).toISOString();
-    const label = focus.length ? focus.join(", ") : KIND_META[kind].label;
-    const description =
-      `${KIND_META[kind].label}${focus.length ? " — " + focus.join(", ") : ""}` +
-      `${rationale ? "\n" + rationale : ""}\n[Zen study plan]`;
-    try {
-      const ev = await createEvent({ summary: `Study · ${label}`, startISO: start.toISOString(), endISO, description });
-      session.calendarEventId = ev.id;
-    } catch {
-      /* keep the session unsynced — the plan still renders and reasons offline */
+}
+
+/** The Google Calendar event input that backs a plan session. */
+function planEventInput(s: PlannedSession) {
+  const start = planSessionStart(s);
+  const endISO = new Date(start.getTime() + s.durationMin * 60000).toISOString();
+  return {
+    summary: planEventSummary(s.kind, s.focus),
+    startISO: start.toISOString(),
+    endISO,
+    description: planEventDescription(s.kind, s.focus, s.rationale),
+  };
+}
+
+/** Normalize raw study_present block specs from the model into LessonBlocks. */
+function parseLessonBlocks(raw: unknown): LessonBlock[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LessonBlock[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const b = item as Record<string, unknown>;
+    const id = crypto.randomUUID();
+    switch (String(b.kind ?? "")) {
+      case "text":
+        if (b.markdown) out.push({ id, kind: "text", markdown: String(b.markdown) });
+        break;
+      case "svg":
+        if (b.svg) out.push({ id, kind: "svg", svg: String(b.svg), caption: b.caption ? String(b.caption) : undefined });
+        break;
+      case "snippet":
+        if (b.text)
+          out.push({ id, kind: "snippet", text: String(b.text), source: b.source ? String(b.source) : undefined, note: b.note ? String(b.note) : undefined });
+        break;
+      case "pdf":
+        if (b.pdfId && b.page != null)
+          out.push({ id, kind: "pdf", pdfId: String(b.pdfId), page: Math.max(1, Math.round(Number(b.page)) || 1), caption: b.caption ? String(b.caption) : undefined });
+        break;
+      case "question":
+        if (b.prompt)
+          out.push({
+            id,
+            kind: "question",
+            prompt: String(b.prompt),
+            qkind: String(b.qkind) === "choice" ? "choice" : "text",
+            options: Array.isArray(b.options) ? b.options.map(String) : undefined,
+            concept: b.concept ? String(b.concept) : undefined,
+            sub: b.sub ? String(b.sub) : undefined,
+          });
+        break;
     }
   }
-  return session;
+  return out;
 }
 
 const TOOLS: ToolImpl[] = [
@@ -981,22 +1033,33 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "deepwork_set_mastery",
-    "Update the user's per-concept mastery (0-100) and optionally the overall readiness, based " +
-      "on tutoring and quiz performance. Match concepts by their title.",
+    "Update mastery (0-100) from tutoring/quiz performance. Match concepts by title. " +
+      "IMPORTANT: pass a `sub` (a short sub-skill name) to credit a SPECIFIC facet of a concept — " +
+      "this keeps the concept's other facets intact (the concept % becomes the average of its " +
+      "sub-skills). Sub-skills are created on the fly: the first time you test a facet, name it via " +
+      "`sub`. Only omit `sub` for a concept you're tracking as a single flat skill.",
     obj({
       updates: {
         type: "array",
         description: "mastery updates",
-        items: obj({ concept: str("concept title"), mastery: num("mastery 0-100") }, ["concept", "mastery"]),
+        items: obj({
+          concept: str("concept title"),
+          sub: str("optional sub-skill name within the concept (created if new)"),
+          mastery: num("mastery 0-100"),
+        }, ["concept", "mastery"]),
       },
-      overall: num("optional overall readiness 0-100"),
+      overall: num("optional overall readiness 0-100 (usually derived automatically)"),
     }, ["updates"]),
     async (a) => {
       const updates = Array.isArray(a.updates)
         ? a.updates
             .map((u) => (u && typeof u === "object" ? (u as Record<string, unknown>) : null))
             .filter(Boolean)
-            .map((u) => ({ concept: String(u!.concept ?? ""), mastery: Number(u!.mastery) || 0 }))
+            .map((u) => ({
+              concept: String(u!.concept ?? ""),
+              sub: u!.sub ? String(u!.sub) : undefined,
+              mastery: Number(u!.mastery) || 0,
+            }))
         : [];
       useDeepWork.getState().setMastery(updates, a.overall != null ? Number(a.overall) : undefined);
       return "Updated mastery.";
@@ -1022,6 +1085,7 @@ const TOOLS: ToolImpl[] = [
           kind: str("choice | text | math | order | match"),
           category: str("optional pedagogical label, e.g. 'Numerical', 'Error Analysis'"),
           concept: str("the backbone concept title this tests (optional but recommended)"),
+          sub: str("optional sub-skill (facet) of the concept this tests — credits just that facet"),
           prompt: str("the question text (may contain $...$ math)"),
           options: arr("choice: the answer options (include the correct one)"),
           items: arr("order: the steps in their CORRECT sequence — the app shuffles them for the user"),
@@ -1041,6 +1105,7 @@ const TOOLS: ToolImpl[] = [
           kind: (kinds.includes(String(q!.kind) as QuizInputKind) ? String(q!.kind) : "text") as QuizInputKind,
           category: q!.category ? String(q!.category) : undefined,
           concept: q!.concept ? String(q!.concept) : undefined,
+          sub: q!.sub ? String(q!.sub) : undefined,
           prompt: String(q!.prompt ?? ""),
           options: strArr(q!.options),
           items: strArr(q!.items),
@@ -1097,15 +1162,20 @@ const TOOLS: ToolImpl[] = [
       const quiz = activeQuiz();
       const overall = Math.round(results.reduce((sum, r) => sum + r.score, 0) / results.length);
       useQuiz.getState().applyResults(results, overall);
-      // Recompute per-concept mastery as the mean score of that concept's questions.
-      const byConcept: Record<string, number[]> = {};
+      // Recompute mastery as the mean score per (concept, sub-skill) — a question
+      // tagged with a `sub` credits just that facet, keeping the concept's other
+      // sub-skills intact; an untagged question updates the concept flatly (legacy).
+      const groups: Record<string, { concept: string; sub?: string; scores: number[] }> = {};
       for (const r of results) {
-        const concept = quiz?.questions.find((q) => q.id === r.id)?.concept;
-        if (concept) (byConcept[concept] ??= []).push(r.score);
+        const q = quiz?.questions.find((qq) => qq.id === r.id);
+        if (!q?.concept) continue;
+        const key = `${q.concept} ${q.sub ?? ""}`;
+        (groups[key] ??= { concept: q.concept, sub: q.sub, scores: [] }).scores.push(r.score);
       }
-      const updates = Object.entries(byConcept).map(([concept, scores]) => ({
-        concept,
-        mastery: Math.round(scores.reduce((s, n) => s + n, 0) / scores.length),
+      const updates = Object.values(groups).map((g) => ({
+        concept: g.concept,
+        sub: g.sub,
+        mastery: Math.round(g.scores.reduce((s, n) => s + n, 0) / g.scores.length),
       }));
       if (updates.length) useDeepWork.getState().setMastery(updates, overall);
 
@@ -1134,9 +1204,14 @@ const TOOLS: ToolImpl[] = [
       const n = Math.max(1, Math.min(20, Number(a.max ?? 5)));
       const weak = bb.concepts.slice().sort((x, y) => x.mastery - y.mastery).slice(0, n);
       const header = bb.intent ? `Goal: ${bb.intent}\n` : "";
+      const subsLine = (c: typeof weak[number]) =>
+        c.subs?.length
+          ? "\n  weakest sub-skills: " +
+            c.subs.slice().sort((x, y) => x.mastery - y.mastery).slice(0, 3).map((sk) => `${sk.title} (${sk.mastery}%)`).join(", ")
+          : "";
       return (
         `${header}Overall readiness ${bb.overall}%. Weakest concepts (review these):\n` +
-        weak.map((c) => `- ${c.title} (${c.mastery}%)${c.summary ? ` — ${c.summary}` : ""}`).join("\n")
+        weak.map((c) => `- ${c.title} (${c.mastery}%)${c.summary ? ` — ${c.summary}` : ""}${subsLine(c)}`).join("\n")
       );
     }
   ),
@@ -1179,7 +1254,14 @@ const TOOLS: ToolImpl[] = [
         lines.push("No plan yet — build one with deepwork_set_plan (one entry per study block, weighting weak concepts and days left).");
       }
       lines.push("", "Weakest concepts (prioritise these):");
-      lines.push(...weak.map((c) => `- ${c.title} (${c.mastery}%)`));
+      lines.push(
+        ...weak.map((c) => {
+          const subs = c.subs?.length
+            ? " — sub-skills: " + c.subs.slice().sort((x, y) => x.mastery - y.mastery).map((sk) => `${sk.title} ${sk.mastery}%`).join(", ")
+            : "";
+          return `- ${c.title} (${c.mastery}%)${subs}`;
+        })
+      );
 
       if (plan && plan.sessions.length) {
         const sorted = plan.sessions.slice().sort((a, b) => planSessionStart(a).getTime() - planSessionStart(b).getTime());
@@ -1224,37 +1306,62 @@ const TOOLS: ToolImpl[] = [
       },
     }, ["sessions"]),
     async (a) => {
+      // Pin the session we're planning for BEFORE any calendar await, so we never
+      // write the plan onto a different session the user switched to meanwhile.
+      const targetId = useDeepWork.getState().activeId;
+      if (!targetId) return "No active study session to plan for — ask the user to open a Deep Work session first.";
       const dw = useDeepWork.getState();
+      const prevPlan = dw.plan;
       const rawSessions = Array.isArray(a.sessions) ? a.sessions : [];
       if (!rawSessions.length) return "No sessions provided to schedule.";
       const signedIn = isSignedIn();
+
       const sessions: PlannedSession[] = [];
       for (const r of rawSessions) {
         if (r && typeof r === "object") {
-          const s = await buildPlannedSession(r as Record<string, unknown>, signedIn);
+          const s = makePlannedSession(r as Record<string, unknown>);
           if (s) sessions.push(s);
         }
       }
-      if (!sessions.length) return "Could not parse any valid sessions — each needs a startISO and durationMin.";
+      if (!sessions.length) return "Could not schedule any sessions — each needs a startISO (in the future) and a durationMin.";
+      const dropped = rawSessions.length - sessions.length;
+
+      let synced = 0;
+      if (signedIn) {
+        // Replacing a plan: batch-delete the old plan's events so none orphan.
+        if (prevPlan) {
+          const oldIds = prevPlan.sessions.map((s) => s.calendarEventId).filter((id): id is string => !!id);
+          if (oldIds.length) await deleteEvents(oldIds);
+        }
+        // Batch-create the new sessions' calendar events.
+        const evs = await createEvents(sessions.map(planEventInput));
+        evs.forEach((ev, i) => {
+          if (ev) { sessions[i].calendarEventId = ev.id; synced++; }
+        });
+      }
+
       const now = Date.now();
       const plan: StudyPlan = {
         goal: a.goal ? String(a.goal) : dw.intent || dw.backbone?.intent || "Study plan",
-        examDate: a.examDate ? String(a.examDate) : undefined,
+        // Preserve the prior deadline/budget on replace unless explicitly overridden.
+        examDate: a.examDate != null ? String(a.examDate) || undefined : prevPlan?.examDate,
         horizonDays: DEFAULT_HORIZON_DAYS,
         dailyTargetMin:
-          a.dailyTargetMin != null ? Math.max(15, Math.round(Number(a.dailyTargetMin))) : useStudyLog.getState().goalHours * 60,
+          a.dailyTargetMin != null
+            ? Math.max(15, Math.round(Number(a.dailyTargetMin)))
+            : prevPlan?.dailyTargetMin ?? useStudyLog.getState().goalHours * 60,
         sessions,
-        generatedAt: now,
+        generatedAt: prevPlan?.generatedAt ?? now,
         revisedAt: now,
       };
-      dw.setPlan(plan);
-      const synced = sessions.filter((s) => s.calendarEventId).length;
+      useDeepWork.getState().setPlanFor(targetId, plan);
       notify.success(`Study plan set · ${sessions.length} session${sessions.length === 1 ? "" : "s"}`);
       return (
         `Saved a ${sessions.length}-session study plan${plan.examDate ? ` for the exam on ${plan.examDate}` : ""}. ` +
         (signedIn
           ? `${synced}/${sessions.length} added to Google Calendar.`
-          : "Not signed into Google, so the sessions were saved locally but NOT added to the calendar — tell the user to connect Google (Calendar tab) to sync them.")
+          : "Not signed into Google, so the sessions were saved locally but NOT added to the calendar — tell the user to connect Google (Calendar tab) to sync them.") +
+        (dropped > 0 ? ` ${dropped} session(s) were in the past and skipped — reschedule them into future free slots.` : "")
       );
     }
   ),
@@ -1299,26 +1406,42 @@ const TOOLS: ToolImpl[] = [
       dailyTargetMin: num("optional: update the daily study budget (minutes)"),
     }),
     async (a) => {
-      const dw = useDeepWork.getState();
-      const plan = dw.plan;
+      // Pin the target session before any calendar await (see deepwork_set_plan).
+      const targetId = useDeepWork.getState().activeId;
+      if (!targetId) return "No active study session — ask the user to open a Deep Work session first.";
+      const plan = useDeepWork.getState().plan;
       if (!plan) return "No study plan yet — call deepwork_set_plan first.";
       const signedIn = isSignedIn();
       let sessions = plan.sessions.slice();
       const summary: string[] = [];
+      let calFailed = 0; // calendar ops that failed while signed in
 
+      // ── Remove (batch-delete events; keep a session if its event couldn't be deleted) ──
       const removeIds = Array.isArray(a.remove) ? a.remove.map(String) : [];
+      const toRemove = removeIds
+        .map((id) => sessions.find((x) => x.id === id))
+        .filter((s): s is PlannedSession => !!s);
       let removed = 0;
-      for (const id of removeIds) {
-        const s = sessions.find((x) => x.id === id);
-        if (!s) continue;
-        if (signedIn && s.calendarEventId) {
-          try { await deleteEvent(s.calendarEventId); } catch { /* ignore */ }
+      if (toRemove.length) {
+        const keptByFailure = new Set<string>();
+        if (signedIn) {
+          const withEvents = toRemove.filter((s) => s.calendarEventId);
+          if (withEvents.length) {
+            const res = await deleteEvents(withEvents.map((s) => s.calendarEventId!));
+            const failedEvents = new Set(res.failed);
+            for (const s of withEvents) if (failedEvents.has(s.calendarEventId!)) keptByFailure.add(s.id);
+            calFailed += res.failed.length;
+          }
         }
-        sessions = sessions.filter((x) => x.id !== id);
-        removed++;
+        for (const s of toRemove) {
+          if (keptByFailure.has(s.id)) continue; // keep so its event isn't orphaned
+          sessions = sessions.filter((x) => x.id !== s.id);
+          removed++;
+        }
       }
       if (removed) summary.push(`removed ${removed}`);
 
+      // ── Reschedule (per-item: each is an event PATCH or a single create) ──
       const resched = Array.isArray(a.reschedule) ? a.reschedule : [];
       let rescheduled = 0;
       for (const rRaw of resched) {
@@ -1327,6 +1450,7 @@ const TOOLS: ToolImpl[] = [
         const idx = sessions.findIndex((x) => x.id === String(r.id));
         if (idx < 0) continue;
         const cur = sessions[idx];
+        if (cur.status === "done" || cur.status === "skipped") continue; // don't resurrect closed sessions
         let start = planSessionStart(cur);
         let date = cur.date;
         let startMin = cur.startMin;
@@ -1338,15 +1462,22 @@ const TOOLS: ToolImpl[] = [
         const focus = Array.isArray(r.focus) ? r.focus.map(String).filter(Boolean) : cur.focus;
         const kind = r.kind && PLAN_KINDS.includes(String(r.kind) as PlanSessionKind) ? (String(r.kind) as PlanSessionKind) : cur.kind;
         const rationale = r.rationale != null ? String(r.rationale) : cur.rationale;
-        const updated: PlannedSession = { ...cur, date, startMin, durationMin, focus, kind, rationale, status: "planned" };
+        // A missed session being rescheduled becomes planned again; otherwise keep status.
+        const status: PlanSessionStatus = cur.status === "missed" ? "planned" : cur.status;
+        const updated: PlannedSession = { ...cur, date, startMin, durationMin, focus, kind, rationale, status };
         if (signedIn) {
           const endISO = new Date(start.getTime() + durationMin * 60000).toISOString();
-          const sumLabel = `Study · ${focus.length ? focus.join(", ") : KIND_META[kind].label}`;
+          const summaryText = planEventSummary(kind, focus);
+          const description = planEventDescription(kind, focus, rationale);
           if (cur.calendarEventId) {
-            try { await updateEvent(cur.calendarEventId, { startISO: start.toISOString(), endISO, summary: sumLabel }); } catch { /* ignore */ }
+            try {
+              await updateEvent(cur.calendarEventId, { startISO: start.toISOString(), endISO, summary: summaryText, description });
+            } catch { calFailed++; }
           } else {
-            const built = await buildPlannedSession({ startISO: start.toISOString(), durationMin, kind, focus, rationale }, true);
-            if (built?.calendarEventId) updated.calendarEventId = built.calendarEventId;
+            try {
+              const ev = await createEvent({ summary: summaryText, startISO: start.toISOString(), endISO, description });
+              updated.calendarEventId = ev.id;
+            } catch { calFailed++; }
           }
         }
         sessions[idx] = updated;
@@ -1354,28 +1485,119 @@ const TOOLS: ToolImpl[] = [
       }
       if (rescheduled) summary.push(`rescheduled ${rescheduled}`);
 
+      // ── Add (batch-create events) ──
       const addRaw = Array.isArray(a.add) ? a.add : [];
-      let added = 0;
+      const newSessions: PlannedSession[] = [];
       for (const r of addRaw) {
         if (r && typeof r === "object") {
-          const s = await buildPlannedSession(r as Record<string, unknown>, signedIn);
-          if (s) { sessions.push(s); added++; }
+          const s = makePlannedSession(r as Record<string, unknown>);
+          if (s) newSessions.push(s);
         }
+      }
+      let added = 0;
+      if (newSessions.length) {
+        if (signedIn) {
+          const evs = await createEvents(newSessions.map(planEventInput));
+          evs.forEach((ev, i) => { if (ev) newSessions[i].calendarEventId = ev.id; else calFailed++; });
+        }
+        sessions.push(...newSessions);
+        added = newSessions.length;
       }
       if (added) summary.push(`added ${added}`);
 
-      const next: StudyPlan = {
-        ...plan,
-        sessions,
-        examDate: a.examDate != null ? String(a.examDate) || undefined : plan.examDate,
-        dailyTargetMin: a.dailyTargetMin != null ? Math.max(15, Math.round(Number(a.dailyTargetMin))) : plan.dailyTargetMin,
-        revisedAt: Date.now(),
-      };
-      dw.setPlan(next);
+      // ── Meta (deadline / daily budget) ──
+      let examDate = plan.examDate;
+      let dailyTargetMin = plan.dailyTargetMin;
+      let metaChanged = false;
+      if (a.examDate != null) { examDate = String(a.examDate) || undefined; metaChanged = true; summary.push("updated exam date"); }
+      if (a.dailyTargetMin != null) { dailyTargetMin = Math.max(15, Math.round(Number(a.dailyTargetMin))); metaChanged = true; summary.push("updated daily target"); }
+
+      const opChanged = removed + rescheduled + added > 0;
+      if (!opChanged && !metaChanged) {
+        return "No matching sessions to change — call deepwork_plan_status for the current session ids (remove/reschedule expect session ids, not concept titles).";
+      }
+
+      const next: StudyPlan = { ...plan, sessions, examDate, dailyTargetMin, revisedAt: Date.now() };
+      useDeepWork.getState().setPlanFor(targetId, next);
       notify.success("Study plan updated");
-      return summary.length
-        ? `Plan updated: ${summary.join(", ")}.${signedIn ? "" : " (Not signed into Google — calendar not updated.)"}`
-        : "No matching operations — plan unchanged.";
+      return (
+        `Plan updated: ${summary.join(", ")}.` +
+        (signedIn
+          ? calFailed > 0
+            ? ` ${calFailed} calendar operation(s) failed — ask the user to reconnect Google and try again.`
+            : ""
+          : " (Not signed into Google — calendar not updated.)")
+      );
+    }
+  ),
+  tool(
+    "deepwork_start_lesson",
+    "Enter STUDY MODE — a fullscreen guided lesson. Everything else hides; you compose a lesson board " +
+      "with study_present (explanations, SVG diagrams, highlighted snippets, inline questions) and the chat " +
+      "docks on the right. Use this when the user wants to be TAUGHT / walked through material (not just a " +
+      "quick chat answer). After starting, call deepwork_read_material if you haven't, then present the " +
+      "lesson. As you test the user, credit mastery to the specific concept sub-skill (deepwork_set_mastery " +
+      "with concept + sub). A focus timer starts automatically for the lesson.",
+    obj({
+      topic: str("optional lesson title/topic"),
+      minutes: num("optional lesson length in minutes for the focus timer (default 25)"),
+    }),
+    async (a) => {
+      const minutes = a.minutes != null ? Math.max(1, Math.min(180, Math.round(Number(a.minutes)))) : undefined;
+      useLesson.getState().start(a.topic ? String(a.topic) : "", minutes);
+      return (
+        "Study mode started (focus timer running). Present the lesson with study_present (text / svg / " +
+        "snippet / pdf / question blocks). Keep it mostly read-only; add a 'question' block occasionally and " +
+        "grade the answer into the concept's sub-skill. Call deepwork_end_lesson when finished."
+      );
+    }
+  ),
+  tool(
+    "study_present",
+    "Put content on the lesson board (study mode). Blocks render top-to-bottom. Kinds: 'text' (markdown, " +
+      "$...$ math), 'svg' (a diagram — write labels as plain Unicode in <text>, NEVER $...$ inside an SVG), " +
+      "'snippet' (a passage to highlight, with an optional note), 'pdf' (reference a PDF page by id+page), " +
+      "'question' (an inline question — tag it with the concept + sub-skill it tests). mode 'replace' shows " +
+      "a fresh screen, 'append' adds below. Favour read-only blocks; add a 'question' only occasionally.",
+    obj({
+      mode: str("replace | append (default replace)"),
+      blocks: {
+        type: "array",
+        description: "the board blocks, in display order",
+        items: obj({
+          kind: str("text | svg | snippet | pdf | question"),
+          markdown: str("text: the markdown content"),
+          svg: str("svg: a complete <svg>…</svg> diagram"),
+          caption: str("svg/pdf: optional caption"),
+          text: str("snippet: the passage to highlight"),
+          source: str("snippet: optional source label"),
+          note: str("snippet: optional one-line commentary"),
+          pdfId: str("pdf: the PDF id"),
+          page: num("pdf: 1-based page number"),
+          prompt: str("question: the question text (may contain $...$ math)"),
+          qkind: str("question: text | choice"),
+          options: arr("question(choice): the answer options"),
+          concept: str("question: the concept it tests"),
+          sub: str("question: the concept sub-skill it tests"),
+        }, ["kind"]),
+      },
+    }, ["blocks"]),
+    async (a) => {
+      if (!useLesson.getState().active) useLesson.getState().start("");
+      const blocks = parseLessonBlocks(a.blocks);
+      if (!blocks.length) return "No valid blocks to present (each needs a recognized `kind` and its fields).";
+      const mode = String(a.mode) === "append" ? "append" : "replace";
+      useLesson.getState().present(blocks, mode);
+      return `Presented ${blocks.length} block(s) on the lesson board (${mode}).`;
+    }
+  ),
+  tool(
+    "deepwork_end_lesson",
+    "Exit study mode / end the lesson and return to the normal view.",
+    obj({}),
+    async () => {
+      useLesson.getState().end();
+      return "Lesson ended.";
     }
   ),
   tool(
@@ -1501,6 +1723,7 @@ export const STUDY_AUTO = new Set([
   "deepwork_set_backbone", "deepwork_set_mastery", "deepwork_set_intent",
   "deepwork_start_quiz", "deepwork_grade_quiz", "pdf_goto",
   "deepwork_set_plan", "deepwork_revise_plan",
+  "deepwork_start_lesson", "study_present", "deepwork_end_lesson",
 ]);
 
 export function isAutoTool(name: string): boolean {
@@ -1553,6 +1776,7 @@ const CATEGORY_SETS: Array<[string, Set<string>]> = [
     "deepwork_add", "deepwork_remove", "deepwork_set_intent", "deepwork_read_material",
     "deepwork_set_backbone", "deepwork_set_mastery", "deepwork_start_quiz", "deepwork_grade_quiz",
     "deepwork_weak_concepts", "deepwork_plan_status", "deepwork_set_plan", "deepwork_revise_plan",
+    "deepwork_start_lesson", "study_present", "deepwork_end_lesson",
   ])],
   ["Navigation", new Set(["apply_filter", "clear_filter", "list_tags", "list_facets", "open_view"])],
 ];
@@ -1664,6 +1888,9 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "deepwork_plan_status": return d("Check study plan", "deadline & pace");
     case "deepwork_set_plan": return d("Set study plan", Array.isArray(a.sessions) ? `${a.sessions.length} sessions` : "");
     case "deepwork_revise_plan": return d("Revise study plan", "");
+    case "deepwork_start_lesson": return d("Start lesson", s("topic"));
+    case "study_present": return d("Present lesson", Array.isArray(a.blocks) ? `${a.blocks.length} block(s)` : "");
+    case "deepwork_end_lesson": return d("End lesson", "");
     case "add_email_label": return d("Add email label", s("label"));
     case "remove_email_label": return d("Remove email label", s("label"));
     // Filtering & navigation

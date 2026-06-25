@@ -24,6 +24,7 @@ export interface QuizQuestion {
   kind: QuizInputKind;
   category?: string;
   concept?: string;
+  sub?: string; // optional sub-skill (facet) of the concept this question tests
   prompt: string;
   options?: string[];
   items?: string[];

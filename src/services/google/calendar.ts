@@ -72,14 +72,42 @@ export async function createEvent(input: {
   return normalize(raw);
 }
 
+export interface CreateEventInput {
+  summary: string;
+  startISO: string;
+  endISO: string;
+  location?: string;
+  description?: string;
+}
+
+/**
+ * Create several events concurrently. Returns one slot per input (order preserved):
+ * the created CalEvent, or null if that one failed — so callers can tell exactly
+ * which succeeded. Used by the study planner to book a whole week at once.
+ */
+export async function createEvents(inputs: CreateEventInput[]): Promise<(CalEvent | null)[]> {
+  const settled = await Promise.allSettled(inputs.map((i) => createEvent(i)));
+  return settled.map((r) => (r.status === "fulfilled" ? r.value : null));
+}
+
+/** Delete several events concurrently. Returns the count deleted and the ids that failed. */
+export async function deleteEvents(ids: string[]): Promise<{ deleted: number; failed: string[] }> {
+  const settled = await Promise.allSettled(ids.map((id) => deleteEvent(id)));
+  const failed: string[] = [];
+  let deleted = 0;
+  settled.forEach((r, i) => (r.status === "fulfilled" ? deleted++ : failed.push(ids[i])));
+  return { deleted, failed };
+}
+
 /** Patch an existing event (any subset of fields). */
 export async function updateEvent(
   id: string,
-  patch: { summary?: string; startISO?: string; endISO?: string; location?: string }
+  patch: { summary?: string; startISO?: string; endISO?: string; location?: string; description?: string }
 ): Promise<CalEvent> {
   const body: Record<string, unknown> = {};
   if (patch.summary !== undefined) body.summary = patch.summary;
   if (patch.location !== undefined) body.location = patch.location;
+  if (patch.description !== undefined) body.description = patch.description;
   if (patch.startISO) body.start = { dateTime: patch.startISO };
   if (patch.endISO) body.end = { dateTime: patch.endISO };
   const raw = await gapiFetch<RawEvent>(
@@ -90,8 +118,10 @@ export async function updateEvent(
 }
 
 export async function deleteEvent(id: string): Promise<void> {
+  // gapiFetch now tolerates the empty 204 body, so a thrown error here is a real
+  // failure (auth, network, 5xx) — let it propagate so callers can react.
   await gapiFetch(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(id)}`,
     { method: "DELETE" }
-  ).catch(() => {}); // DELETE returns empty body
+  );
 }

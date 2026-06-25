@@ -14,11 +14,11 @@ import {
 import { useStudyLog, todayMs, computeStreak, HOUR_MS, dayKey } from "@/features/home/deepwork/studyLog";
 import { useQuiz, sessionQuizzes, type QuizRecord } from "@/features/home/deepwork/quizStore";
 import {
-  planHealth, upcomingSessions, fmtPlanDay, fmtStartMin, KIND_META, verdictLabel, verdictColor,
+  planHealth, actionableSessions, fmtPlanDay, fmtStartMin, KIND_META, verdictLabel, verdictColor,
   type PlannedSession,
 } from "@/features/home/deepwork/studyPlan";
 import { useFocusStore } from "@/features/home/deepwork/useFocusSession";
-import { isSignedIn } from "@/services/google/auth";
+import { isSignedIn, onAuthChange } from "@/services/google/auth";
 
 /** {pdfId, page} pages highlighted for a given concept, keyed by concept title. */
 type ConceptPages = Record<string, { pdfId: string; page: number }[]>;
@@ -44,13 +44,13 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
     () => sessionQuizzes({ quizzes, order: quizOrder }, activeSessionId),
     [quizzes, quizOrder, activeSessionId]
   );
-  const now = Date.now();
+  const now = useNow();
   const next = nextToReview(backbone);
 
-  // Mark any past-due plan sessions as "missed" whenever this study session opens.
+  // Flip past-due plan sessions to "missed" — on open and as time passes (the tick).
   useEffect(() => {
     useDeepWork.getState().reconcilePlan();
-  }, [activeSessionId]);
+  }, [activeSessionId, now]);
 
   // Load highlights for every PDF in the session so concept→page links resolve.
   const pdfIds = useMemo(() => items.filter((i) => i.type === "pdf").map((i) => i.id), [items]);
@@ -126,7 +126,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
       <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
         <DailyGoalBar />
 
-        <PlanSection />
+        <PlanSection now={now} />
 
         <div className="flex gap-2">
           <button
@@ -208,6 +208,21 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
                         </div>
                       )}
                     </button>
+                    {c.subs && c.subs.length > 0 && (
+                      <ul className="ml-3 mt-1 space-y-1 border-l border-[var(--border)] pl-2">
+                        {c.subs.map((sk) => (
+                          <li key={sk.id}>
+                            <div className="flex items-center gap-1.5">
+                              <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--text-dim)]">{sk.title}</span>
+                              <span className="shrink-0 text-[10px] tabular-nums text-[var(--text-dim)]">{sk.mastery}%</span>
+                            </div>
+                            <div className="mt-0.5 h-0.5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.06)]">
+                              <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${sk.mastery}%`, background: readinessColor(sk.mastery) }} />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <ConceptPageLinks pages={conceptPages[c.title]} onGo={goToPage} />
                   </li>
                 );
@@ -307,17 +322,30 @@ function hrs(min: number): string {
   return `${Math.round(min / 6) / 10}h`;
 }
 
+/** A re-rendering clock so the plan's "Today"/"Xd to exam"/missed status stay live
+ *  (the panel is mounted outside Home, so Home's clock doesn't reach it). */
+function useNow(intervalMs = 30000): number {
+  const [n, setN] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setN(Date.now()), intervalMs);
+    return () => window.clearInterval(t);
+  }, [intervalMs]);
+  return n;
+}
+
 /**
  * The adaptive weekly study plan: a verdict header (deadline × mastery), an
  * optional "re-plan" nudge when the plan has drifted, and the upcoming sessions.
  * Generation and revision are AI-driven (calendar-native) — the buttons here send
  * the assistant a request; the panel just reflects the stored plan.
  */
-function PlanSection() {
+function PlanSection({ now }: { now: number }) {
   const plan = useDeepWork((s) => s.plan);
   const backbone = useDeepWork((s) => s.backbone);
   const streaming = useAI((s) => s.streaming);
-  const now = Date.now();
+  // Reactive sign-in so the "Connect Google" hint updates when auth changes.
+  const [signedIn, setSignedIn] = useState(isSignedIn());
+  useEffect(() => onAuthChange(setSignedIn), []);
 
   function ask(prompt: string) {
     const ai = useAI.getState();
@@ -348,7 +376,7 @@ function PlanSection() {
         >
           📅 Plan my week
         </button>
-        {!isSignedIn() && (
+        {!signedIn && (
           <div className="mt-1.5 text-[10px] text-[var(--text-dim)]">
             Connect Google (Calendar tab) to add sessions to your calendar.
           </div>
@@ -358,7 +386,7 @@ function PlanSection() {
   }
 
   const h = planHealth(plan, backbone, now);
-  const upcoming = upcomingSessions(plan, now).slice(0, 8);
+  const upcoming = actionableSessions(plan, now).slice(0, 8);
 
   return (
     <div className="space-y-2">
@@ -427,6 +455,10 @@ function PlanSessionRow({
   const missed = s.status === "missed";
 
   function start() {
+    // Credit any in-progress block before overwriting it, then mark THIS row as the
+    // one being studied so focus time credits it (not just today's earliest).
+    if (useFocusStore.getState().session) useFocusStore.getState().endSession();
+    useDeepWork.getState().setActivePlanSession(s.id);
     useFocusStore.getState().startSession(s.durationMin);
     const focus = s.focus.length ? s.focus.join(", ") : "this material";
     if (s.kind === "quiz") {

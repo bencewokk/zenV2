@@ -320,7 +320,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                         )}
                       </div>
                     ) : (
-                      <DeepWorkRecommendations />
+                      <DeepWorkRecommendations now={now.getTime()} />
                     )}
                   </div>
                 </section>
@@ -793,7 +793,7 @@ function DailyQuote() {
 }
 
 /** Dashboard card: resume a recent Deep Work session or start a new one. */
-function DeepWorkRecommendations() {
+function DeepWorkRecommendations({ now }: { now: number }) {
   const sessions = useDeepWork((s) => s.sessions);
   const order = useDeepWork((s) => s.order);
   const switchSession = useDeepWork((s) => s.switchSession);
@@ -826,7 +826,6 @@ function DeepWorkRecommendations() {
       ) : (
         <div className="mt-2 space-y-1.5">
           {recent.map((s) => {
-            const now = Date.now();
             const plan = s.plan ? reconcilePlanPure(s.plan, now).plan : null;
             const next = nextSession(plan, now);
             const h = plan ? planHealth(plan, s.backbone, now) : null;

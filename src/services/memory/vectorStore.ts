@@ -17,9 +17,22 @@ export interface VectorPayload {
   markers: { notes: [string, number][]; pdfs: [string, number][] };
 }
 
+// Ask the browser to keep our storage durable. Without this, IndexedDB is
+// "best-effort" and can be evicted under quota pressure — which silently drops
+// the (multi-MB) embedding index and forces a full re-index on next launch.
+// Chrome grants this without a prompt based on engagement heuristics.
+function requestPersistence(): void {
+  try {
+    navigator.storage?.persist?.().then((granted) => {
+      if (!granted) console.warn("[vectorStore] persistent storage not granted; index may be evicted");
+    });
+  } catch { /* not supported — best effort */ }
+}
+
 let dbP: Promise<IDBDatabase> | null = null;
 function openDb(): Promise<IDBDatabase> {
   if (dbP) return dbP;
+  requestPersistence();
   dbP = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, VERSION);
     req.onupgradeneeded = () => {
@@ -41,7 +54,8 @@ export const vectorStore = {
         r.onsuccess = () => resolve((r.result as VectorPayload) ?? null);
         r.onerror = () => reject(r.error);
       });
-    } catch {
+    } catch (e) {
+      console.warn("[vectorStore] load failed:", e);
       return null;
     }
   },
@@ -54,8 +68,10 @@ export const vectorStore = {
         r.onsuccess = () => resolve();
         r.onerror = () => reject(r.error);
       });
-    } catch {
-      /* ignore — persistence is best-effort */
+    } catch (e) {
+      // Persistence is best-effort, but a swallowed QuotaExceededError here is the
+      // classic reason the index "re-indexes every restart" — so make it visible.
+      console.warn("[vectorStore] save failed (index will not persist):", e);
     }
   },
 };

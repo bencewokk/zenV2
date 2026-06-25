@@ -76,7 +76,8 @@ export async function recall(
 
   try {
     await syncIndex(notes);
-    if (pdfSources) await syncPdfIndex(pdfSources.pdfs, pdfSources.getPages);
+    // recall passes the full PDF set, so pruning genuinely-deleted PDFs is safe here.
+    if (pdfSources) await syncPdfIndex(pdfSources.pdfs, pdfSources.getPages, { prune: true });
     for (const v of await semanticSearchAll(query, k * 2)) {
       const mk = key(v.kind, v.sourceId, v.kind === "pdf" ? v.page : undefined);
       const existing = merged.get(mk);
@@ -110,7 +111,8 @@ export async function findInPdf(
   k = 5
 ): Promise<PdfPageHit[]> {
   try {
-    await syncPdfIndex(pdfs, getPages);
+    // find_in_pdf passes the full PDF set from the store, so pruning is safe.
+    await syncPdfIndex(pdfs, getPages, { prune: true });
     return (await semanticSearchPdf(query, pdfId, k)).map((h) => ({ page: h.page, text: h.text, score: h.score }));
   } catch {
     return [];

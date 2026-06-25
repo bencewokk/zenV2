@@ -216,15 +216,22 @@ async function ensureDb(): Promise<Orama<typeof SCHEMA>> {
       try {
         const saved = await vectorStore.load();
         if (saved && saved.v === PERSIST_VERSION) {
-          const docs = saved.docs as Doc[];
-          if (docs.length) {
-            await insertMultiple(d, docs);
-            for (const doc of docs) docCache.set(doc.id, doc);
-          }
+          // Restore markers FIRST: if the doc insert below throws, we still know
+          // what was indexed (isPdfIndexed stays true) instead of silently
+          // re-embedding everything next session.
           for (const [id, u] of saved.markers.notes) indexed.set(id, u);
           for (const [id, c] of saved.markers.pdfs) pdfIndexed.set(id, c);
+          const docs = saved.docs as Doc[];
+          if (docs.length) {
+            try {
+              await insertMultiple(d, docs);
+              for (const doc of docs) docCache.set(doc.id, doc);
+            } catch (e) {
+              console.warn("[vector] hydrate insert failed; markers kept:", e);
+            }
+          }
         }
-      } catch { /* corrupt/absent — rebuild lazily on next sync */ }
+      } catch (e) { console.warn("[vector] hydrate failed; rebuilding lazily:", e); }
       return d;
     })();
   }
@@ -244,8 +251,12 @@ export async function syncIndex(notes: Record<string, Note>): Promise<void> {
   for (const n of Object.values(notes)) {
     if (indexed.get(n.id) !== n.updatedAt) toAdd.push(n);
   }
-  for (const id of indexed.keys()) {
-    if (!notes[id]) removedIds.push(`note:${id}`);
+  // Only evict "missing" notes when we were actually given notes — an empty map
+  // (e.g. a call before notes finish loading) must NOT wipe the persisted index.
+  if (Object.keys(notes).length) {
+    for (const id of indexed.keys()) {
+      if (!notes[id]) removedIds.push(`note:${id}`);
+    }
   }
 
   let changed = removedIds.length > 0;
@@ -279,19 +290,24 @@ export async function syncIndex(notes: Record<string, Note>): Promise<void> {
  */
 export async function syncPdfIndex(
   pdfs: Record<string, PdfDoc>,
-  getPages: (id: string) => Promise<string[] | null>
+  getPages: (id: string) => Promise<string[] | null>,
+  opts: { prune?: boolean } = {}
 ): Promise<void> {
   const d = await ensureDb();
 
-  // drop pages of deleted PDFs (page indices are unknown, so clear by scanning the cap range)
+  // Drop pages of DELETED PDFs — but only when the caller passed the COMPLETE set
+  // of PDFs (prune). Indexing a single PDF (buildPdfIndex passes just one) must NOT
+  // evict every other PDF's index — that was silently wiping previously-indexed PDFs.
   let changed = false;
-  for (const id of [...pdfIndexed.keys()]) {
-    if (!pdfs[id]) {
-      const count = pdfIndexed.get(id) ?? 0;
-      const ids = Array.from({ length: count }, (_, i) => `pdf:${id}:${i + 1}`);
-      await removeDocs(d, ids);
-      pdfIndexed.delete(id);
-      changed = true;
+  if (opts.prune) {
+    for (const id of [...pdfIndexed.keys()]) {
+      if (!pdfs[id]) {
+        const count = pdfIndexed.get(id) ?? 0;
+        const ids = Array.from({ length: count }, (_, i) => `pdf:${id}:${i + 1}`);
+        await removeDocs(d, ids);
+        pdfIndexed.delete(id);
+        changed = true;
+      }
     }
   }
 

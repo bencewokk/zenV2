@@ -13,6 +13,8 @@ import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { FocusTimerButton } from "@/features/home/deepwork/FocusTimerButton";
 import { StudyPanel } from "@/features/home/deepwork/StudyPanel";
 import { QuizView } from "@/features/home/deepwork/QuizView";
+import { LessonMode } from "@/features/home/deepwork/LessonMode";
+import { useLesson } from "@/features/home/deepwork/lessonStore";
 import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
 import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
 import { CalendarPanel } from "@/features/google/CalendarPanel";
@@ -59,6 +61,7 @@ export function App() {
   const setAdminMailId = (adminMailId: string | null) => setWs({ adminMailId });
   const shellRef = useRef<HTMLDivElement>(null);
   const [showStudy, setShowStudy] = useState(false);
+  const lessonActive = useLesson((s) => s.active);
 
   // Selecting a note returns to the editor and resets any shell-only state.
   useEffect(() => {
@@ -171,9 +174,9 @@ export function App() {
 
       <WindowResizeHandles />
 
-      {/* Zen mode hides the whole header, including the window controls — the
-          canvas exit-zen button (◑) is the way back. */}
-      {!zen && <header data-tauri-drag-region className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
+      {/* Zen mode (and study/lesson mode) hide the whole header, including the
+          window controls — the canvas exit-zen / End-lesson button is the way back. */}
+      {!zen && !lessonActive && <header data-tauri-drag-region className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
         <button
           className="zen-pressable zen-shine inline-flex h-7 items-center rounded-[6px] px-1.5 font-semibold tracking-tight text-[var(--text)] hover:text-[var(--accent)]"
           onClick={() => {
@@ -346,16 +349,18 @@ export function App() {
 
         {deepWork && showStudy && <StudyPanel onClose={() => setShowStudy(false)} />}
 
-        <ChatPanel />
+        {/* During a lesson the ChatPanel is rendered inside LessonMode instead (one instance). */}
+        {!lessonActive && <ChatPanel />}
       </div>
 
-      {!zen && (
+      {!zen && !lessonActive && (
         <div className="relative z-10">
           <StatusBar />
         </div>
       )}
       <AddToSessionPicker />
       <QuizView />
+      <LessonMode />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>
   );

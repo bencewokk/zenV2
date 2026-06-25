@@ -85,11 +85,22 @@ export function daysUntilExam(examDate: string | undefined, now: number): number
   return Math.round((exam.getTime() - today.getTime()) / 86400000);
 }
 
-/** Sessions still ahead (today or later) that haven't been completed/skipped, time-ordered. */
+/** Future planned sessions (today or later, not yet ended) — for "what's next". */
 export function upcomingSessions(plan: StudyPlan | null, now: number): PlannedSession[] {
   if (!plan) return [];
   return plan.sessions
-    .filter((s) => (s.status === "planned" || s.status === "missed") && planSessionEnd(s).getTime() >= now)
+    .filter((s) => s.status === "planned" && planSessionEnd(s).getTime() >= now)
+    .sort((a, b) => planSessionStart(a).getTime() - planSessionStart(b).getTime());
+}
+
+/**
+ * Sessions to show/act on in the Study panel: future planned ones PLUS any missed
+ * (shown regardless of time, so the user can make them up or skip), time-ordered.
+ */
+export function actionableSessions(plan: StudyPlan | null, now: number): PlannedSession[] {
+  if (!plan) return [];
+  return plan.sessions
+    .filter((s) => (s.status === "planned" && planSessionEnd(s).getTime() >= now) || s.status === "missed")
     .sort((a, b) => planSessionStart(a).getTime() - planSessionStart(b).getTime());
 }
 
@@ -192,19 +203,27 @@ export function planHealth(plan: StudyPlan | null, backbone: StudyBackbone | nul
  * missed one being made up today), marking it done once it reaches its planned
  * duration. Pure — returns a new plan, or the same reference when nothing applies.
  */
-export function creditFocusToPlan(plan: StudyPlan, ms: number, now: number): StudyPlan {
+export function creditFocusToPlan(plan: StudyPlan, ms: number, now: number, preferredId?: string | null): StudyPlan {
   if (ms <= 0) return plan;
-  const today = dayKey(new Date(now));
-  const idx = plan.sessions
-    .map((s, i) => ({ s, i }))
-    .filter(({ s }) => s.date === today && (s.status === "planned" || s.status === "missed"))
-    .sort((a, b) => a.s.startMin - b.s.startMin)[0]?.i;
-  if (idx == null) return plan;
+  const open = (s: PlannedSession) => s.status === "planned" || s.status === "missed";
+  // Prefer the session the user explicitly started; else today's earliest open one.
+  let idx = preferredId ? plan.sessions.findIndex((s) => s.id === preferredId && open(s)) : -1;
+  if (idx < 0) {
+    const today = dayKey(new Date(now));
+    const found = plan.sessions
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => s.date === today && open(s))
+      .sort((a, b) => a.s.startMin - b.s.startMin)[0]?.i;
+    if (found == null) return plan;
+    idx = found;
+  }
   const sessions = plan.sessions.slice();
   const s = sessions[idx];
   const completedMs = (s.completedMs ?? 0) + ms;
   const done = completedMs >= s.durationMin * 60000;
-  sessions[idx] = { ...s, completedMs, status: done ? "done" : "planned" };
+  // Only promote to "done" when the full duration is reached — never silently
+  // demote a reconciled "missed" session back to "planned" on a partial credit.
+  sessions[idx] = { ...s, completedMs, status: done ? "done" : s.status };
   return { ...plan, sessions };
 }
 
