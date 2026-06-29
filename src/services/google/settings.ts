@@ -1,8 +1,10 @@
 /**
  * Google integration config. The OAuth Client ID is not a secret (it's a public
- * web client id), but we keep it gitignored + overridable at runtime like the AI key.
+ * web client id), but we keep it overridable at runtime like the AI key.
  */
-import { GOOGLE_CLIENT_ID } from "./secret";
+// Optional build-time default; normally set in-app (Settings → Connections) or via a
+// gitignored .env. Empty string when unset.
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
 
 export interface GoogleSettings {
   clientId: string;
