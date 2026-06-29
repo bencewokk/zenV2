@@ -4,6 +4,7 @@ import { loadGoogleSettings, saveGoogleSettings } from "@/services/google/settin
 import { deepseek } from "@/services/ai/deepseek";
 import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/services/google/auth";
 import { notify } from "@/shared/ui/notify";
+import { useOnboarding } from "@/features/onboarding/store";
 import { Field, SettingsSection, SaveBar } from "../ui";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -53,8 +54,14 @@ export function Connections() {
     }
   }
 
+  const replayWalkthrough = useOnboarding((s) => s.start);
+
   return (
     <div className="space-y-6">
+      <SettingsSection title="Walkthrough" hint="A quick guided tour of connecting services and using Deep Work, study, and quizzes.">
+        <button className="zen-btn-ghost" onClick={replayWalkthrough}>Replay walkthrough</button>
+      </SettingsSection>
+
       <SettingsSection title="DeepSeek" hint="Powers the AI assistant. The key is stored locally in your browser.">
         <Field label="API key">
           <div className="flex gap-2">

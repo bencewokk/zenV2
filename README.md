@@ -55,10 +55,15 @@ Everything below is **off by default** and configured inside the app at
 | Feature | What you need | Where to get it |
 |---|---|---|
 | AI assistant | A DeepSeek API key | <https://platform.deepseek.com/> |
-| Calendar & Mail | A Google OAuth client | See [desktop setup](src-tauri/SETUP.md) |
+| Calendar & Mail | Just sign in — a default Google client is bundled¹ | See [desktop setup](src-tauri/SETUP.md) to use your own |
 
-If you skip these, the rest of the app works exactly as before — you just won't see the AI
-or Google panels light up.
+The AI assistant needs a DeepSeek key. Calendar & Mail work out of the box with a bundled
+Google client — just connect your account. If you skip these, the rest of the app works
+exactly as before; you just won't see the AI or Google panels light up.
+
+> ¹ The bundled Google client is **unverified**, so Google limits it to 100 users and shows
+> an "unverified app" notice during sign-in. Bring your own client (Settings → Connections)
+> to avoid that. See [src-tauri/SETUP.md](src-tauri/SETUP.md).
 
 ---
 

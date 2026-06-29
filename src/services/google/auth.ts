@@ -192,12 +192,10 @@ export function isSignedIn(): boolean {
 }
 
 export function isConfigured(): boolean {
-  if (IS_TAURI) {
-    // Desktop needs both id + secret for the code flow. Fall back to true when the
-    // settings are empty but Rust may still have env/file creds (checked at sign-in).
-    const { clientId, clientSecret } = loadGoogleSettings();
-    return !!clientId && !!clientSecret;
-  }
+  // The desktop build always has a usable client (bundled default in Rust, plus any
+  // user override from Settings/env/file). The browser build needs a Client ID, which
+  // also ships with a bundled default — so a client is effectively always configured.
+  if (IS_TAURI) return true;
   return !!loadGoogleSettings().clientId;
 }
 

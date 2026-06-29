@@ -53,6 +53,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Bundled Google client, baked into the released binaries at build time.
+          # Add these in the repo: Settings → Secrets and variables → Actions.
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          ZEN_GOOGLE_CLIENT_ID: ${{ secrets.ZEN_GOOGLE_CLIENT_ID }}
+          ZEN_GOOGLE_CLIENT_SECRET: ${{ secrets.ZEN_GOOGLE_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Zen ${{ github.ref_name }}"

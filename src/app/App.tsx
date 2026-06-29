@@ -20,6 +20,8 @@ import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker"
 import { CalendarPanel } from "@/features/google/CalendarPanel";
 import { MailPanel } from "@/features/google/MailPanel";
 import { SettingsView } from "@/features/settings/SettingsView";
+import { Onboarding } from "@/features/onboarding/Onboarding";
+import { useOnboarding } from "@/features/onboarding/store";
 import { applyAppearance } from "@/services/appearance";
 import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
@@ -76,6 +78,7 @@ export function App() {
     applyAppearance();
     void load();
     void usePdfs.getState().load();
+    useOnboarding.getState().startIfFirstRun();
   }, [load]);
   useEffect(() => {
     if (loaded && !restored.current) {
@@ -361,6 +364,7 @@ export function App() {
       <AddToSessionPicker />
       <QuizView />
       <LessonMode />
+      <Onboarding />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>
   );

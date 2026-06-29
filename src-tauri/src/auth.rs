@@ -127,6 +127,20 @@ fn load_credentials() -> Result<OAuthCredentials, String> {
                 .map_err(|e| format!("Failed to parse {path}: {e}"));
         }
     }
+    // Bundled default desktop client, baked in at build time from CI secrets
+    // (ZEN_GOOGLE_CLIENT_ID / ZEN_GOOGLE_CLIENT_SECRET). Lets released installers work
+    // with zero setup; absent in plain source builds, where the user supplies their own.
+    if let (Some(id), Some(secret)) = (
+        option_env!("ZEN_GOOGLE_CLIENT_ID"),
+        option_env!("ZEN_GOOGLE_CLIENT_SECRET"),
+    ) {
+        if !id.is_empty() && !secret.is_empty() {
+            return Ok(OAuthCredentials {
+                client_id: id.to_string(),
+                client_secret: secret.to_string(),
+            });
+        }
+    }
     Err("No Google OAuth credentials. Add them in Settings → Connections, set \
 ZEN_GOOGLE_CLIENT_ID / ZEN_GOOGLE_CLIENT_SECRET, or create google_oauth.json."
         .into())
