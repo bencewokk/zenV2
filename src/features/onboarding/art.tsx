@@ -117,6 +117,32 @@ export function ArtDeepWork() {
   );
 }
 
+/** A tidy grid of tiles — the "everything you can do" overview. */
+export function ArtGallery() {
+  const tiles = [
+    [70, 46], [120, 46], [170, 46],
+    [70, 78], [120, 78], [170, 78],
+  ];
+  return (
+    <Frame>
+      {tiles.map(([x, y], i) => (
+        <rect
+          key={i}
+          x={x - 18}
+          y={y - 12}
+          width="36"
+          height="24"
+          rx="6"
+          fill={i === 0 ? "var(--accent-dim)" : BG}
+          stroke={i === 0 ? ACCENT : BORDER}
+          strokeWidth="1.5"
+        />
+      ))}
+      <circle cx="70" cy="46" r="3.5" fill={ACCENT} />
+    </Frame>
+  );
+}
+
 /** Stacked memory cards feeding into a node — what Zen remembers about you. */
 export function ArtMemory() {
   return (

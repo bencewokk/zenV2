@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import katex from "katex";
 import { loadSettings, saveSettings } from "@/services/ai/settings";
 import { loadGoogleSettings, saveGoogleSettings } from "@/services/google/settings";
 import { deepseek } from "@/services/ai/deepseek";
@@ -10,7 +11,7 @@ import { useNotes } from "@/features/notes/store";
 import { notify } from "@/shared/ui/notify";
 import { loadProfile, saveProfile, loadMemories, saveMemory, deleteMemory, type MemoryEntry } from "@/services/memory";
 import { useOnboarding } from "./store";
-import { ArtWelcome, ArtAI, ArtGoogle, ArtMemory, ArtDeepWork, ArtStudyQuiz } from "./art";
+import { ArtWelcome, ArtAI, ArtGoogle, ArtMemory, ArtGallery, ArtDeepWork, ArtStudyQuiz } from "./art";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -59,6 +60,11 @@ export function Onboarding() {
       body: <MemoryStep />,
     },
     {
+      title: "Everything you can do",
+      art: <ArtGallery />,
+      body: <FeatureGallery onOpenSample={openSampleNote} />,
+    },
+    {
       title: "Deep Work sessions",
       art: <ArtDeepWork />,
       body: (
@@ -96,6 +102,18 @@ export function Onboarding() {
 
   const last = step === steps.length - 1;
   const current = steps[step];
+
+  /** Close the tour and drop the user into the seeded sample math note. */
+  function openSampleNote() {
+    finish();
+    const notes = useNotes.getState().notes;
+    const sample =
+      Object.values(notes).find((n) => n.tags?.includes("sample")) ??
+      Object.values(notes).find((n) => n.title.startsWith("Sample:"));
+    useHome.getState().setManualDeepWork(false);
+    useWorkspace.getState().set({ surface: "home" });
+    if (sample) useNotes.getState().select(sample.id);
+  }
 
   function launchDeepWork() {
     finish();
@@ -298,6 +316,155 @@ function GoogleStep() {
     </div>
   );
 }
+
+type FeatureKey = "math" | "graph" | "pdf" | "ai" | "link" | "dash";
+
+/** A 2×3 gallery of Zen's standout features. Clicking a card shows a live example
+ *  inline (the tour stays open), with a CTA into the real sample note. */
+function FeatureGallery({ onOpenSample }: { onOpenSample: () => void }) {
+  const features: { key: FeatureKey; icon: ReactNode; title: string; blurb: string }[] = [
+    { key: "math", icon: <IconMath />, title: "Math blocks", blurb: "Type / for live equations" },
+    { key: "graph", icon: <IconGraph />, title: "Geometry & graphs", blurb: "Plot functions inline" },
+    { key: "pdf", icon: <IconPdf />, title: "PDFs, indexed", blurb: "Semantic search, on-device" },
+    { key: "ai", icon: <IconSpark />, title: "Inline AI", blurb: "Select text → rewrite, explain" },
+    { key: "link", icon: <IconLink />, title: "Linked notes", blurb: "[[wiki-links]] between notes" },
+    { key: "dash", icon: <IconDash />, title: "Daily brief", blurb: "Notes + calendar + mail" },
+  ];
+  const [selected, setSelected] = useState<FeatureKey>("math");
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[var(--text-dim)]">Tap a card for a live example — then open the sample note to try it.</p>
+      <div className="grid grid-cols-2 gap-2">
+        {features.map((f) => {
+          const active = selected === f.key;
+          return (
+            <button
+              key={f.key}
+              onClick={() => setSelected(f.key)}
+              className={`flex items-start gap-2 rounded-[10px] border px-2.5 py-2 text-left transition ${
+                active
+                  ? "border-[var(--accent)] bg-[var(--accent-dim)]"
+                  : "border-[var(--border)] bg-[var(--bg)] hover:border-[var(--text-dim)]"
+              }`}
+            >
+              <span className={`mt-0.5 shrink-0 ${active ? "text-[var(--text)]" : "text-[var(--accent)]"}`}>{f.icon}</span>
+              <span className="min-w-0">
+                <span className="block text-xs font-semibold text-[var(--text)]">{f.title}</span>
+                <span className="block text-[11px] leading-snug text-[var(--text-dim)]">{f.blurb}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="zen-anim-fade rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-3 py-3">
+        <FeaturePreview feature={selected} />
+      </div>
+
+      <button className="zen-btn-ghost w-full" onClick={onOpenSample}>
+        Open the sample note →
+      </button>
+    </div>
+  );
+}
+
+/** A compact, representative example of one feature, rendered inside the tour. */
+function FeaturePreview({ feature }: { feature: FeatureKey }) {
+  const mathHtml = useMemo(
+    () => katex.renderToString("x = \\frac{-b \\pm \\sqrt{b^{2} - 4ac}}{2a}", { throwOnError: false, displayMode: true }),
+    []
+  );
+
+  if (feature === "math") {
+    return (
+      <div className="space-y-2">
+        <div className="grid place-items-center py-1 text-[var(--text)]" dangerouslySetInnerHTML={{ __html: mathHtml }} />
+        <p className="text-[11px] text-[var(--text-dim)]">Type <code className="text-[var(--text)]">/math</code> or wrap in <code className="text-[var(--text)]">$…$</code> — rendered live with KaTeX, editable with MathLive.</p>
+      </div>
+    );
+  }
+
+  if (feature === "graph") {
+    return (
+      <div className="space-y-2">
+        <svg viewBox="0 0 200 84" width="100%" height="84" className="text-[var(--accent)]">
+          <line x1="10" y1="42" x2="190" y2="42" stroke="var(--border)" strokeWidth="1.5" />
+          <line x1="100" y1="6" x2="100" y2="78" stroke="var(--border)" strokeWidth="1.5" />
+          <path d="M30 12 Q100 96 170 12" fill="none" stroke="currentColor" strokeWidth="2" />
+        </svg>
+        <p className="text-[11px] text-[var(--text-dim)]">Drop a geometry/graph block and plot functions or constructions right in the note.</p>
+      </div>
+    );
+  }
+
+  if (feature === "pdf") {
+    return (
+      <div className="space-y-1.5">
+        <div className="space-y-1">
+          <div className="h-1.5 w-full rounded bg-[rgba(255,255,255,0.08)]" />
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 flex-1 rounded bg-[var(--accent-dim)]" />
+            <span className="rounded border border-[var(--accent)] px-1 text-[9px] text-[var(--accent)]">p.3</span>
+          </div>
+          <div className="h-1.5 w-2/3 rounded bg-[rgba(255,255,255,0.08)]" />
+        </div>
+        <p className="text-[11px] text-[var(--text-dim)]">Add a PDF and it's indexed on your device. Ask the AI to "find the discriminant" and it jumps to the page.</p>
+      </div>
+    );
+  }
+
+  if (feature === "ai") {
+    return (
+      <div className="space-y-1.5">
+        <div className="text-[11px] text-[var(--text-dim)] line-through">this thing about roots is kinda important</div>
+        <div className="text-[12px] text-[var(--text)]"><span className="mr-1 text-[var(--accent)]">✦</span>The nature of the roots is determined by the discriminant.</div>
+        <p className="text-[11px] text-[var(--text-dim)]">Select any text and ask the AI to rewrite, explain, or expand it in place.</p>
+      </div>
+    );
+  }
+
+  if (feature === "link") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="rounded border border-[var(--accent)] bg-[var(--accent-dim)] px-1.5 py-0.5 text-[var(--text)]">Quadratics</span>
+          <span className="text-[var(--text-dim)]">↔</span>
+          <span className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[var(--text)]">Functions</span>
+        </div>
+        <p className="text-[11px] text-[var(--text-dim)]">Type <code className="text-[var(--text)]">[[</code> to link notes. Backlinks build a connected web of your knowledge.</p>
+      </div>
+    );
+  }
+
+  // dash
+  return (
+    <div className="space-y-1.5">
+      {["Review quadratics — exam in 5 days", "Calculus lecture · 2:00 PM", "Reply to Prof. Lang about pset 3"].map((line, i) => (
+        <div key={i} className="flex items-center gap-2 text-[11px] text-[var(--text)]">
+          <span className="grid h-3 w-3 place-items-center rounded-[3px] border border-[var(--border)]" />
+          {line}
+        </div>
+      ))}
+      <p className="text-[11px] text-[var(--text-dim)]">Your daily brief fuses notes, calendar, and mail into one focused list.</p>
+    </div>
+  );
+}
+
+/** Tiny 20×20 line icons for the feature gallery (inherit currentColor). */
+function IconBase({ children }: { children: ReactNode }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      {children}
+    </svg>
+  );
+}
+const IconMath = () => <IconBase><path d="M3 4l4 12 3-8" /><path d="M11 7h6M13 13h4" /></IconBase>;
+const IconGraph = () => <IconBase><path d="M4 3v14h13" /><path d="M5 14c4 0 5-9 11-9" /></IconBase>;
+const IconPdf = () => <IconBase><path d="M5 3h7l3 3v7a1 1 0 01-1 1H5a1 1 0 01-1-1V4a1 1 0 011-1z" /><circle cx="9" cy="11" r="2.5" /><path d="M11 13l2 2" /></IconBase>;
+const IconSpark = () => <IconBase><path d="M10 3v5M10 12v5M3 10h5M12 10h5" /><circle cx="10" cy="10" r="1.4" fill="currentColor" stroke="none" /></IconBase>;
+const IconLink = () => <IconBase><circle cx="6" cy="6" r="2.5" /><circle cx="14" cy="14" r="2.5" /><path d="M8 8l4 4" /></IconBase>;
+const IconDash = () => <IconBase><rect x="3" y="3" width="6" height="6" rx="1" /><rect x="11" y="3" width="6" height="6" rx="1" /><rect x="3" y="11" width="6" height="6" rx="1" /><rect x="11" y="11" width="6" height="6" rx="1" /></IconBase>;
 
 /** Seed the AI's long-term memory: a couple of profile facts + free-form memories. */
 function MemoryStep() {

@@ -22,6 +22,7 @@ import { MailPanel } from "@/features/google/MailPanel";
 import { SettingsView } from "@/features/settings/SettingsView";
 import { Onboarding } from "@/features/onboarding/Onboarding";
 import { useOnboarding } from "@/features/onboarding/store";
+import { seedSampleSession } from "@/features/onboarding/seedSession";
 import { applyAppearance } from "@/services/appearance";
 import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
@@ -76,9 +77,10 @@ export function App() {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     applyAppearance();
-    void load();
     void usePdfs.getState().load();
     useOnboarding.getState().startIfFirstRun();
+    // Seed notes first, then build the ready-made sample Deep Work session from them.
+    void load().then(() => seedSampleSession());
   }, [load]);
   useEffect(() => {
     if (loaded && !restored.current) {
