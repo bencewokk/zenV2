@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { useAI } from "@/features/ai/store";
 import { useHome } from "@/features/home/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { MathField } from "@/features/math/MathField";
-import { readinessColor } from "@/features/home/deepwork/deepworkStore";
+import { readinessColor, useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import {
   useQuiz,
   buildGradePrompt,
+  gradeObjectives,
+  masteryUpdatesFor,
   answeredCount,
   type QuizQuestion,
   type QuizAnswer,
@@ -33,6 +35,18 @@ export function QuizView() {
   const beginGrading = useQuiz((s) => s.beginGrading);
   const close = useQuiz((s) => s.closeView);
 
+  // Ctrl/Cmd+Enter submits the quiz for grading (when still answering).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && record?.status === "active") {
+        e.preventDefault();
+        submit();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [record]);
+
   if (!record) return null;
 
   const { title, questions, answers, results, overall, status } = record;
@@ -41,10 +55,28 @@ export function QuizView() {
   const done = answeredCount(questions, answers);
 
   function submit() {
+    if (!record) return;
+    // Grade objective questions (MCQ, ordering, matching, numeric) on-device — instant,
+    // free, offline. Only open-ended text/math questions go to the AI grader.
+    const { results, pendingIds } = gradeObjectives(record);
+    useQuiz.getState().mergeResults(results);
+
+    if (pendingIds.length === 0) {
+      // Fully objective quiz — finalize now, no AI round-trip.
+      useQuiz.getState().applyResults([]);
+      const st = useQuiz.getState();
+      const rec = st.activeId ? st.quizzes[st.activeId] : null;
+      if (rec) {
+        const updates = masteryUpdatesFor(rec);
+        if (updates.length) useDeepWork.getState().setMastery(updates);
+      }
+      return;
+    }
+
     const ai = useAI.getState();
     beginGrading();
     if (!ai.open) ai.toggle();
-    void ai.send(buildGradePrompt());
+    void ai.send(buildGradePrompt(pendingIds));
   }
 
   return (
@@ -118,7 +150,7 @@ export function QuizView() {
                 className="zen-pressable rounded bg-[var(--accent)] px-4 py-1.5 text-xs text-black disabled:opacity-50"
                 onClick={submit}
                 disabled={grading || done === 0}
-                title={done < questions.length ? "Submit — unanswered questions will be marked blank" : "Submit for grading"}
+                title={`${done < questions.length ? "Submit — unanswered questions will be marked blank" : "Submit for grading"} (Ctrl/⌘+Enter)`}
               >
                 {grading ? "Grading…" : "Submit for grading"}
               </button>

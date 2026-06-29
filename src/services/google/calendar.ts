@@ -50,6 +50,14 @@ export async function listEvents(timeMin: string, timeMax: string): Promise<CalE
   return (data.items ?? []).map(normalize);
 }
 
+/** Fetch a single event by id, with its full (untruncated) description. */
+export async function getEvent(id: string): Promise<CalEvent> {
+  const raw = await gapiFetch<RawEvent>(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(id)}`
+  );
+  return normalize(raw);
+}
+
 /** Create a timed event on the primary calendar. */
 export async function createEvent(input: {
   summary: string;

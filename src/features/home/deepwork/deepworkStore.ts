@@ -24,6 +24,11 @@ export interface SubSkill {
   mastery: number; // 0..100
   lastReviewed?: number;
   reviewCount?: number;
+  // Spaced-repetition schedule (SM-2-ish): grows the gap between reviews on success,
+  // collapses it on failure. `due` is when the item should next be reviewed (epoch ms).
+  interval?: number; // days until next review after the last pass
+  ease?: number;     // ease factor (~1.3..2.8)
+  due?: number;      // epoch ms when this item is next due
 }
 
 /** One key concept in the study backbone, with its own mastery score. */
@@ -35,6 +40,10 @@ export interface StudyConcept {
   lastReviewed?: number; // epoch ms of the last mastery update (a drill/quiz)
   reviewCount?: number; // how many times this concept has been drilled
   subs?: SubSkill[]; // sub-skills; concept mastery is their average when present
+  // Spaced-repetition schedule (see SubSkill). `due` drives "Review next"/staleness.
+  interval?: number;
+  ease?: number;
+  due?: number;
 }
 
 /** The backbone of the study material: the key concepts the AI synthesized. */
@@ -287,9 +296,9 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
               const subs = next.subs ? [...next.subs] : [];
               const i = subs.findIndex((x) => norm(x.title) === norm(hit.sub!));
               if (i >= 0) {
-                subs[i] = { ...subs[i], mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: (subs[i].reviewCount ?? 0) + 1 };
+                subs[i] = { ...subs[i], mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: (subs[i].reviewCount ?? 0) + 1, ...schedule(subs[i], clampPercent(hit.mastery), now) };
               } else {
-                subs.push({ id: crypto.randomUUID(), title: hit.sub!.trim(), mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: 1 });
+                subs.push({ id: crypto.randomUUID(), title: hit.sub!.trim(), mastery: clampPercent(hit.mastery), lastReviewed: now, reviewCount: 1, ...schedule({}, clampPercent(hit.mastery), now) });
               }
               next = { ...next, subs };
             } else if (!next.subs?.length) {
@@ -302,6 +311,11 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
           next.mastery = conceptMastery(next);
           next.lastReviewed = now;
           next.reviewCount = (c.reviewCount ?? 0) + 1;
+          // Schedule the concept's next review from its resulting mastery (spaced repetition).
+          const csr = schedule(c, next.mastery, now);
+          next.interval = csr.interval;
+          next.ease = csr.ease;
+          next.due = csr.due;
           return next;
         });
         const backbone: StudyBackbone = {
@@ -490,31 +504,58 @@ export function recomputeOverall(concepts: StudyConcept[]): number {
   return clampPercent(concepts.reduce((sum, c) => sum + conceptMastery(c), 0) / concepts.length);
 }
 
-/**
- * A concept is "due" for review when it's not yet mastered (mastery < 80) and
- * either has never been drilled or was last drilled over `staleMs` ago. Used to
- * nudge spaced repetition from the Study card.
- */
-export const REVIEW_STALE_MS = 20 * 60 * 1000; // 20 minutes
+export const REVIEW_STALE_MS = 20 * 60 * 1000; // 20 minutes (legacy fallback)
 
+// ── Spaced repetition (SM-2-ish) ────────────────────────────────────────────────
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RELEARN_MS = 10 * 60 * 1000; // a failed item is due again in 10 minutes
+const PASS_THRESHOLD = 70; // mastery at/above this counts as a successful review
+const MIN_EASE = 1.3;
+const MAX_EASE = 2.8;
+const DEFAULT_EASE = 2.3;
+
+/**
+ * Compute the next spaced-repetition schedule for an item from its prior schedule and
+ * the mastery it just scored. A pass lengthens the interval (× ease) and nudges ease up;
+ * a fail collapses the interval and nudges ease down, so the item resurfaces quickly.
+ */
+function schedule(prev: { interval?: number; ease?: number }, mastery: number, now: number): { interval: number; ease: number; due: number } {
+  const pass = mastery >= PASS_THRESHOLD;
+  let ease = prev.ease ?? DEFAULT_EASE;
+  if (pass) {
+    ease = Math.min(MAX_EASE, ease + 0.1);
+    const interval = prev.interval && prev.interval >= 1 ? Math.round(prev.interval * ease) : 1;
+    return { interval, ease, due: now + interval * DAY_MS };
+  }
+  ease = Math.max(MIN_EASE, ease - 0.2);
+  return { interval: 0, ease, due: now + RELEARN_MS };
+}
+
+/**
+ * A concept is "due" for review when its spaced-repetition `due` time has passed.
+ * Falls back to the legacy mastery/staleness rule for concepts scheduled before SR.
+ */
 export function isConceptDue(c: StudyConcept, now: number): boolean {
+  if (c.due != null) return now >= c.due;
   if (c.mastery >= 80) return false;
   if (c.lastReviewed == null) return true;
   return now - c.lastReviewed >= REVIEW_STALE_MS;
 }
 
 /**
- * The single concept the user should review next: lowest mastery first, then the
- * one drilled longest ago (never-drilled counts as oldest). Returns null when the
- * backbone is empty or everything is already mastered (>= 80%).
+ * The single concept to review next: overdue items first (most overdue wins), else the
+ * lowest-mastery not-yet-mastered concept. Returns null when nothing is due or pending.
  */
-export function nextToReview(backbone: StudyBackbone | null): StudyConcept | null {
+export function nextToReview(backbone: StudyBackbone | null, now: number = Date.now()): StudyConcept | null {
   if (!backbone || !backbone.concepts.length) return null;
-  const candidates = backbone.concepts.filter((c) => c.mastery < 80);
-  if (!candidates.length) return null;
-  return candidates
-    .slice()
-    .sort((a, b) => a.mastery - b.mastery || (a.lastReviewed ?? 0) - (b.lastReviewed ?? 0))[0];
+  const due = backbone.concepts.filter((c) => isConceptDue(c, now));
+  if (due.length) {
+    // Most overdue first (oldest due time); then lowest mastery as a tiebreak.
+    return due.slice().sort((a, b) => (a.due ?? 0) - (b.due ?? 0) || a.mastery - b.mastery)[0];
+  }
+  const pending = backbone.concepts.filter((c) => c.mastery < 80);
+  if (!pending.length) return null;
+  return pending.slice().sort((a, b) => a.mastery - b.mastery || (a.lastReviewed ?? 0) - (b.lastReviewed ?? 0))[0];
 }
 
 export function readinessColor(percent: number): string {

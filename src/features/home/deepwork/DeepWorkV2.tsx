@@ -147,8 +147,44 @@ export function DeepWorkV2({
   const setZenMode = useDeepWork((s) => s.setZenMode);
   const matchedLabels = useHome((s) => s.matchedThreadLabels);
   const pdfs = usePdfs((s) => s.pdfs);
+  const sessionName = useDeepWork((s) => (s.activeId ? s.sessions[s.activeId]?.name : "") ?? "");
 
   const [showLibrary, setShowLibrary] = useState(false);
+
+  // Which windows are collapsed to just their header. Ephemeral (like z-stacking):
+  // resets when the session changes.
+  const [minimized, setMinimized] = useState<Set<string>>(new Set());
+  const allMinimized = items.length > 0 && items.every((it) => minimized.has(targetKey(it)));
+  function toggleMinimize(key: string) {
+    setMinimized((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  function toggleMinimizeAll() {
+    setMinimized(allMinimized ? new Set() : new Set(items.map(targetKey)));
+  }
+
+  /** Icon + accent + title for a window, shared by its tab and its frame. */
+  function describe(item: HomeTarget): { glyph: string; accent: string; title: string } {
+    if (item.type === "note") return { glyph: "✎", accent: "#60A5FA", title: notes[item.id]?.title || "Untitled" };
+    if (item.type === "event") return { glyph: "◷", accent: "#6ea8fe", title: events.find((e) => e.id === item.id)?.summary || "Event" };
+    if (item.type === "pdf") return { glyph: "📄", accent: "#e0a35f", title: pdfs[item.id]?.name || "PDF" };
+    return { glyph: "✉", accent: "#b073e0", title: threads.find((t) => t.id === item.id)?.subject || "Email" };
+  }
+
+  /** Click a tab: focus its window and pop it open if collapsed. */
+  function openTab(key: string) {
+    focusWindow(key);
+    setMinimized((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }
 
   // Local window stacking: the most-recently-focused window sits on top and is highlighted.
   // Geometry is persisted; stacking is ephemeral and resets when the session changes.
@@ -158,6 +194,7 @@ export function DeepWorkV2({
   useEffect(() => {
     setZMap({});
     setActiveKey(null);
+    setMinimized(new Set());
     zCounter.current = 1;
   }, [activeId]);
   function focusWindow(key: string) {
@@ -199,41 +236,87 @@ export function DeepWorkV2({
   if (!activeId) return <SessionLauncher />;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="zen-panel-scroll relative min-h-0 flex-1 overflow-auto rounded-[16px] border border-[rgba(255,255,255,0.06)] bg-[rgba(0,0,0,0.12)]">
-        {!zenMode && (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.06)] bg-[rgba(18,19,24,0.6)] px-2 py-1.5">
+        <div className="zen-panel-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {items.length === 0 ? (
+            <span className="px-2 text-sm text-[var(--text-dim)]">{sessionName || "Deep Work"}</span>
+          ) : (
+            items.map((item) => {
+              const key = targetKey(item);
+              const d = describe(item);
+              const active = activeKey === key;
+              const isMin = minimized.has(key);
+              return (
+                <div
+                  key={key}
+                  className={`group flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 py-1 text-sm ${
+                    active
+                      ? "bg-[rgba(255,255,255,0.1)] text-[var(--text)]"
+                      : "text-[var(--text-dim)] hover:bg-[var(--bg-elev)]"
+                  } ${isMin ? "opacity-60" : ""}`}
+                  onClick={() => openTab(key)}
+                  onContextMenu={(e) => openRelatedMenu(e, item)}
+                  title={d.title}
+                >
+                  <span className="shrink-0 text-xs" style={{ color: d.accent }}>{d.glyph}</span>
+                  <span className="min-w-0 flex-1 truncate">{d.title}</span>
+                  <button
+                    className={`zen-pressable shrink-0 rounded px-1 text-xs hover:bg-[rgba(255,255,255,0.15)] hover:text-[var(--text)] ${
+                      active ? "opacity-70" : "opacity-0 group-hover:opacity-100"
+                    }`}
+                    onClick={(e) => { e.stopPropagation(); removeItem(item); }}
+                    title="Remove from Deep Work"
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })
+          )}
           <button
-            className="zen-pressable absolute left-3 top-3 z-10 rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(18,19,24,0.7)] px-3 py-1 text-sm leading-none text-[var(--text-dim)] backdrop-blur hover:text-[var(--text)]"
+            className="zen-pressable shrink-0 rounded-[8px] px-2 py-1 text-base leading-none text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
             onClick={() => setShowLibrary(true)}
             title="Add a note, PDF, event, or email to this session"
+            aria-label="Add source"
           >
-            ＋ Add source
+            ＋
           </button>
-        )}
-        {zenMode && (
+        </div>
+        <div className="flex shrink-0 items-center gap-1 border-l border-[rgba(255,255,255,0.08)] pl-2">
           <button
-            className="zen-anim-fade zen-pressable absolute right-3 top-3 z-10 rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(18,19,24,0.7)] px-2 py-1 text-sm leading-none text-[var(--text-dim)] backdrop-blur hover:text-[var(--text)]"
-            onClick={() => setZenMode(false)}
-            title="Exit zen mode"
-            aria-label="Exit zen mode"
+            className="zen-pressable rounded-[8px] px-2 py-1 text-sm leading-none text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)] disabled:opacity-40"
+            onClick={toggleMinimizeAll}
+            disabled={items.length === 0}
+            title={allMinimized ? "Expand all windows" : "Minimize all windows to their headers"}
+            aria-label={allMinimized ? "Expand all windows" : "Minimize all windows"}
+          >
+            {allMinimized ? "▣" : "—"}
+          </button>
+          <button
+            className="zen-pressable rounded-[8px] px-2 py-1 text-sm leading-none text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
+            onClick={() => setZenMode(!zenMode)}
+            title={zenMode ? "Exit zen mode" : "Enter zen mode (distraction-free)"}
+            aria-label={zenMode ? "Exit zen mode" : "Enter zen mode"}
           >
             ◑
           </button>
-        )}
+        </div>
+      </div>
+      <div className="zen-panel-scroll relative min-h-0 flex-1 overflow-auto rounded-[16px] border border-[rgba(255,255,255,0.06)] bg-[rgba(0,0,0,0.12)]">
         {items.length === 0 ? (
           <div className="flex h-full items-center justify-center p-8 text-center text-sm text-[var(--text-dim)]">
-            Nothing here yet. Use <span className="mx-1 text-[var(--text)]">＋ Add source</span> (top-left), or right-click a note, email, or event → <span className="mx-1 text-[var(--text)]">Add to Deep Work</span>.
+            Nothing here yet. Use <span className="mx-1 text-[var(--text)]">＋ Add source</span> (top bar), or right-click a note, email, or event → <span className="mx-1 text-[var(--text)]">Add to Deep Work</span>.
           </div>
         ) : (
           items.map((item) => {
             const key = targetKey(item);
             const geom: WindowGeom = windows[key] ?? { x: 32, y: 32, w: 380, h: 340 };
             const commit = (g: WindowGeom) => setWindow(key, g);
-            const onRemove = () => removeItem(item);
             const peers = Object.entries(windows)
               .filter(([k]) => k !== key)
               .map(([, g]) => g);
-            const stack = { z: zMap[key], active: activeKey === key, onFocus: () => focusWindow(key), peers, chromeless: zenMode };
+            const stack = { z: zMap[key], active: activeKey === key, onFocus: () => focusWindow(key), peers, chromeless: zenMode, minimized: minimized.has(key), onToggleMinimize: () => toggleMinimize(key), onRemove: () => removeItem(item) };
 
             if (item.type === "note") {
               const note = notes[item.id];
@@ -242,7 +325,6 @@ export function DeepWorkV2({
                   key={key}
                   geom={geom}
                   onCommit={commit}
-                  onRemove={onRemove}
                   {...stack}
                   glyph="✎"
                   accent="#60A5FA"
@@ -260,7 +342,6 @@ export function DeepWorkV2({
                   key={key}
                   geom={geom}
                   onCommit={commit}
-                  onRemove={onRemove}
                   {...stack}
                   glyph="◷"
                   accent="#6ea8fe"
@@ -278,7 +359,6 @@ export function DeepWorkV2({
                   key={key}
                   geom={geom}
                   onCommit={commit}
-                  onRemove={onRemove}
                   {...stack}
                   glyph="📄"
                   accent="#e0a35f"
@@ -295,7 +375,6 @@ export function DeepWorkV2({
                 key={key}
                 geom={geom}
                 onCommit={commit}
-                onRemove={onRemove}
                 {...stack}
                 glyph="✉"
                 accent="#b073e0"

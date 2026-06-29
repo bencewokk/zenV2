@@ -12,7 +12,7 @@ import {
   fmtAgo,
 } from "@/features/home/deepwork/deepworkStore";
 import { useStudyLog, todayMs, computeStreak, HOUR_MS, dayKey } from "@/features/home/deepwork/studyLog";
-import { useQuiz, sessionQuizzes, type QuizRecord } from "@/features/home/deepwork/quizStore";
+import { useQuiz, sessionQuizzes, sessionMistakes, type QuizRecord } from "@/features/home/deepwork/quizStore";
 import {
   planHealth, actionableSessions, fmtPlanDay, fmtStartMin, KIND_META, verdictLabel, verdictColor,
   type PlannedSession,
@@ -42,6 +42,10 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   const quizOrder = useQuiz((s) => s.order);
   const quizList = useMemo(
     () => sessionQuizzes({ quizzes, order: quizOrder }, activeSessionId),
+    [quizzes, quizOrder, activeSessionId]
+  );
+  const mistakeCount = useMemo(
+    () => sessionMistakes({ quizzes, order: quizOrder }, activeSessionId).length,
     [quizzes, quizOrder, activeSessionId]
   );
   const now = useNow();
@@ -99,9 +103,20 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
 
   function startQuiz() {
     ask(
-      "Make me a quiz on my Deep Work material. Read the material first, then call deepwork_start_quiz with a " +
-        "good mix of question types (multiple choice, numerical, fill-in-the-blank, step-by-step, error analysis, " +
-        "matching, ordering, true/false) sized to the material, each tagged with the concept it tests."
+      "Make me a quiz on my Deep Work material. First call deepwork_read_material and deepwork_weak_concepts, " +
+        "then call deepwork_start_quiz. WEIGHT the questions toward my lowest-mastery / due concepts and the " +
+        "mistake bank (re-test things I got wrong before), while still covering the material. Use a good mix of " +
+        "question types (multiple choice, numerical, fill-in-the-blank, step-by-step, error analysis, matching, " +
+        "ordering, true/false), each tagged with the concept it tests, and include answer keys (correct / " +
+        "matchKey / numericAnswer) so objective questions grade instantly."
+    );
+  }
+
+  function requizMistakes() {
+    ask(
+      "Re-quiz me ONLY on the things I've gotten wrong before. Call deepwork_read_material to pull up my " +
+        "mistake bank, then call deepwork_start_quiz with questions that re-test those exact missed concepts " +
+        "(reworded, not identical), each tagged with its concept and with answer keys for instant grading."
     );
   }
 
@@ -141,11 +156,22 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
             className="zen-pressable flex-1 rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-2.5 py-1.5 text-xs text-[var(--text)] disabled:opacity-50"
             onClick={startQuiz}
             disabled={streaming}
-            title="Generate a full quiz on this material"
+            title="Generate a quiz weighted toward your weak spots"
           >
             ✎ Start quiz
           </button>
         </div>
+
+        {mistakeCount > 0 && (
+          <button
+            className="zen-pressable w-full rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
+            onClick={requizMistakes}
+            disabled={streaming}
+            title="Re-test only the questions you've missed before"
+          >
+            ↺ Re-quiz my mistakes ({mistakeCount})
+          </button>
+        )}
 
         {quizList.length > 0 && <QuizHistory list={quizList} />}
 

@@ -80,7 +80,7 @@ function snapToPeers(g: WindowGeom, peers: WindowGeom[]): WindowGeom {
  * near the canvas edges previews a Windows-style snap (half/quarter/full).
  */
 export function WindowFrame({
-  geom, onCommit, title, glyph, accent, onRemove, onHeaderContextMenu, z, active, onFocus, peers, chromeless, children,
+  geom, onCommit, title, glyph, accent, onRemove, onHeaderContextMenu, z, active, onFocus, peers, chromeless, minimized, onToggleMinimize, children,
 }: {
   geom: WindowGeom;
   onCommit: (geom: WindowGeom) => void;
@@ -95,22 +95,17 @@ export function WindowFrame({
   peers?: WindowGeom[];
   /** Zen mode: hide the maximize/close header buttons for a distraction-free canvas. */
   chromeless?: boolean;
+  /** Collapsed to its tab — the window is hidden from the canvas entirely. */
+  minimized?: boolean;
+  onToggleMinimize?: () => void;
   children: ReactNode;
 }) {
   const [live, setLive] = useState(geom);
   const [snapPreview, setSnapPreview] = useState<WindowGeom | null>(null);
-  const [closing, setClosing] = useState(false);
   // When maximized, remember the pre-maximize geometry so we can restore it.
   const [restoreGeom, setRestoreGeom] = useState<WindowGeom | null>(null);
   const dragging = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
-
-  // Play the exit animation, then remove for real.
-  function handleClose() {
-    if (closing) return;
-    setClosing(true);
-    window.setTimeout(onRemove, 120); // matches --motion-fast
-  }
 
   /** Toggle between filling the canvas and the last floating geometry. */
   function toggleMaximize() {
@@ -190,6 +185,9 @@ export function WindowFrame({
 
   const display = snapPreview ?? live;
 
+  // Minimized → the window lives only as its tab; nothing on the canvas.
+  if (minimized) return null;
+
   return (
     <div
       ref={rootRef}
@@ -198,7 +196,7 @@ export function WindowFrame({
         active
           ? "border-[rgba(255,255,255,0.18)] shadow-[0_28px_70px_rgba(0,0,0,0.55)]"
           : "border-[rgba(255,255,255,0.08)] shadow-[0_18px_50px_rgba(0,0,0,0.4)]"
-      } ${closing ? "zen-exit-pop" : "zen-anim-spring"}`}
+      } zen-anim-spring`}
       style={{
         left: display.x,
         top: display.y,
@@ -210,33 +208,38 @@ export function WindowFrame({
           : undefined,
       }}
     >
-      {!chromeless && (
-        <div
-          className="flex shrink-0 cursor-move select-none items-center gap-2 border-b border-[var(--border)] px-3 py-2"
-          onMouseDown={startDrag}
-          onDoubleClick={toggleMaximize}
-          onContextMenu={onHeaderContextMenu}
-        >
-          <span className="text-sm" style={{ color: accent ?? "var(--text-dim)" }}>{glyph}</span>
-          <span className="flex-1 truncate text-sm font-medium text-[var(--text)]">{title}</span>
+      <div
+        className="group flex h-6 shrink-0 cursor-move select-none items-center gap-1.5 border-b border-[var(--border)] px-1.5 hover:bg-[var(--bg-elev)]"
+        onMouseDown={startDrag}
+        onDoubleClick={toggleMaximize}
+        onContextMenu={onHeaderContextMenu}
+        title={`${title} — drag to move, double-click to maximize`}
+      >
+        <span className="text-[10px] leading-none" style={{ color: accent ?? "var(--text-dim)" }}>{glyph}</span>
+        <span className="h-1 w-6 rounded-full bg-[var(--border)] group-hover:bg-[var(--text-dim)]" />
+        <span className="flex-1" />
+        {/* Zen mode keeps the drag grip but hides the buttons for a calmer canvas. */}
+        {!chromeless && onToggleMinimize && (
           <button
-            className="zen-pressable shrink-0 rounded-[8px] px-1.5 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
+            className="zen-pressable shrink-0 rounded-[6px] px-1 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={toggleMaximize}
-            title={restoreGeom ? "Restore" : "Maximize"}
+            onClick={onToggleMinimize}
+            title="Minimize to tab"
           >
-            {restoreGeom ? "❐" : "▢"}
+            —
           </button>
+        )}
+        {!chromeless && (
           <button
-            className="zen-pressable shrink-0 rounded-[8px] px-1.5 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
+            className="zen-pressable shrink-0 rounded-[6px] px-1 text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={handleClose}
+            onClick={onRemove}
             title="Remove from Deep Work"
           >
             ✕
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="zen-panel-scroll min-h-0 flex-1 overflow-auto">{children}</div>
 

@@ -31,6 +31,12 @@ export interface QuizQuestion {
   left?: string[];
   right?: string[];
   rubric?: string;
+  // Answer keys for OBJECTIVE grading on-device (no AI round-trip). When present the
+  // app grades the question instantly; when absent it falls back to the AI grader.
+  correct?: number;        // choice: 0-based index of the correct option
+  matchKey?: number[];     // match: for each left[i], the index in right[] that matches it
+  numericAnswer?: number;  // text: the expected numeric value (enables local numeric grading)
+  numericTolerance?: number; // text: optional ± absolute tolerance (default 0.1% of the value)
 }
 
 export interface QuizAnswer {
@@ -85,7 +91,10 @@ interface QuizState extends Persisted {
   remove: (id: string) => void;
   setAnswer: (questionId: string, answer: QuizAnswer) => void;
   beginGrading: () => void;
-  applyResults: (results: QuizResult[], overall: number) => void;
+  /** Merge results into the active quiz WITHOUT finalizing (used for instant local
+   *  grading of objective questions before the AI grades the rest). */
+  mergeResults: (results: QuizResult[]) => void;
+  applyResults: (results: QuizResult[], overall?: number) => void;
   setReview: (strengths: string, mistakes: string) => void;
 }
 
@@ -205,10 +214,23 @@ export const useQuiz = create<QuizState>((set, get) => {
       patchActive((r) => ({ ...r, status: "grading" }));
     },
 
-    applyResults(results, overall) {
-      const map: Record<string, QuizResult> = {};
-      for (const r of results) map[r.id] = r;
-      patchActive((r) => ({ ...r, status: "graded", results: map, overall }));
+    mergeResults(results) {
+      patchActive((r) => {
+        const map = { ...r.results };
+        for (const x of results) map[x.id] = x;
+        return { ...r, results: map };
+      });
+    },
+
+    applyResults(results) {
+      patchActive((r) => {
+        const map = { ...r.results };
+        for (const x of results) map[x.id] = x;
+        // Overall = mean over every answered/graded question (local + AI merged).
+        const all = r.questions.map((q) => map[q.id]).filter(Boolean) as QuizResult[];
+        const overall = all.length ? Math.round(all.reduce((s, x) => s + x.score, 0) / all.length) : 0;
+        return { ...r, status: "graded", results: map, overall };
+      });
     },
 
     setReview(strengths, mistakes) {
@@ -252,10 +274,13 @@ function formatAnswer(q: QuizQuestion, a: QuizAnswer | undefined): string {
  * quiz. Includes each question's rubric/expected answer (hidden in the UI) so the model
  * can grade fairly, and asks it to call `deepwork_grade_quiz` with per-question verdicts.
  */
-export function buildGradePrompt(): string {
+export function buildGradePrompt(onlyIds?: string[]): string {
   const quiz = activeQuiz();
   if (!quiz) return "";
-  const { title, questions, answers } = quiz;
+  const { title, answers } = quiz;
+  const only = onlyIds ? new Set(onlyIds) : null;
+  // Keep original numbering so the AI's ids line up, but skip already-graded ones.
+  const questions = quiz.questions.filter((q) => !only || only.has(q.id));
   const blocks = questions.map((q, i) => {
     const ua = formatAnswer(q, answers[q.id]);
     return (
@@ -268,12 +293,141 @@ export function buildGradePrompt(): string {
       `Student answer: ${ua || "(blank)"}`
     );
   });
+  const scope = only
+    ? `I've submitted my quiz "${title}". The objective questions are already graded — grade ONLY the ${questions.length} open-ended question(s) below`
+    : `I've submitted my quiz "${title}". Grade EVERY question`;
   return (
-    `I've submitted my quiz "${title}". Grade EVERY question. Award partial credit for correct ` +
-    `method with minor slips; for math, follow my working step by step. Then call deepwork_grade_quiz ` +
-    `with a results array of { id, verdict (correct|partial|incorrect), score (0-100), feedback (one sentence) }.\n\n` +
+    `${scope}. Award partial credit for correct method with minor slips; for math, follow my working ` +
+    `step by step. Then call deepwork_grade_quiz with a results array of { id, verdict ` +
+    `(correct|partial|incorrect), score (0-100), feedback (one sentence) } for those question id(s).\n\n` +
     blocks.join("\n\n")
   );
+}
+
+// ── On-device objective grading ────────────────────────────────────────────────
+
+/** Parse a possibly-LaTeX-ish answer to a number, or null if it isn't numeric. */
+function parseNumeric(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/\\[a-zA-Z]+/g, "").replace(/[^0-9.eE+-]/g, "").trim();
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Grade a single question on-device, or return null if it needs the AI (text/math
+ *  without a numeric key). Score is 0-100; partial credit for order/match. */
+function gradeOne(q: QuizQuestion, a: QuizAnswer | undefined): Omit<QuizResult, "id"> | null {
+  if (q.kind === "choice") {
+    if (q.correct == null || !q.options?.length) return null;
+    const ok = a?.value != null && a.value === q.options[q.correct];
+    return { verdict: ok ? "correct" : "incorrect", score: ok ? 100 : 0, feedback: ok ? "" : `Correct answer: ${q.options[q.correct]}` };
+  }
+  if (q.kind === "order") {
+    if (!q.items?.length) return null;
+    const n = q.items.length;
+    const seq = a?.order ?? Array.from({ length: n }, (_, i) => i);
+    const right = seq.filter((v, i) => v === i).length; // correct order is the identity
+    const score = Math.round((right / n) * 100);
+    const verdict: Verdict = score === 100 ? "correct" : score === 0 ? "incorrect" : "partial";
+    return { verdict, score, feedback: score === 100 ? "" : `Correct order: ${q.items.join(" → ")}` };
+  }
+  if (q.kind === "match") {
+    if (!q.matchKey?.length || !q.left?.length) return null;
+    const m = a?.matches ?? {};
+    const total = q.left.length;
+    const right = q.left.filter((_, li) => m[li] === q.matchKey![li]).length;
+    const score = Math.round((right / total) * 100);
+    const verdict: Verdict = score === 100 ? "correct" : score === 0 ? "incorrect" : "partial";
+    const key = q.left.map((l, li) => `${l} = ${q.right?.[q.matchKey![li]] ?? "?"}`).join("; ");
+    return { verdict, score, feedback: score === 100 ? "" : `Correct matches: ${key}` };
+  }
+  if (q.kind === "text" && q.numericAnswer != null) {
+    const got = parseNumeric(a?.value);
+    if (got == null) return null; // non-numeric written answer → let the AI grade it
+    const tol = q.numericTolerance ?? Math.max(1e-9, Math.abs(q.numericAnswer) * 0.001);
+    const ok = Math.abs(got - q.numericAnswer) <= tol;
+    return { verdict: ok ? "correct" : "incorrect", score: ok ? 100 : 0, feedback: ok ? "" : `Expected ${q.numericAnswer}` };
+  }
+  return null; // math, or text without a numeric key → AI grades
+}
+
+export interface LocalGrade {
+  results: QuizResult[]; // objective questions graded on-device
+  pendingIds: string[];  // questions still needing the AI grader (text/math)
+}
+
+/** Grade every objective question in a record locally; collect ids that still need the AI. */
+export function gradeObjectives(rec: QuizRecord): LocalGrade {
+  const results: QuizResult[] = [];
+  const pendingIds: string[] = [];
+  for (const q of rec.questions) {
+    const g = gradeOne(q, rec.answers[q.id]);
+    if (g) results.push({ id: q.id, ...g });
+    else pendingIds.push(q.id);
+  }
+  return { results, pendingIds };
+}
+
+/** Per-(concept, sub-skill) mastery = mean score across that group's graded questions.
+ *  Shared by the local finalizer and the AI grade tool so both compute it identically. */
+export function masteryUpdatesFor(rec: QuizRecord): { concept: string; sub?: string; mastery: number }[] {
+  const groups: Record<string, { concept: string; sub?: string; scores: number[] }> = {};
+  for (const q of rec.questions) {
+    const r = rec.results[q.id];
+    if (!q.concept || !r) continue;
+    const key = `${q.concept} ${q.sub ?? ""}`;
+    (groups[key] ??= { concept: q.concept, sub: q.sub, scores: [] }).scores.push(r.score);
+  }
+  return Object.values(groups).map((g) => ({
+    concept: g.concept,
+    sub: g.sub,
+    mastery: Math.round(g.scores.reduce((s, n) => s + n, 0) / g.scores.length),
+  }));
+}
+
+// ── Mistake bank ───────────────────────────────────────────────────────────────
+
+export interface MistakeEntry {
+  quizId: string;
+  questionId: string;
+  concept?: string;
+  sub?: string;
+  prompt: string;
+  myAnswer: string;
+  feedback: string;
+  verdict: Verdict;
+  at: number;
+}
+
+/** Missed (incorrect/partial) questions across a session's graded quizzes, newest first.
+ *  Feeds the AI's targeting (deepwork_read_material) and the "Re-quiz mistakes" action. */
+export function sessionMistakes(
+  state: Pick<QuizState, "quizzes" | "order">,
+  sessionId: string | null,
+  max = 20
+): MistakeEntry[] {
+  const out: MistakeEntry[] = [];
+  for (const rec of sessionQuizzes(state, sessionId)) {
+    if (rec.status !== "graded") continue;
+    for (const q of rec.questions) {
+      const r = rec.results[q.id];
+      if (!r || r.verdict === "correct") continue;
+      out.push({
+        quizId: rec.id,
+        questionId: q.id,
+        concept: q.concept,
+        sub: q.sub,
+        prompt: q.prompt.replace(/\s+/g, " ").slice(0, 200),
+        myAnswer: (formatAnswer(q, rec.answers[q.id]) || "(blank)").slice(0, 160),
+        feedback: r.feedback,
+        verdict: r.verdict,
+        at: rec.createdAt,
+      });
+      if (out.length >= max) return out;
+    }
+  }
+  return out;
 }
 
 /** Compact "question → my answer [verdict]" list for a study memory. */

@@ -35,22 +35,34 @@ interface LessonState {
   active: boolean;
   title: string;
   blocks: LessonBlock[];
+  /** How many blocks are revealed so far (paced one-step-at-a-time reveal). */
+  cursor: number;
+  /** When true, the board shows every block at once instead of stepping. */
+  revealAll: boolean;
   /** Start a lesson and a focus timer for it (minutes defaults to 25). */
   start: (title?: string, minutes?: number) => void;
   end: () => void;
   /** Replace or append board blocks (the AI drives this via study_present). */
   present: (blocks: LessonBlock[], mode: "replace" | "append") => void;
+  /** Reveal the next block. Returns false if already at the end (caller asks the AI
+   *  to continue the lesson). No-op in reveal-all mode. */
+  next: () => boolean;
+  /** Step back to the previous block (stays ≥ 1). */
+  back: () => void;
+  setRevealAll: (all: boolean) => void;
   /** Mark an inline question answered (the answer is also sent to the chat for grading). */
   answerQuestion: (id: string, answer: string) => void;
 }
 
-export const useLesson = create<LessonState>((set) => ({
+export const useLesson = create<LessonState>((set, get) => ({
   active: false,
   title: "",
   blocks: [],
+  cursor: 0,
+  revealAll: false,
 
   start(title, minutes) {
-    set({ active: true, title: title ?? "", blocks: [] });
+    set({ active: true, title: title ?? "", blocks: [], cursor: 0, revealAll: false });
     // Start a focus timer for the lesson — but don't clobber one already running.
     if (!useFocusStore.getState().session) {
       useFocusStore.getState().startSession(Math.max(1, Math.round(minutes ?? DEFAULT_LESSON_MIN)));
@@ -61,14 +73,43 @@ export const useLesson = create<LessonState>((set) => ({
   },
 
   end() {
-    set({ active: false, title: "", blocks: [] });
+    set({ active: false, title: "", blocks: [], cursor: 0, revealAll: false });
     // Stop (and credit) the timer only if this lesson started it.
     if (lessonOwnsTimer && useFocusStore.getState().session) useFocusStore.getState().endSession();
     lessonOwnsTimer = false;
   },
 
   present(blocks, mode) {
-    set((s) => ({ blocks: mode === "append" ? [...s.blocks, ...blocks] : blocks }));
+    set((s) => {
+      if (mode !== "append") {
+        // Fresh screen — reveal just the first step.
+        return { blocks, cursor: blocks.length ? 1 : 0 };
+      }
+      const next = [...s.blocks, ...blocks];
+      // If the user had caught up to the end (was waiting for more), auto-reveal the
+      // first appended block so "Next → continue" flows straight into the new step.
+      const caughtUp = s.cursor >= s.blocks.length && s.blocks.length > 0;
+      const cursor = caughtUp ? s.blocks.length + 1 : s.cursor || (next.length ? 1 : 0);
+      return { blocks: next, cursor };
+    });
+  },
+
+  next() {
+    const { cursor, blocks, revealAll } = get();
+    if (revealAll) return true;
+    if (cursor < blocks.length) {
+      set({ cursor: cursor + 1 });
+      return true;
+    }
+    return false; // at the end — caller requests more from the tutor
+  },
+
+  back() {
+    set((s) => ({ cursor: Math.max(1, s.cursor - 1) }));
+  },
+
+  setRevealAll(all) {
+    set((s) => ({ revealAll: all, cursor: all ? s.blocks.length : Math.max(1, Math.min(s.cursor, s.blocks.length)) }));
   },
 
   answerQuestion(id, answer) {

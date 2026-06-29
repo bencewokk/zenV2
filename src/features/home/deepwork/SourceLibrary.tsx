@@ -3,6 +3,7 @@ import type { Note, PdfDoc } from "@/shared/lib/types";
 import type { CalEvent } from "@/services/google/calendar";
 import type { MailThread } from "@/services/google/gmail";
 import type { HomeTarget } from "@/features/home/store";
+import { usePdfs } from "@/features/pdfs/store";
 
 type SourceType = "note" | "event" | "mail" | "pdf";
 const TYPE_GLYPH: Record<SourceType, string> = { note: "✎", event: "◷", mail: "✉", pdf: "📄" };
@@ -37,6 +38,13 @@ export function SourceLibrary({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const removePdf = usePdfs((s) => s.remove);
+
+  function handleDeletePdf(e: React.MouseEvent, r: SourceRow) {
+    e.stopPropagation();
+    if (!window.confirm(`Delete "${r.title}"? This permanently removes the PDF, its extracted text, and any highlights.`)) return;
+    void removePdf(r.target.id);
+  }
 
   const rows = useMemo<SourceRow[]>(() => {
     const has = (t: HomeTarget) => current.some((c) => c.type === t.type && c.id === t.id);
@@ -109,17 +117,31 @@ export function SourceLibrary({
             </div>
           ) : (
             filtered.map((r) => (
-              <button
+              <div
                 key={`${r.target.type}:${r.target.id}`}
-                className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left hover:bg-[var(--bg-elev)]"
-                onClick={() => onAdd(r.target)}
+                className="group flex w-full items-center gap-2 rounded-[10px] pr-2 hover:bg-[var(--bg-elev)]"
               >
-                <span className="shrink-0 text-sm text-[var(--text-dim)]">{TYPE_GLYPH[r.type]}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-[var(--text)]">{r.title}</span>
-                  {r.subtitle && <span className="block truncate text-xs text-[var(--text-dim)]">{r.subtitle}</span>}
-                </span>
-              </button>
+                <button
+                  className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left"
+                  onClick={() => onAdd(r.target)}
+                >
+                  <span className="shrink-0 text-sm text-[var(--text-dim)]">{TYPE_GLYPH[r.type]}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-[var(--text)]">{r.title}</span>
+                    {r.subtitle && <span className="block truncate text-xs text-[var(--text-dim)]">{r.subtitle}</span>}
+                  </span>
+                </button>
+                {r.type === "pdf" && (
+                  <button
+                    className="zen-pressable shrink-0 rounded-[8px] px-2 py-1 text-sm text-[var(--text-dim)] opacity-0 hover:bg-[rgba(246,104,94,0.15)] hover:text-[var(--danger,#f6685e)] group-hover:opacity-100"
+                    onClick={(e) => handleDeletePdf(e, r)}
+                    title={`Delete "${r.title}" permanently`}
+                    aria-label={`Delete ${r.title}`}
+                  >
+                    🗑
+                  </button>
+                )}
+              </div>
             ))
           )}
         </div>

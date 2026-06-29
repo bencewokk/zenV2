@@ -901,6 +901,34 @@ math-field:focus-within { border-color: var(--accent); }
 .zen-svg svg {
   max-width: 100%;
   height: auto;
+  /* Guarantee currentColor resolves to a visible color on the dark panel, so
+     diagrams using stroke/fill="currentColor" always show. */
+  color: var(--text);
+}
+/* Visibility safety net for model-drawn diagrams. SVG's defaults (fill:black,
+   stroke:none) are invisible on the dark board, and the model often omits paint.
+   These force a visible default ONLY where the author set no explicit paint
+   (the :not([...]) guards), so intentional colors are preserved. */
+.zen-svg svg text:not([fill]) { fill: currentColor; }
+.zen-svg svg :is(line, polyline):not([stroke]) { stroke: currentColor; }
+.zen-svg svg :is(line, polyline):not([stroke-width]) { stroke-width: 2; }
+/* A path/polygon with neither fill nor stroke is almost always a forgotten
+   stroked curve — render it as a theme-colored outline, not a black blob. */
+.zen-svg svg :is(path, polygon):not([fill]):not([stroke]) {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+/* Lesson diagrams render on a light "whiteboard" card so model-drawn SVGs (which
+   default to black fill / dark strokes) are always legible, like a textbook figure.
+   currentColor becomes dark ink, so the .zen-svg visibility net above stays valid. */
+.zen-lesson-diagram .zen-svg {
+  background: #f8fafc;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+.zen-lesson-diagram .zen-svg svg {
+  color: #1f2937;
 }
 
 /* Clickable inline citation chip in AI replies ([id:..] / [pdf:.. p3]). */

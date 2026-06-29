@@ -10,7 +10,7 @@ import {
 } from "@/features/home/deepwork/studyPlan";
 import { useStudyLog, dayKey } from "@/features/home/deepwork/studyLog";
 import { useLesson, type LessonBlock } from "@/features/home/deepwork/lessonStore";
-import { useQuiz, activeQuiz, quizQAList, sessionQuizzes, type Verdict, type QuizInputKind } from "@/features/home/deepwork/quizStore";
+import { useQuiz, activeQuiz, quizQAList, sessionQuizzes, masteryUpdatesFor, sessionMistakes, type Verdict, type QuizInputKind } from "@/features/home/deepwork/quizStore";
 import { usePdfs } from "@/features/pdfs/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { useWorkspace } from "@/shared/stores/workspace";
@@ -26,7 +26,7 @@ import {
 import { isSignedIn } from "@/services/google/auth";
 import { notify } from "@/shared/ui/notify";
 import { loadSettings } from "@/services/ai/settings";
-import { listEvents, createEvent, createEvents, updateEvent, deleteEvent, deleteEvents } from "@/services/google/calendar";
+import { listEvents, getEvent, createEvent, createEvents, updateEvent, deleteEvent, deleteEvents } from "@/services/google/calendar";
 import {
   listThreads, getThread, createDraft,
   sendEmail, replyInThread, modifyThread,
@@ -436,8 +436,10 @@ const TOOLS: ToolImpl[] = [
   // ---- Calendar ----
   tool(
     "list_events",
-    "List the user's upcoming Google Calendar events for the next N days.",
-    obj({ days: num("how many days ahead (default 7)") }),
+    "List the user's Google Calendar events. Defaults to the next 7 days; pass a larger `days` " +
+      "(e.g. 90, 365) to reach events further in the future. Each row includes a short description " +
+      "preview — call get_event with the id to read an event's FULL details (long bodies are previewed here).",
+    obj({ days: num("how many days ahead (default 7) — increase to find future events") }),
     async (a) => {
       const g = needGoogle();
       if (g) return g;
@@ -446,10 +448,41 @@ const TOOLS: ToolImpl[] = [
       const max = new Date();
       max.setDate(max.getDate() + days);
       const events = await listEvents(min.toISOString(), max.toISOString());
-      if (!events.length) return "No events.";
+      if (!events.length) return `No events in the next ${days} day(s).`;
       return events
-        .map((e) => `- ${e.summary} | ${e.allDay ? "all-day" : new Date(e.start).toLocaleString()} [id:${e.id}]`)
+        .map((e) => {
+          const when = e.allDay ? "all-day" : new Date(e.start).toLocaleString();
+          const loc = e.location ? ` @ ${e.location}` : "";
+          const desc = e.description ? ` — ${clipText(e.description.replace(/\s+/g, " "), 160)}` : "";
+          return `- ${e.summary} | ${when}${loc} [id:${e.id}]${desc}`;
+        })
         .join("\n");
+    }
+  ),
+  tool(
+    "get_event",
+    "Read ONE Google Calendar event's full details by id — title, start/end, location, and the " +
+      "COMPLETE description (not truncated). Use this when list_events shows an event whose body you " +
+      "need to read in full. Get the id from list_events.",
+    obj({ id: str("the event id") }, ["id"]),
+    async (a) => {
+      const g = needGoogle();
+      if (g) return g;
+      const id = String(a.id ?? "").trim();
+      if (!id) return "No event id provided.";
+      let e;
+      try {
+        e = await getEvent(id);
+      } catch {
+        return "Couldn't fetch that event — the id may be wrong or the event was deleted.";
+      }
+      const when = e.allDay
+        ? `${new Date(e.start).toLocaleDateString()} (all-day)`
+        : `${new Date(e.start).toLocaleString()} → ${new Date(e.end).toLocaleString()}`;
+      const lines = [`Event: ${e.summary}`, `When: ${when}`];
+      if (e.location) lines.push(`Where: ${e.location}`);
+      lines.push("", e.description ? clipText(e.description, 8000) : "(no description)");
+      return lines.join("\n");
     }
   ),
   tool(
@@ -984,7 +1017,7 @@ const TOOLS: ToolImpl[] = [
           );
         } else if (item.type === "event") {
           const e = home.events.find((ev) => ev.id === item.id);
-          if (e) sections.push(`EVENT — ${e.summary} (${e.start})${e.description ? `: ${clipText(e.description, 300)}` : ""}`);
+          if (e) sections.push(`EVENT — ${e.summary} (${e.start})${e.location ? ` @ ${e.location}` : ""}${e.description ? `:\n${clipText(e.description, 4000)}` : ""}`);
         } else if (item.type === "mail") {
           const t = home.threads.find((th) => th.id === item.id);
           if (t) sections.push(`EMAIL — ${t.subject}: ${clipText(t.snippet, 300)}`);
@@ -1000,6 +1033,16 @@ const TOOLS: ToolImpl[] = [
         let block = `PAST QUIZ REVIEWS (this session — target these weak spots):\n${summaries.join("\n")}`;
         block += `\n\nMost recent attempt detail:\n${clipText(quizQAList(reviewed[0]), 2000)}`;
         sections.push(block);
+      }
+
+      // Mistake bank — specific missed questions across this session's quizzes, so a
+      // new quiz can re-test exactly what the user keeps getting wrong.
+      const mistakes = sessionMistakes(useQuiz.getState(), useDeepWork.getState().activeId, 15);
+      if (mistakes.length) {
+        const lines = mistakes.map(
+          (m) => `- [${m.verdict}]${m.concept ? ` (${m.concept})` : ""} ${m.prompt} — my answer: ${m.myAnswer}${m.feedback ? ` · ${m.feedback}` : ""}`
+        );
+        sections.push(`MISTAKE BANK (questions missed before — prioritise re-testing these):\n${lines.join("\n")}`);
       }
 
       return sections.join("\n\n") || "No readable material on the canvas.";
@@ -1075,7 +1118,12 @@ const TOOLS: ToolImpl[] = [
       "'math' (the user types LaTeX working you then follow), 'order' (arrange steps — put the " +
       "shuffled steps in items), or 'match' (match pairs — left[] to right[]). Tag each question with " +
       "the `concept` it tests (match a backbone concept title) and a hidden `rubric` (expected answer " +
-      "/ grading guidance). Use $...$ for math in prompts/options. Mix types for breadth.",
+      "/ grading guidance). Use $...$ for math in prompts/options. Mix types for breadth.\n" +
+      "ANSWER KEYS (grade instantly on-device — ALWAYS provide for objective questions): for 'choice' set " +
+      "`correct` to the 0-based index of the right option; for 'match' set `matchKey` so matchKey[i] is the " +
+      "index in right[] that matches left[i]; for a 'text' question whose answer is a single number set " +
+      "`numericAnswer` (and optional `numericTolerance`). 'order' is graded against the items' given order. " +
+      "Questions with a key are graded locally with no AI round-trip; only key-less text/math come back to you.",
     obj({
       title: str("short quiz title, e.g. 'Derivatives — checkpoint'"),
       questions: {
@@ -1092,12 +1140,18 @@ const TOOLS: ToolImpl[] = [
           left: arr("match: left-column items"),
           right: arr("match: right-column items to match against"),
           rubric: str("hidden expected answer / grading guidance"),
+          correct: num("choice: 0-based index of the correct option in options (for instant grading)"),
+          matchKey: { type: "array", items: { type: "number" }, description: "match: for each left[i], the index in right[] that matches it (for instant grading)" },
+          numericAnswer: num("text: the expected numeric value when the answer is a single number (for instant grading)"),
+          numericTolerance: num("text: optional ± absolute tolerance for numericAnswer (default 0.1%)"),
         }, ["kind", "prompt"]),
       },
     }, ["questions"]),
     async (a) => {
       const kinds: QuizInputKind[] = ["choice", "text", "math", "order", "match"];
       const strArr = (v: unknown) => (Array.isArray(v) ? v.map(String) : undefined);
+      const numArr = (v: unknown) => (Array.isArray(v) ? v.map((x) => Math.round(Number(x)) || 0) : undefined);
+      const numOrU = (v: unknown) => (v != null && Number.isFinite(Number(v)) ? Number(v) : undefined);
       const questions = (Array.isArray(a.questions) ? a.questions : [])
         .map((q) => (q && typeof q === "object" ? (q as Record<string, unknown>) : null))
         .filter(Boolean)
@@ -1112,6 +1166,10 @@ const TOOLS: ToolImpl[] = [
           left: strArr(q!.left),
           right: strArr(q!.right),
           rubric: q!.rubric ? String(q!.rubric) : undefined,
+          correct: numOrU(q!.correct),
+          matchKey: numArr(q!.matchKey),
+          numericAnswer: numOrU(q!.numericAnswer),
+          numericTolerance: numOrU(q!.numericTolerance),
         }))
         .filter((q) => q.prompt.trim());
       if (!questions.length) return "No questions provided.";
@@ -1159,24 +1217,12 @@ const TOOLS: ToolImpl[] = [
         }))
         .filter((r) => r.id);
       if (!results.length) return "No results to apply.";
+      // Merge the AI's grades with any objective questions already graded on-device,
+      // then recompute overall + mastery over the FULL set so local grades count too.
+      useQuiz.getState().applyResults(results);
       const quiz = activeQuiz();
-      const overall = Math.round(results.reduce((sum, r) => sum + r.score, 0) / results.length);
-      useQuiz.getState().applyResults(results, overall);
-      // Recompute mastery as the mean score per (concept, sub-skill) — a question
-      // tagged with a `sub` credits just that facet, keeping the concept's other
-      // sub-skills intact; an untagged question updates the concept flatly (legacy).
-      const groups: Record<string, { concept: string; sub?: string; scores: number[] }> = {};
-      for (const r of results) {
-        const q = quiz?.questions.find((qq) => qq.id === r.id);
-        if (!q?.concept) continue;
-        const key = `${q.concept} ${q.sub ?? ""}`;
-        (groups[key] ??= { concept: q.concept, sub: q.sub, scores: [] }).scores.push(r.score);
-      }
-      const updates = Object.values(groups).map((g) => ({
-        concept: g.concept,
-        sub: g.sub,
-        mastery: Math.round(g.scores.reduce((s, n) => s + n, 0) / g.scores.length),
-      }));
+      const overall = quiz?.overall ?? Math.round(results.reduce((sum, r) => sum + r.score, 0) / results.length);
+      const updates = quiz ? masteryUpdatesFor(quiz) : [];
       if (updates.length) useDeepWork.getState().setMastery(updates, overall);
 
       // Store the review on the quiz record — it lives inside this study session
@@ -1546,19 +1592,27 @@ const TOOLS: ToolImpl[] = [
       const minutes = a.minutes != null ? Math.max(1, Math.min(180, Math.round(Number(a.minutes)))) : undefined;
       useLesson.getState().start(a.topic ? String(a.topic) : "", minutes);
       return (
-        "Study mode started (focus timer running). Present the lesson with study_present (text / svg / " +
-        "snippet / pdf / question blocks). Keep it mostly read-only; add a 'question' block occasionally and " +
-        "grade the answer into the concept's sub-skill. Call deepwork_end_lesson when finished."
+        "Study mode started (focus timer running). Present the WHOLE lesson now with study_present as many " +
+        "SMALL blocks (text / svg / snippet / pdf / question) — the app reveals them one at a time as the user " +
+        "taps Next, so don't drip them out across turns. Interleave a few 'question' blocks; grade each answer " +
+        "into the concept's sub-skill as it arrives. On the '[Lesson]' continue signal, recap and call deepwork_end_lesson."
       );
     }
   ),
   tool(
     "study_present",
     "Put content on the lesson board (study mode). Blocks render top-to-bottom. Kinds: 'text' (markdown, " +
-      "$...$ math), 'svg' (a diagram — write labels as plain Unicode in <text>, NEVER $...$ inside an SVG), " +
+      "$...$ math), 'svg' (a diagram — set a viewBox; draw with VISIBLE theme strokes (stroke=\"currentColor\" " +
+      "or #6ea8fe) and an explicit stroke-width (default stroke is none and fill is black, both invisible on the " +
+      "dark board); write labels as plain Unicode <text fill=\"currentColor\">, NEVER $...$ inside an SVG), " +
       "'snippet' (a passage to highlight, with an optional note), 'pdf' (reference a PDF page by id+page), " +
       "'question' (an inline question — tag it with the concept + sub-skill it tests). mode 'replace' shows " +
-      "a fresh screen, 'append' adds below. Favour read-only blocks; add a 'question' only occasionally.",
+      "a fresh screen, 'append' adds below. PACED LESSON: the user sees ONE block at a time and presses Next " +
+      "to advance, so make each block SMALL and self-contained — one idea/step per block (a short explanation, " +
+      "a single diagram, one snippet, or one question), not a long wall of text. Present the COMPLETE lesson " +
+      "up front as many small blocks (use a few append calls in the same turn if it's long); the app paces the " +
+      "reveal, so do NOT drip blocks out across turns. Interleave 'question' blocks to check understanding. On " +
+      "a '[Lesson]' continue message the lesson is finished — append a short recap block and end the lesson.",
     obj({
       mode: str("replace | append (default replace)"),
       blocks: {
@@ -1704,7 +1758,7 @@ export const CONFIRM_TOOLS = new Set(TOOLS.filter((t) => t.confirm).map((t) => t
  */
 export const READ_TOOLS = new Set([
   "search_notes", "read_note", "get_tree", "recall", "list_memories",
-  "list_events", "find_free_slots", "search_mail", "read_mail",
+  "list_events", "get_event", "find_free_slots", "search_mail", "read_mail",
   "list_tags", "list_facets", // added in phase 3
   "list_pdfs", "read_pdf", "search_pdf", "find_in_pdf", "pdf_outline",
   "deepwork_read_material", "deepwork_weak_concepts", "deepwork_plan_status",
@@ -1763,7 +1817,7 @@ const CATEGORY_SETS: Array<[string, Set<string>]> = [
     "search_notes", "read_note", "create_note", "update_note", "open_note", "get_tree",
     "append_note", "set_metadata", "move_note", "delete_note", "insert_math", "insert_table", "link_notes",
   ])],
-  ["Calendar", new Set(["list_events", "create_event", "update_event", "delete_event", "find_free_slots"])],
+  ["Calendar", new Set(["list_events", "get_event", "create_event", "update_event", "delete_event", "find_free_slots"])],
   ["Gmail", new Set([
     "search_mail", "read_mail", "draft_email", "send_email", "reply_in_thread",
     "archive_thread", "mark_read", "add_email_label", "remove_email_label",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { ChatPanel } from "@/features/ai/ChatPanel";
 import { useAI } from "@/features/ai/store";
@@ -18,6 +18,9 @@ export function LessonMode() {
   const active = useLesson((s) => s.active);
   const title = useLesson((s) => s.title);
   const blocks = useLesson((s) => s.blocks);
+  const cursor = useLesson((s) => s.cursor);
+  const revealAll = useLesson((s) => s.revealAll);
+  const streaming = useAI((s) => s.streaming);
   const { sessionActive, sessionRemaining } = useFocusSession();
 
   // The chat is the lesson's only input — make sure it's open while teaching.
@@ -25,7 +28,69 @@ export function LessonMode() {
     if (active && !useAI.getState().open) useAI.getState().toggle();
   }, [active]);
 
+  // Keep the newest revealed step in view as the lesson advances.
+  const currentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!revealAll) currentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [cursor, revealAll]);
+
+  // Keyboard navigation: ←/→/Space step through; number keys answer the current
+  // choice question. Skipped while typing in the chat or an answer field.
+  useEffect(() => {
+    if (!active) return;
+    function onKey(e: KeyboardEvent) {
+      if (isEditingTarget()) return;
+      const { blocks: bs, cursor: cur, revealAll: all } = useLesson.getState();
+      if (all || !bs.length) return;
+      const block = bs[cur - 1];
+      if (block?.kind === "question" && block.qkind === "choice" && !block.answered && block.options?.length) {
+        const n = parseInt(e.key, 10);
+        if (n >= 1 && n <= block.options.length) {
+          e.preventDefault();
+          submitLessonAnswer(block, block.options[n - 1]);
+          return;
+        }
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        useLesson.getState().back();
+      } else if (e.key === "ArrowRight" || e.key === " ") {
+        if (block?.kind === "question" && !block.answered) return; // gated on the check
+        e.preventDefault();
+        if (!useLesson.getState().next() && !useAI.getState().streaming) {
+          void useAI.getState().send("[Lesson] I've finished the steps shown — present the NEXT part now via study_present (mode: append) with a few more small blocks. If the topic is fully covered, append a short recap text block and call deepwork_end_lesson.");
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active]);
+
   if (!active) return null;
+
+  const visible = revealAll ? blocks : blocks.slice(0, cursor);
+  const current = blocks[cursor - 1];
+  // Don't let the user skip past an unanswered check question.
+  const blockedByQuestion = !revealAll && current?.kind === "question" && !current.answered;
+  const atEnd = cursor >= blocks.length;
+
+  function handleNext() {
+    if (useLesson.getState().next()) return; // revealed the next authored step
+    // Reached the end of what's authored — ask the tutor to continue the lesson.
+    if (!streaming) useAI.getState().send("[Lesson] I've finished the steps shown — present the NEXT part now via study_present (mode: append) with a few more small blocks. If the topic is fully covered, append a short recap text block and call deepwork_end_lesson.");
+  }
+
+  function askAbout(kind: "more" | "simpler" | "example" | "stuck") {
+    if (streaming || !current) return;
+    const gist = blockGist(current).replace(/\s+/g, " ").slice(0, 300);
+    const lead = {
+      more: "Go deeper on this part of the lesson",
+      simpler: "Explain this part of the lesson more simply",
+      example: "Give me a concrete worked example for this part of the lesson",
+      stuck: "I'm stuck on this part of the lesson — help me understand it",
+    }[kind];
+    useAI.getState().send(`${lead}:\n"${gist}"`);
+  }
 
   return (
     <div className="zen-anim-fade fixed inset-0 z-[60] flex bg-[var(--bg)]">
@@ -54,13 +119,78 @@ export function LessonMode() {
               Your tutor is preparing the lesson… it will pull up explanations, diagrams, and questions here.
             </div>
           ) : (
-            <div className="space-y-4">
-              {blocks.map((b) => (
-                <BlockView key={b.id} block={b} />
+            <div className="space-y-4 pb-28">
+              {visible.map((b, i) => (
+                <div
+                  key={b.id}
+                  ref={!revealAll && i === visible.length - 1 ? currentRef : undefined}
+                  className={!revealAll && i < visible.length - 1 ? "opacity-45 transition-opacity" : ""}
+                >
+                  <BlockView block={b} />
+                </div>
               ))}
             </div>
           )}
         </div>
+
+        {/* Paced step controls — one block at a time; ask about the current step or move on. */}
+        {blocks.length > 0 && !revealAll && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-6 pb-4 sm:px-10">
+            <div className="zen-anim-rise pointer-events-auto flex w-full max-w-[760px] flex-col gap-2 rounded-[14px] border border-[var(--border)] bg-[rgba(18,19,24,0.94)] p-2.5 backdrop-blur">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-[10px] uppercase tracking-[0.18em] text-[var(--text-dim)]">Ask</span>
+                {([["more", "Explain more"], ["simpler", "Simpler"], ["example", "Example"], ["stuck", "I'm stuck"]] as const).map(
+                  ([k, label]) => (
+                    <button
+                      key={k}
+                      className="zen-pressable rounded-full border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--text)] disabled:opacity-40"
+                      onClick={() => askAbout(k)}
+                      disabled={streaming}
+                    >
+                      {label}
+                    </button>
+                  )
+                )}
+                <button
+                  className="zen-pressable ml-auto rounded-full px-2 py-1 text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]"
+                  onClick={() => useLesson.getState().setRevealAll(true)}
+                  title="Show the whole lesson at once"
+                >
+                  Show all
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="zen-pressable rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-30"
+                  onClick={() => useLesson.getState().back()}
+                  disabled={cursor <= 1}
+                >
+                  ← Back
+                </button>
+                <span className="text-xs tabular-nums text-[var(--text-dim)]" title="Shortcuts: ← / → or Space to step · 1–9 to answer a choice question">
+                  {Math.min(cursor, blocks.length)} / {blocks.length}
+                </span>
+                <button
+                  className="zen-pressable ml-auto rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-4 py-1.5 text-sm text-[var(--text)] disabled:opacity-40"
+                  onClick={handleNext}
+                  disabled={blockedByQuestion || (atEnd && streaming)}
+                  title={blockedByQuestion ? "Answer the question to continue" : atEnd ? "Ask the tutor for the next step" : "Next step"}
+                >
+                  {atEnd ? (streaming ? "…" : "Continue →") : "Next →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {blocks.length > 0 && revealAll && (
+          <button
+            className="zen-pressable absolute bottom-4 right-6 rounded-full border border-[var(--border)] bg-[rgba(18,19,24,0.9)] px-3 py-1.5 text-xs text-[var(--text-dim)] backdrop-blur hover:text-[var(--text)] sm:right-10"
+            onClick={() => useLesson.getState().setRevealAll(false)}
+          >
+            Step through
+          </button>
+        )}
       </div>
 
       {/* Chat docked on the right (the single ChatPanel instance while a lesson runs). */}
@@ -69,13 +199,45 @@ export function LessonMode() {
   );
 }
 
+/** Submit an answer to an inline lesson question: mark it answered + send to the tutor
+ *  for grading. Shared by the question block's UI and the keyboard handler. */
+function submitLessonAnswer(block: Extract<LessonBlock, { kind: "question" }>, answer: string) {
+  const a = answer.trim();
+  if (!a || block.answered) return;
+  useLesson.getState().answerQuestion(block.id, a);
+  const tag = [block.concept && `concept: ${block.concept}`, block.sub && `sub-skill: ${block.sub}`].filter(Boolean).join(" · ");
+  void useAI.getState().send(`[Lesson answer]${tag ? ` (${tag})` : ""}\nQ: ${block.prompt}\nA: ${a}`);
+}
+
+/** True when a typing surface (chat box, answer field) holds focus — so navigation
+ *  shortcuts don't hijack the user's keystrokes. */
+function isEditingTarget(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "BUTTON" || el.isContentEditable;
+}
+
+/** A short text gist of a block, used to give the tutor context for a quick-ask. */
+function blockGist(b: LessonBlock): string {
+  switch (b.kind) {
+    case "text": return b.markdown;
+    case "svg": return b.caption ?? "this diagram";
+    case "snippet": return b.note ? `${b.text} (${b.note})` : b.text;
+    case "pdf": return b.caption ?? "this PDF page";
+    case "question": return b.prompt;
+    default: return "this part";
+  }
+}
+
 function BlockView({ block }: { block: LessonBlock }) {
   switch (block.kind) {
     case "text":
       return <div className="zen-md text-sm text-[var(--text)]" dangerouslySetInnerHTML={{ __html: renderMarkdown(block.markdown) }} />;
     case "svg":
+      // Render diagrams on a light "whiteboard" so the model's default black
+      // strokes/text are visible (the dark board hid them). See .zen-lesson-diagram.
       return (
-        <figure className="rounded-[12px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-3">
+        <figure className="zen-lesson-diagram rounded-[12px] border border-[var(--border)] p-2">
           {/* Reuse renderMarkdown's ```svg sanitizer by fencing the raw SVG. */}
           <div className="zen-md flex justify-center" dangerouslySetInnerHTML={{ __html: renderMarkdown("```svg\n" + block.svg + "\n```") }} />
           {block.caption && <figcaption className="mt-2 text-center text-xs text-[var(--text-dim)]">{block.caption}</figcaption>}
@@ -130,11 +292,7 @@ function QuestionBlock({ block }: { block: Extract<LessonBlock, { kind: "questio
   const streaming = useAI((s) => s.streaming);
 
   function submit(answer: string) {
-    const a = answer.trim();
-    if (!a || block.answered) return;
-    useLesson.getState().answerQuestion(block.id, a);
-    const tag = [block.concept && `concept: ${block.concept}`, block.sub && `sub-skill: ${block.sub}`].filter(Boolean).join(" · ");
-    useAI.getState().send(`[Lesson answer]${tag ? ` (${tag})` : ""}\nQ: ${block.prompt}\nA: ${a}`);
+    submitLessonAnswer(block, answer);
   }
 
   return (

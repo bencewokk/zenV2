@@ -214,11 +214,14 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "short answer, written step-by-step, error analysis), 'math' (LaTeX working you then follow), 'order' " +
     "(arrange steps — provide `items` in the CORRECT order; the app shuffles them for the user), " +
     "'match' (match pairs). Tag each question with the `concept` it tests and a hidden " +
-    "`rubric`. The user answers in a dedicated quiz surface; when they submit you'll receive their answers — " +
-    "grade every question and call deepwork_grade_quiz with {id, verdict, score, feedback}, plus `strengths` " +
-    "and `mistakes` summaries (stored with the quiz inside this study session, and read back via " +
-    "deepwork_read_material so you can target weak spots in later quizzes). " +
-    "Concept mastery updates automatically from the scores, so don't also call deepwork_set_mastery for a quiz. " +
+    "`rubric`. ALWAYS include answer keys for objective questions so the app grades them instantly with no " +
+    "round-trip: `correct` (choice option index), `matchKey` (match), `numericAnswer` (numeric text). " +
+    "WEIGHT questions toward the user's weakest/over-due concepts and their mistake bank (both surfaced by " +
+    "deepwork_read_material). The user answers in a dedicated quiz surface; on submit the app grades the " +
+    "objective questions locally and sends back ONLY the open-ended text/math ones — grade just those and call " +
+    "deepwork_grade_quiz with {id, verdict, score, feedback} for them, plus `strengths` and `mistakes` " +
+    "summaries (stored with the quiz inside this study session, read back via deepwork_read_material). " +
+    "Concept mastery (and the spaced-repetition review schedule) updates automatically from the scores, so don't also call deepwork_set_mastery for a quiz. " +
     "Ask the user if they're ready to be evaluated before starting a quiz. " +
     "LESSON MODE (guided study mode): when the user wants to be TAUGHT or walked through material (not just a " +
     "quick answer), call deepwork_start_lesson to enter a fullscreen study mode — everything else hides and a " +
@@ -226,9 +229,14 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "then teach by composing the board with study_present: 'text' explanations, 'svg' diagrams (plain Unicode " +
     "labels — NO $...$ inside SVG), 'snippet' highlighted passages with a note, and 'pdf' page references. Keep " +
     "it MOSTLY READ-ONLY; every so often add ONE 'question' block tagged with the concept + sub-skill it tests. " +
-    "When the user answers (it arrives as a '[Lesson answer]' message), grade it, give brief feedback in chat, " +
-    "credit the sub-skill via deepwork_set_mastery (concept + sub), then study_present the next part. Use " +
-    "deepwork_end_lesson when the lesson is done. " +
+    "PACING: present the WHOLE lesson UP FRONT as a sequence of many SMALL blocks (one idea each), in your " +
+    "study_present call — you may use a few append calls in the SAME turn for a long lesson. The app reveals " +
+    "them one at a time as the user taps Next, so do NOT drip the lesson out across turns and do NOT wait " +
+    "between blocks. Include the inline 'question' blocks inside that same sequence. " +
+    "When the user answers (it arrives as a '[Lesson answer]' message), just grade it, give brief feedback in " +
+    "chat, and credit the sub-skill via deepwork_set_mastery (concept + sub) — you do NOT need to present more " +
+    "blocks (they're already on the board). When the user reaches the end you'll get a '[Lesson]' continue " +
+    "message: the lesson is complete, so append a one-paragraph recap text block and call deepwork_end_lesson. " +
     "PLANNING STUDY (adaptive weekly plan): when the user opens a study session, wants to plan/schedule " +
     "studying, or prepare for an exam by a date, build an ADAPTIVE STUDY PLAN — a schedule of study " +
     "sessions across the coming days. FIRST call deepwork_plan_status (it returns the deadline & days " +
