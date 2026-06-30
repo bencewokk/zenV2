@@ -13,6 +13,7 @@ import { WikiLink } from "@/features/notes/extensions/wikiLink";
 import { MathBlock, MathInline } from "@/features/math/math-nodes";
 import { TrailingNode } from "@/features/notes/extensions/trailingNode";
 import { Geometry } from "@/features/geometry/geometry-node";
+import { Svg } from "@/features/svg/svg-node";
 import { MocBlock, MOC_ALLOW_REMOVE, countMocBlocks } from "@/features/notes/extensions/mocBlock";
 import { TableToolbar } from "@/features/notes/TableToolbar";
 import { AIBubbleMenu } from "@/features/ai/AIBubbleMenu";
@@ -39,6 +40,7 @@ export function Editor({ noteId }: { noteId: string }) {
         MathBlock,
         MathInline,
         Geometry,
+        Svg,
         MocBlock,
         TrailingNode,
       ],

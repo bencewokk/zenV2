@@ -30,6 +30,8 @@ const COMMANDS: Cmd[] = [
     run: (e, r) => e.chain().focus().deleteRange(r).insertMathInline("").run() },
   { title: "Geometry", hint: "Interactive construction", keywords: "geometry graph plot geogebra point line circle jsxgraph",
     run: (e, r) => e.chain().focus().deleteRange(r).insertGeometry("").run() },
+  { title: "SVG", hint: "Inline vector graphic", keywords: "svg image vector diagram draw graphic",
+    run: (e, r) => e.chain().focus().deleteRange(r).insertSvg("").run() },
   { title: "Table", hint: "3×3 grid", keywords: "table grid",
     run: (e, r) => e.chain().focus().deleteRange(r)
       .insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },

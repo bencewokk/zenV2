@@ -85,6 +85,10 @@ interface Persisted {
 }
 
 interface QuizState extends Persisted {
+  /** Transient (not persisted): the answer field the user last focused, so the math
+   *  scratch workspace knows which question to insert into. */
+  focusedId: string | null;
+  setFocused: (id: string | null) => void;
   start: (title: string, questions: Omit<QuizQuestion, "id">[], sessionId: string | null) => void;
   open: (id: string) => void;
   closeView: () => void;
@@ -147,6 +151,11 @@ export const useQuiz = create<QuizState>((set, get) => {
 
   return {
     ...read(),
+    focusedId: null,
+
+    setFocused(id) {
+      set({ focusedId: id });
+    },
 
     start(title, questions, sessionId) {
       const id = crypto.randomUUID();

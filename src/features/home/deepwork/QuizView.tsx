@@ -4,6 +4,7 @@ import { useAI } from "@/features/ai/store";
 import { useHome } from "@/features/home/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { MathField } from "@/features/math/MathField";
+import { MathWorkspace } from "@/features/math/MathWorkspace";
 import { readinessColor, useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import {
   useQuiz,
@@ -34,6 +35,22 @@ export function QuizView() {
   const setAnswer = useQuiz((s) => s.setAnswer);
   const beginGrading = useQuiz((s) => s.beginGrading);
   const close = useQuiz((s) => s.closeView);
+  const [showWS, setShowWS] = useState(false);
+
+  // Insert a LaTeX expression from the math workspace into the last-focused answer.
+  function insertLatex(latex: string) {
+    const st = useQuiz.getState();
+    const rec = st.activeId ? st.quizzes[st.activeId] : null;
+    if (!rec || rec.status !== "active") return;
+    const id = st.focusedId ?? rec.questions[0]?.id;
+    const q = rec.questions.find((x) => x.id === id);
+    if (!q) return;
+    if (q.kind === "math") st.setAnswer(q.id, { value: latex });
+    else if (q.kind === "text") {
+      const cur = rec.answers[q.id]?.value ?? "";
+      st.setAnswer(q.id, { value: cur ? `${cur} $${latex}$` : `$${latex}$` });
+    }
+  }
 
   // Ctrl/Cmd+Enter submits the quiz for grading (when still answering).
   useEffect(() => {
@@ -81,7 +98,8 @@ export function QuizView() {
 
   return (
     <div className="zen-anim-fade fixed inset-0 z-[70] flex justify-center bg-[rgba(8,9,12,0.86)] backdrop-blur-sm">
-      <div className="flex h-full w-full max-w-[760px] flex-col px-4">
+      <div className="flex h-full w-full max-w-[1100px]">
+      <div className="mx-auto flex h-full w-full min-w-0 max-w-[760px] flex-1 flex-col px-4">
         {/* Header (pinned) */}
         <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] py-3">
           <div className="min-w-0 flex-1">
@@ -93,6 +111,13 @@ export function QuizView() {
           {graded && (
             <span className="text-2xl font-bold tabular-nums" style={{ color: readinessColor(overall) }}>{overall}%</span>
           )}
+          <button
+            className={`zen-pressable rounded px-2 py-1 text-xs ${showWS ? "text-[var(--accent)]" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}
+            onClick={() => setShowWS((v) => !v)}
+            title="Math scratch workspace"
+          >
+            ∑ Math
+          </button>
           <button
             className="zen-pressable rounded px-2 py-1 text-sm text-[var(--text-dim)] hover:text-[var(--text)]"
             onClick={close}
@@ -157,6 +182,8 @@ export function QuizView() {
             )}
           </div>
         </div>
+      </div>
+      {showWS && <MathWorkspace onInsert={insertLatex} onClose={() => setShowWS(false)} />}
       </div>
     </div>
   );
@@ -249,7 +276,10 @@ function QuestionInput({
   if (q.kind === "math") {
     // Same MathLive field the notes editor uses — type math visually, not raw LaTeX.
     return (
-      <div className="rounded-[8px] border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5">
+      <div
+        className="rounded-[8px] border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5"
+        onFocusCapture={() => useQuiz.getState().setFocused(q.id)}
+      >
         <MathField
           value={answer?.value ?? ""}
           readOnly={readOnly}
@@ -296,6 +326,7 @@ function QuestionInput({
     <textarea
       value={answer?.value ?? ""}
       disabled={readOnly}
+      onFocus={() => useQuiz.getState().setFocused(q.id)}
       onChange={(e) => onAnswer({ value: e.target.value })}
       placeholder="Your answer… (use $...$ for math)"
       rows={2}

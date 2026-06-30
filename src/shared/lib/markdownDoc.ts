@@ -115,6 +115,11 @@ function blockTokens(tokens: Token[]): JSONContent[] {
         break;
       }
       case "code":
+        // ```svg fences become rendered SVG nodes, mirroring the read-only renderer.
+        if ((t.lang ?? "").toLowerCase() === "svg") {
+          out.push({ type: "svg", attrs: { svg: t.text ?? "" } });
+          break;
+        }
         out.push({ type: "codeBlock", attrs: t.lang ? { language: t.lang } : {}, content: t.text ? [textNode(t.text, [])] : [] });
         break;
       case "hr":

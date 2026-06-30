@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { ChatPanel } from "@/features/ai/ChatPanel";
+import { MathWorkspace } from "@/features/math/MathWorkspace";
 import { useAI } from "@/features/ai/store";
 import { usePdfs } from "@/features/pdfs/store";
 import { useLesson, type LessonBlock } from "@/features/home/deepwork/lessonStore";
@@ -22,6 +23,7 @@ export function LessonMode() {
   const revealAll = useLesson((s) => s.revealAll);
   const streaming = useAI((s) => s.streaming);
   const { sessionActive, sessionRemaining } = useFocusSession();
+  const [showWS, setShowWS] = useState(false);
 
   // The chat is the lesson's only input — make sure it's open while teaching.
   useEffect(() => {
@@ -106,7 +108,14 @@ export function LessonMode() {
               </span>
             )}
             <button
-              className={`zen-pressable rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)] ${sessionActive ? "" : "ml-auto"}`}
+              className={`zen-pressable rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs hover:text-[var(--text)] ${showWS ? "text-[var(--accent)]" : "text-[var(--text-dim)]"} ${sessionActive ? "" : "ml-auto"}`}
+              onClick={() => setShowWS((v) => !v)}
+              title="Math scratch workspace"
+            >
+              ∑ Math
+            </button>
+            <button
+              className="zen-pressable rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
               onClick={() => useLesson.getState().end()}
               title="End lesson"
             >
@@ -192,6 +201,14 @@ export function LessonMode() {
           </button>
         )}
       </div>
+
+      {/* Math scratch workspace, docked between the board and the chat. */}
+      {showWS && (
+        <MathWorkspace
+          onInsert={(latex) => useLesson.getState().requestInsert(latex)}
+          onClose={() => setShowWS(false)}
+        />
+      )}
 
       {/* Chat docked on the right (the single ChatPanel instance while a lesson runs). */}
       <ChatPanel />
@@ -290,6 +307,15 @@ function PdfBlock({ pdfId, page, caption }: { pdfId: string; page: number; capti
 function QuestionBlock({ block }: { block: Extract<LessonBlock, { kind: "question" }> }) {
   const [value, setValue] = useState("");
   const streaming = useAI((s) => s.streaming);
+  const insertReq = useLesson((s) => s.insertReq);
+  const appliedNonce = useRef(0);
+
+  // Apply a math-workspace insert aimed at this question's answer field (once per nonce).
+  useEffect(() => {
+    if (!insertReq || insertReq.id !== block.id || insertReq.nonce === appliedNonce.current) return;
+    appliedNonce.current = insertReq.nonce;
+    setValue((v) => (v.trim() ? `${v} $${insertReq.text}$` : `$${insertReq.text}$`));
+  }, [insertReq, block.id]);
 
   function submit(answer: string) {
     submitLessonAnswer(block, answer);
@@ -317,6 +343,7 @@ function QuestionBlock({ block }: { block: Extract<LessonBlock, { kind: "questio
         <div className="flex items-end gap-2">
           <textarea
             value={value}
+            onFocus={() => useLesson.getState().setFocusedQ(block.id)}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

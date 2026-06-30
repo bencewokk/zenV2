@@ -1,6 +1,7 @@
 import { marked } from "marked";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { sanitizeSvg } from "@/shared/lib/sanitizeSvg";
 
 /**
  * Render markdown to HTML with LaTeX math support, for read-only display (AI
@@ -9,7 +10,8 @@ import "katex/dist/katex.min.css";
  * markdown parsing can't mangle backslashes/underscores inside formulae.
  */
 
-function renderMath(tex: string, display: boolean): string {
+/** Render a single LaTeX expression to HTML via KaTeX (shared with the math workspace). */
+export function renderLatex(tex: string, display: boolean): string {
   try {
     return katex.renderToString(tex.trim(), { displayMode: display, throwOnError: false });
   } catch {
@@ -17,21 +19,7 @@ function renderMath(tex: string, display: boolean): string {
   }
 }
 
-/**
- * Sanitize model-authored SVG before rendering it inline: keep only the <svg>…</svg>,
- * and strip scripts, event handlers, javascript: URLs, and foreignObject (which can
- * smuggle arbitrary HTML). Diagrams are draw-only — no interactivity needed.
- */
-function sanitizeSvg(svg: string): string {
-  const m = svg.match(/<svg[\s\S]*<\/svg>/i);
-  let out = m ? m[0] : "";
-  out = out.replace(/<script[\s\S]*?<\/script>/gi, "");
-  out = out.replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "");
-  out = out.replace(/\son\w+\s*=\s*"[^"]*"/gi, "");
-  out = out.replace(/\son\w+\s*=\s*'[^']*'/gi, "");
-  out = out.replace(/javascript:/gi, "");
-  return out;
-}
+const renderMath = renderLatex;
 
 export function renderMarkdown(src: string): string {
   const slots: string[] = [];

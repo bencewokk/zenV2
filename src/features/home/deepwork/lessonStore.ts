@@ -52,6 +52,14 @@ interface LessonState {
   setRevealAll: (all: boolean) => void;
   /** Mark an inline question answered (the answer is also sent to the chat for grading). */
   answerQuestion: (id: string, answer: string) => void;
+  // ── Math scratch workspace plumbing (transient) ──
+  /** The question block whose answer field was last focused (insert target). */
+  focusedQid: string | null;
+  setFocusedQ: (id: string | null) => void;
+  /** A one-shot request to splice LaTeX into the focused question's answer field.
+   *  `nonce` makes each request distinct so the receiving block applies it once. */
+  insertReq: { id: string; text: string; nonce: number } | null;
+  requestInsert: (text: string) => void;
 }
 
 export const useLesson = create<LessonState>((set, get) => ({
@@ -60,6 +68,19 @@ export const useLesson = create<LessonState>((set, get) => ({
   blocks: [],
   cursor: 0,
   revealAll: false,
+  focusedQid: null,
+  insertReq: null,
+
+  setFocusedQ(id) {
+    set({ focusedQid: id });
+  },
+
+  requestInsert(text) {
+    const id = get().focusedQid;
+    if (!id) return;
+    const nonce = (get().insertReq?.nonce ?? 0) + 1;
+    set({ insertReq: { id, text, nonce } });
+  },
 
   start(title, minutes) {
     set({ active: true, title: title ?? "", blocks: [], cursor: 0, revealAll: false });
@@ -73,7 +94,7 @@ export const useLesson = create<LessonState>((set, get) => ({
   },
 
   end() {
-    set({ active: false, title: "", blocks: [], cursor: 0, revealAll: false });
+    set({ active: false, title: "", blocks: [], cursor: 0, revealAll: false, focusedQid: null, insertReq: null });
     // Stop (and credit) the timer only if this lesson started it.
     if (lessonOwnsTimer && useFocusStore.getState().session) useFocusStore.getState().endSession();
     lessonOwnsTimer = false;
