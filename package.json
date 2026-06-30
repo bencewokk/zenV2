@@ -1,7 +1,7 @@
 {
   "name": "zenv2",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
+    "version:sync": "node scripts/sync-version.mjs",
+    "pretauri:dev": "node scripts/sync-version.mjs",
     "tauri:dev": "tauri dev",
+    "pretauri:build": "node scripts/sync-version.mjs",
     "tauri:build": "tauri build"
   },
   "dependencies": {

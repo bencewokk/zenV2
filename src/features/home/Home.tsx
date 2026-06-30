@@ -17,6 +17,7 @@ import {
   fmtPlanDay, fmtStartMin, verdictColor, KIND_META,
 } from "@/features/home/deepwork/studyPlan";
 import { useQuote } from "@/features/home/quote";
+import { WhatsNew } from "@/features/home/ReleaseNotes";
 import { useNotes } from "@/features/notes/store";
 import { docToText } from "@/shared/lib/docText";
 import { notify } from "@/shared/ui/notify";
@@ -521,6 +522,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
               </div>
 
               {!deepWork && <div className="space-y-6 px-1 pt-1">
+                <WhatsNew />
                 <LabelManager />
                 <div>
                   <div className="mb-3 flex items-center justify-between gap-3">

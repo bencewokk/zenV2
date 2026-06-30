@@ -1,0 +1,4 @@
+#!/bin/sh
+# Auto-generate a release note + version tag for each commit.
+# Enable once with:  git config core.hooksPath .githooks
+node scripts/gen-release-note.mjs || true
