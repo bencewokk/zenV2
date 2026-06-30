@@ -40,12 +40,26 @@ export async function userIdFromRequest(authHeader: string | undefined): Promise
 }
 
 async function userIdFromAccessToken(accessToken: string, aud: string[]): Promise<string> {
-  const res = await fetch(
-    `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`,
-  );
-  if (!res.ok) throw new Error("access token introspection failed");
-  const info = (await res.json()) as { sub?: string; aud?: string };
-  if (!info.sub) throw new Error("token has no subject");
-  if (!info.aud || !aud.includes(info.aud)) throw new Error("token audience mismatch");
-  return info.sub;
+  // tokeninfo's response shape for access tokens (vs id tokens) isn't consistently
+  // documented across Google's endpoint generations — the audience can show up as
+  // `aud`, `azp`, or `issued_to`, and `sub` isn't always present. Check audience via
+  // tokeninfo (accepting any of those field names), then resolve `sub` from the
+  // standard OIDC userinfo endpoint, which reliably returns it given the `openid`
+  // scope this app requests.
+  const [infoRes, userRes] = await Promise.all([
+    fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`),
+    fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }),
+  ]);
+  if (!infoRes.ok) throw new Error("access token introspection failed");
+  if (!userRes.ok) throw new Error("access token userinfo lookup failed");
+
+  const info = (await infoRes.json()) as Record<string, string | undefined>;
+  const clientId = info.aud ?? info.azp ?? info.issued_to;
+  if (!clientId || !aud.includes(clientId)) throw new Error("token audience mismatch");
+
+  const user = (await userRes.json()) as { sub?: string };
+  if (!user.sub) throw new Error("token has no subject");
+  return user.sub;
 }
