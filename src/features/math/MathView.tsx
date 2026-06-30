@@ -214,6 +214,11 @@ function DerivationRail({ lines, steps }: { lines: string[]; steps: DerivationSt
               {incoming?.verdict === "wrong" && (
                 <div className="zen-deriv-flag">{incoming.note ?? "This line doesn't follow from the one above."}</div>
               )}
+              {incoming?.verdict === "unknown" && incoming.note && (
+                <div className="zen-deriv-flag-muted" title="The checker couldn't symbolically confirm or refute this step.">
+                  {incoming.note}
+                </div>
+              )}
             </div>
           </div>
         );

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { loadMemories, deleteMemory } from "@/services/memory";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { checkForUpdates, type UpdateCheckResult } from "@/services/update";
+import { useReleaseNotes } from "@/features/home/ReleaseNotes";
 import { notify } from "@/shared/ui/notify";
 import { SettingsSection } from "../ui";
 
@@ -18,6 +19,7 @@ const CONV_KEY = "zen.ai.conversations.v1";
 /** Bulk actions over locally-stored config and AI state. */
 export function Data() {
   const resetPolicies = useToolPolicy((s) => s.resetAll);
+  const openReleaseNotes = useReleaseNotes((s) => s.openModal);
   const fileRef = useRef<HTMLInputElement>(null);
   const [updateState, setUpdateState] = useState<UpdateCheckResult | { status: "checking" } | { status: "idle" }>({ status: "idle" });
 
@@ -130,11 +132,12 @@ export function Data() {
         </div>
       </SettingsSection>
 
-      <SettingsSection title="Updates" hint="Check GitHub Releases for a newer desktop build.">
+      <SettingsSection title="Updates" hint="Check GitHub Releases for a newer desktop build, or see what changed.">
         <div className="flex items-center gap-2">
           <button className="zen-btn-ghost" onClick={() => void handleCheckUpdates()} disabled={updateState.status === "checking"}>
             Check for updates
           </button>
+          <button className="zen-btn-ghost" onClick={openReleaseNotes}>Release notes</button>
           {updateFeedback && <span className={`text-xs ${updateFeedbackClass}`}>{updateFeedback}</span>}
         </div>
       </SettingsSection>

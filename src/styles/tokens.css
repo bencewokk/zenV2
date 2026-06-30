@@ -1241,6 +1241,12 @@ math-field:focus-within { border-color: var(--accent); }
   font-size: 11px;
   color: #f6685e;
 }
+.zen-deriv-flag-muted {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
 
 /* Clickable inline citation chip in AI replies ([id:..] / [pdf:.. p3]). */
 .zen-cite {

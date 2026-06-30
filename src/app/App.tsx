@@ -21,6 +21,7 @@ import { CalendarPanel } from "@/features/google/CalendarPanel";
 import { MailPanel } from "@/features/google/MailPanel";
 import { SettingsView } from "@/features/settings/SettingsView";
 import { Onboarding } from "@/features/onboarding/Onboarding";
+import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { useOnboarding } from "@/features/onboarding/store";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
 import { checkForUpdates } from "@/services/update";
@@ -371,6 +372,7 @@ export function App() {
       <QuizView />
       <LessonMode />
       <Onboarding />
+      <ReleaseNotesModal />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>
   );

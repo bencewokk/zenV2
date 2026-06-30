@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
+import { create } from "zustand";
 import { RELEASE_NOTES, LATEST_RELEASE, CURRENT_VERSION } from "@/data/releaseNotes";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 
@@ -12,45 +13,55 @@ function readSeen(): string | null {
   }
 }
 
+interface ReleaseNotesState {
+  open: boolean;
+  /** True until the user acknowledges the current build's notes. */
+  isNew: boolean;
+  openModal: () => void;
+  /** Close and mark the current version seen, so it won't auto-pop again. */
+  close: () => void;
+}
+
 /**
- * Tracks which version the user last acknowledged. When the running build is
- * newer than what they've seen, the modal auto-opens once; dismissing it marks
- * the current version seen so it won't pop again until the next release.
+ * Shared release-notes UI state. Lives in a store (not local state) so the
+ * dashboard card, the Settings button, and the app-level modal all drive the
+ * same panel.
  */
-function useReleaseNotes() {
-  const [open, setOpen] = useState(false);
-  // Unseen on first read → the card shows a "new" dot and we auto-open below.
-  const [isNew, setIsNew] = useState(() => readSeen() !== CURRENT_VERSION);
-
-  useEffect(() => {
-    if (isNew) setOpen(true);
-    // Only on mount — auto-popup is a one-time-per-version event.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const markSeen = useCallback(() => {
+export const useReleaseNotes = create<ReleaseNotesState>((set) => ({
+  open: false,
+  isNew: readSeen() !== CURRENT_VERSION,
+  openModal: () => set({ open: true }),
+  close: () => {
     try {
       localStorage.setItem(SEEN_KEY, CURRENT_VERSION);
     } catch {
       /* ignore */
     }
-    setIsNew(false);
+    set({ open: false, isNew: false });
+  },
+}));
+
+/**
+ * The release-notes modal. Render exactly once near the app root — it shows
+ * itself based on the shared store and overlays whatever surface is active.
+ * Auto-opens once when the running build is newer than what the user has seen.
+ */
+export function ReleaseNotesModal() {
+  const open = useReleaseNotes((s) => s.open);
+  const close = useReleaseNotes((s) => s.close);
+
+  useEffect(() => {
+    if (useReleaseNotes.getState().isNew) useReleaseNotes.getState().openModal();
+    // One-time-per-version auto-popup, on app start only.
   }, []);
 
-  const close = useCallback(() => {
-    setOpen(false);
-    markSeen();
-  }, [markSeen]);
+  if (!open || !LATEST_RELEASE) return null;
 
-  return { open, isNew, openModal: () => setOpen(true), close };
-}
-
-function Modal({ onClose }: { onClose: () => void }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.55)" }}
-      onClick={onClose}
+      onClick={close}
     >
       <div
         className="zen-anim-rise-scale relative flex max-h-[72vh] w-full max-w-md flex-col overflow-hidden rounded-[14px] border border-[var(--border)] bg-[var(--bg-elev)] shadow-2xl"
@@ -59,7 +70,7 @@ function Modal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
           <span className="text-sm font-semibold text-[var(--text)]">What's new</span>
           <button
-            onClick={onClose}
+            onClick={close}
             className="zen-pressable flex h-6 w-6 items-center justify-center rounded text-[var(--text-dim)] hover:text-[var(--text)]"
             aria-label="Close"
           >
@@ -87,44 +98,41 @@ function Modal({ onClose }: { onClose: () => void }) {
 }
 
 /**
- * Dashboard "What's new" card + the release-notes modal (auto-opens once after
- * an update). Drop a single <WhatsNew /> anywhere on the Home surface.
+ * Dashboard "What's new" card. Opens the shared modal; shows a pulsing dot
+ * while the latest release is unacknowledged.
  */
 export function WhatsNew() {
-  const { open, isNew, openModal, close } = useReleaseNotes();
+  const isNew = useReleaseNotes((s) => s.isNew);
+  const openModal = useReleaseNotes((s) => s.openModal);
 
   if (!LATEST_RELEASE) return null;
 
   return (
-    <>
-      <button
-        onClick={openModal}
-        className="zen-pressable group flex w-full items-center gap-3 rounded-[12px] border border-[var(--border)] bg-[var(--bg-elev)] px-4 py-3 text-left"
-      >
-        <span className="relative flex h-2 w-2 shrink-0">
-          {isNew && (
-            <span
-              className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
-              style={{ background: "var(--accent)" }}
-            />
-          )}
+    <button
+      onClick={openModal}
+      className="zen-pressable group flex w-full items-center gap-3 rounded-[12px] border border-[var(--border)] bg-[var(--bg-elev)] px-4 py-3 text-left"
+    >
+      <span className="relative flex h-2 w-2 shrink-0">
+        {isNew && (
           <span
-            className="relative inline-flex h-2 w-2 rounded-full"
-            style={{ background: isNew ? "var(--accent)" : "var(--text-dim)" }}
+            className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
+            style={{ background: "var(--accent)" }}
           />
+        )}
+        <span
+          className="relative inline-flex h-2 w-2 rounded-full"
+          style={{ background: isNew ? "var(--accent)" : "var(--text-dim)" }}
+        />
+      </span>
+      <span className="flex min-w-0 flex-col">
+        <span className="text-sm font-medium text-[var(--text)]">
+          {isNew ? "What's new" : "Release notes"}
         </span>
-        <span className="flex min-w-0 flex-col">
-          <span className="text-sm font-medium text-[var(--text)]">
-            {isNew ? "What's new" : "Release notes"}
-          </span>
-          <span className="truncate text-xs text-[var(--text-dim)]">
-            v{LATEST_RELEASE.version} — {LATEST_RELEASE.summary}
-          </span>
+        <span className="truncate text-xs text-[var(--text-dim)]">
+          v{LATEST_RELEASE.version} — {LATEST_RELEASE.summary}
         </span>
-        <span className="ml-auto text-xs text-[var(--text-dim)] group-hover:text-[var(--text)]">→</span>
-      </button>
-
-      {open && <Modal onClose={close} />}
-    </>
+      </span>
+      <span className="ml-auto text-xs text-[var(--text-dim)] group-hover:text-[var(--text)]">→</span>
+    </button>
   );
 }
