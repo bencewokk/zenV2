@@ -27,6 +27,11 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags so scripts/version.mjs can resolve the release
+          # version from `git describe --tags` (default checkout is shallow and
+          # tagless, which would silently fall back to package.json's version).
+          fetch-depth: 0
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'ubuntu-22.04'
