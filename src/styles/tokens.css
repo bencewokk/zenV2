@@ -713,9 +713,13 @@ body {
 /* Math nodes (MathLive) */
 .zen-math-block {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   margin: 0.6em 0;
 }
+/* The editable field stays centered; the checker cards below span the column. */
+.zen-math-block > math-field { align-self: center; }
 .zen-math-block.is-selected,
 .zen-math-inline.is-selected {
   outline: 2px solid var(--accent-dim);
@@ -1110,22 +1114,51 @@ math-field:focus-within { border-color: var(--accent); }
   text-decoration: underline wavy rgba(246, 104, 94, 0.9);
   text-underline-offset: 4px;
 }
+/* Compact verdict pill shown beside the field when the panel is closed. */
 .zen-check-badge {
-  margin-left: 8px;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
   font-size: 11px;
+  font-weight: 500;
   color: var(--text-dim);
   user-select: none;
+}
+.zen-check-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
 }
 .zen-check-ok + .zen-check-badge,
 .zen-math-block.zen-check-ok .zen-check-badge {
   color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.08);
 }
+.zen-math-block.zen-check-bad .zen-check-badge {
+  color: #f6685e;
+  border-color: rgba(246, 104, 94, 0.35);
+  background: rgba(246, 104, 94, 0.08);
+}
+
+/* Expected-answer authoring card. */
 .zen-check-panel {
-  margin-top: 8px;
-  padding: 8px 10px;
+  width: 100%;
+  max-width: 30em;
+  align-self: center;
+  padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 6px 18px -12px rgba(0, 0, 0, 0.6);
   font-size: 12px;
 }
 .zen-math-inline {
@@ -1135,15 +1168,16 @@ math-field:focus-within { border-color: var(--accent); }
   position: absolute;
   left: 0;
   top: 100%;
+  margin-top: 6px;
   z-index: 5;
-  min-width: 220px;
+  min-width: 240px;
   background: var(--bg-elev);
 }
 .zen-check-panel-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 .zen-check-panel-label {
   font-size: 10px;
@@ -1153,99 +1187,100 @@ math-field:focus-within { border-color: var(--accent); }
 }
 .zen-check-clear {
   margin-left: auto;
+  padding: 1px 8px;
   font-size: 11px;
   color: var(--text-dim);
   background: none;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
   cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .zen-check-clear:hover {
   color: var(--text);
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.04);
 }
+/* Verdict — a soft pill so the state reads at a glance. */
 .zen-check-verdict {
-  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+}
+.zen-check-panel .zen-check-verdict {
+  margin-top: 8px;
 }
 .zen-check-verdict.zen-check-ok {
   color: #4ade80;
+  background: rgba(74, 222, 128, 0.1);
+}
+.zen-check-verdict.zen-check-ok::before {
+  content: "✓";
+  font-weight: 700;
 }
 .zen-check-verdict.zen-check-bad {
   color: #f6685e;
+  background: rgba(246, 104, 94, 0.1);
+}
+.zen-check-verdict.zen-check-bad::before {
+  content: "✕";
+  font-weight: 700;
 }
 .zen-check-note {
   color: var(--text-dim);
+  font-weight: 400;
 }
 
-/* ── Derivation rail — line-by-line step checking ── */
-.zen-deriv {
-  margin-top: 10px;
-  padding: 8px 10px;
+/* ── Math checker — one compact bar under the field ── */
+.zen-check-bar {
+  width: 100%;
+  max-width: 30em;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 12px;
 }
-.zen-deriv-row {
+/* Step status — only shown when a step breaks, or "each step follows" while editing. */
+.zen-check-step {
   display: flex;
-  align-items: stretch;
-  gap: 12px;
-  min-height: 2.2em;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
 }
-.zen-deriv-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 12px;
-  flex-shrink: 0;
+.zen-check-step-tag {
+  font-weight: 600;
+  color: inherit;
 }
-.zen-deriv-dot {
-  width: 9px;
-  height: 9px;
-  margin-top: 0.55em;
-  border-radius: 50%;
-  background: var(--text-dim);
-  flex-shrink: 0;
-}
-.zen-deriv-seg {
-  width: 2px;
-  flex: 1;
-  margin: 2px 0;
-  background: var(--text-dim);
-  border-radius: 2px;
-}
-.zen-deriv-ok {
-  background: #4ade80;
-}
-.zen-deriv-bad {
-  background: #f6685e;
-}
-.zen-deriv-neutral {
-  background: var(--border);
-}
-.zen-deriv-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-.zen-deriv-line {
-  overflow-x: auto;
-}
-.zen-deriv-line .katex-display {
-  margin: 0;
-  text-align: left;
-}
-.zen-deriv-flag {
-  margin-top: 2px;
-  font-size: 11px;
+.zen-check-step.is-bad {
   color: #f6685e;
 }
-.zen-deriv-flag-muted {
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--text-dim);
-  font-style: italic;
+.zen-check-step.is-ok {
+  color: #4ade80;
+}
+/* Expected-answer row: label · field/answer · verdict, all on one line. */
+.zen-check-expected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.zen-check-expected .zen-check-clear {
+  margin-left: 0;
+}
+.zen-check-target {
+  color: var(--text);
 }
 
 /* Clickable inline citation chip in AI replies ([id:..] / [pdf:.. p3]). */

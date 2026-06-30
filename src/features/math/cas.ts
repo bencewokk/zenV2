@@ -96,6 +96,8 @@ export function checkAnswer(student: string, target: string): CheckResult {
           : { verdict: "wrong", note: "Different solutions from the line above." };
       // Sound fallback: scaling/rearranging both sides (incl. ×−1) preserves solutions.
       if (equivBoxed(sd, td) || constantRatio(sd, td) != null) return { verdict: "equivalent" };
+      // Substitution step: this line is the one above with given values plugged in.
+      if (isInstantiation(t, s)) return { verdict: "equivalent", note: "Applied the formula with the given values." };
       // Can't confirm or refute — stay neutral rather than flag a false error.
       return { verdict: "unknown", note: "Couldn't auto-verify this step." };
     }
@@ -103,6 +105,7 @@ export function checkAnswer(student: string, target: string): CheckResult {
 
     // Plain expressions.
     if (equivBoxed(se, te)) return { verdict: "equivalent" };
+    if (isInstantiation(t, s)) return { verdict: "equivalent", note: "Applied the formula with the given values." };
     // Light classification — only claims we can actually verify.
     if (equivBoxed(se, ce.box(["Negate", te])))
       return { verdict: "wrong", note: "Sign error — this is the negation of the expected answer." };
@@ -113,6 +116,60 @@ export function checkAnswer(student: string, target: string): CheckResult {
   } catch {
     return { verdict: "unknown" };
   }
+}
+
+/**
+ * Is `specificLatex` the result of substituting values into `generalLatex`?
+ * i.e. applying a formula with given numbers (a tangent plane, a quadratic
+ * formula, …). This is *instantiation*, not algebraic equivalence — the two
+ * lines aren't equal as relations, so the equivalence checks above can't confirm
+ * it; here we match the parse trees node-for-node instead.
+ *
+ * The trees must align exactly, except where the general side has a symbol (a
+ * plain one like `k`, or a subscripted one like `f_x` / `x_0`): there the
+ * specific side may carry any subtree, as long as each symbol maps consistently.
+ * Parsed non-canonically so authored structure/order is preserved on both sides.
+ */
+function isInstantiation(generalLatex: string, specificLatex: string): boolean {
+  try {
+    const ce = engine();
+    const map = new Map<string, BoxedExpression>();
+    if (!alignSubst(ce.parse(generalLatex, { canonical: false }), ce.parse(specificLatex, { canonical: false }), map)) {
+      return false;
+    }
+    // Require at least one symbol that genuinely changed — otherwise the lines
+    // are identical and this isn't a substitution at all.
+    for (const [key, val] of map) if (val.latex !== key) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** A substitutable name: a plain symbol, or a subscripted one (`f_x`, `z_0`). */
+function paramKey(e: BoxedExpression): string | null {
+  if (e.symbol) return e.symbol;
+  if (e.operator === "Subscript") return e.latex;
+  return null;
+}
+
+/** Walk `general`/`specific` in lockstep, recording symbol → subtree bindings. */
+function alignSubst(general: BoxedExpression, specific: BoxedExpression, map: Map<string, BoxedExpression>): boolean {
+  const key = paramKey(general);
+  if (key) {
+    const prev = map.get(key);
+    if (prev) return prev.isSame(specific); // same symbol must map to the same value
+    map.set(key, specific);
+    return true;
+  }
+  const go = general.ops;
+  const so = specific.ops;
+  if (go && so) {
+    if (general.operator !== specific.operator || go.length !== so.length) return false;
+    return go.every((g, i) => alignSubst(g, so[i], map));
+  }
+  if (go || so) return false; // one compound, the other atomic
+  return general.isSame(specific); // both leaves (numbers) — must match exactly
 }
 
 /** If `expr` is an equation (a = b), return its difference (a − b); else null. */

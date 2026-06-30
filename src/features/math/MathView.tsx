@@ -5,7 +5,7 @@ import "mathlive";
 import "@/features/math/setup";
 import { MathField } from "@/features/math/MathField";
 import { useMathCheck } from "@/features/math/checkStore";
-import { checkAnswer, checkDerivation, type DerivationStep, type Verdict } from "@/features/math/cas";
+import { checkAnswer, checkDerivation, type Verdict } from "@/features/math/cas";
 import { renderLatex } from "@/shared/lib/renderMarkdown";
 
 const VERDICT_LABEL: Record<Verdict, string> = {
@@ -40,6 +40,12 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
         ? "zen-check-bad"
         : "";
   const showPanel = checkOn && (selected || editingTarget);
+  const showVerdict = !!result && result.verdict !== "unknown";
+  const setTarget = (latex: string) => updateAttributes({ target: latex });
+  const clearTarget = () => {
+    updateAttributes({ target: "" });
+    setEditingTarget(false);
+  };
 
   // Derivation rail — for a multi-line block equation, check each line follows from
   // the one above. Independent of `target` (that checks the final answer).
@@ -47,7 +53,28 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
     () => (checkOn && !inline ? checkDerivation(node.attrs.latex ?? "") : null),
     [checkOn, inline, node.attrs.latex]
   );
-  const showRail = !!derivation && derivation.lines.length >= 2;
+  // Compact status instead of a full mirror: surface only the first step that
+  // breaks (or can't be confirmed); otherwise just "each step follows".
+  const derivIssue = useMemo(() => {
+    if (!derivation || derivation.lines.length < 2) return null;
+    for (let i = 1; i < derivation.lines.length; i++) {
+      if (derivation.steps[i]?.verdict === "wrong")
+        return { kind: "bad" as const, line: i + 1, note: derivation.steps[i].note ?? "doesn’t follow from the line above." };
+    }
+    for (let i = 1; i < derivation.lines.length; i++) {
+      const s = derivation.steps[i];
+      if (s?.verdict === "unknown" && s.note)
+        return { kind: "unknown" as const, line: i + 1, note: s.note };
+    }
+    return { kind: "ok" as const };
+  }, [derivation]);
+
+  // The expected-answer row shows while editing or once there's a verdict; the
+  // whole bar appears for that, or to flag a broken step.
+  const showExpected = showPanel || showVerdict;
+  // Only a genuinely broken step forces the bar open — "couldn't verify" stays
+  // silent so a correct-but-unprovable line doesn't look like a problem.
+  const showBar = !inline && checkOn && (showExpected || derivIssue?.kind === "bad");
 
   useEffect(() => {
     const mf = ref.current;
@@ -137,92 +164,62 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
         style: inline ? { display: "inline-block" } : {},
       })}
 
-      {/* Derivation rail — line-by-line "does this step follow?" for multi-line working. */}
-      {showRail && <DerivationRail lines={derivation!.lines} steps={derivation!.steps} />}
-
-      {/* Checker badge — compact verdict shown whenever the checker is on and the block
-          has a target (and the editor panel isn't open). */}
-      {checkOn && result && !showPanel && result.verdict !== "unknown" && (
+      {/* Inline math: a small verdict pill, expanding to a popover when selected. */}
+      {inline && checkOn && result && !showPanel && result.verdict !== "unknown" && (
         <span className="zen-check-badge" contentEditable={false}>
           {VERDICT_LABEL[result.verdict]}
         </span>
       )}
-
-      {/* Author panel — set/clear the expected answer and read the verdict + note. */}
-      {showPanel && (
+      {inline && showPanel && (
         <div className="zen-check-panel" contentEditable={false} onMouseDown={(e) => e.stopPropagation()}>
           <div className="zen-check-panel-row">
             <span className="zen-check-panel-label">Expected answer</span>
             {target && (
-              <button
-                type="button"
-                className="zen-check-clear"
-                onClick={() => {
-                  updateAttributes({ target: "" });
-                  setEditingTarget(false);
-                }}
-              >
-                clear
-              </button>
+              <button type="button" className="zen-check-clear" onClick={clearTarget}>clear</button>
             )}
           </div>
-          <MathField
-            value={target}
-            onChange={(latex) => updateAttributes({ target: latex })}
-            ariaLabel="Expected answer"
-          />
-          {result && result.verdict !== "unknown" && (
+          <MathField value={target} onChange={setTarget} ariaLabel="Expected answer" />
+          {showVerdict && (
             <div className={`zen-check-verdict ${verdictClass}`}>
-              {VERDICT_LABEL[result.verdict]}
-              {result.note && <span className="zen-check-note"> — {result.note}</span>}
+              {VERDICT_LABEL[result!.verdict]}
+              {result!.note && <span className="zen-check-note"> — {result!.note}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Block math: one compact bar — step status + expected answer + verdict. */}
+      {showBar && (
+        <div className="zen-check-bar" contentEditable={false} onMouseDown={(e) => e.stopPropagation()}>
+          {derivIssue?.kind === "bad" && (
+            <div className="zen-check-step is-bad">
+              <span className="zen-check-step-tag">Line {derivIssue.line}</span> {derivIssue.note}
+            </div>
+          )}
+          {derivIssue?.kind === "ok" && showPanel && (
+            <div className="zen-check-step is-ok">Each step follows</div>
+          )}
+          {showExpected && (
+            <div className="zen-check-expected">
+              <span className="zen-check-panel-label">Expected</span>
+              {showPanel ? (
+                <MathField value={target} onChange={setTarget} ariaLabel="Expected answer" />
+              ) : target ? (
+                <span className="zen-check-target" dangerouslySetInnerHTML={{ __html: renderLatex(target, false) }} />
+              ) : null}
+              {showPanel && target && (
+                <button type="button" className="zen-check-clear" onClick={clearTarget}>clear</button>
+              )}
+              {showVerdict && (
+                <span className={`zen-check-verdict ${verdictClass}`}>
+                  {VERDICT_LABEL[result!.verdict]}
+                  {result!.note && <span className="zen-check-note"> — {result!.note}</span>}
+                </span>
+              )}
             </div>
           )}
         </div>
       )}
     </NodeViewWrapper>
-  );
-}
-
-/** Maps a step verdict to its rail-segment colour class. */
-function segClass(step: DerivationStep | undefined): string {
-  if (!step) return "";
-  if (step.verdict === "correct" || step.verdict === "equivalent") return "zen-deriv-ok";
-  if (step.verdict === "wrong") return "zen-deriv-bad";
-  return "zen-deriv-neutral";
-}
-
-/**
- * Renders the working as a stack of KaTeX-rendered lines with a vertical rail to the
- * left: each connector between two lines is green when the lower line follows from the
- * one above, red when the step breaks (with a short reason). A read-only mirror of the
- * editable field above, shown only while the Math Checker is on.
- */
-function DerivationRail({ lines, steps }: { lines: string[]; steps: DerivationStep[] }) {
-  return (
-    <div className="zen-deriv" contentEditable={false}>
-      {lines.map((ln, i) => {
-        const incoming = i > 0 ? steps[i] : undefined; // step INTO this line
-        const outgoing = i < lines.length - 1 ? steps[i + 1] : undefined; // step OUT of this line
-        return (
-          <div key={i} className="zen-deriv-row">
-            <div className="zen-deriv-rail">
-              <span className={`zen-deriv-dot ${segClass(incoming) || segClass(outgoing)}`} />
-              {i < lines.length - 1 && <span className={`zen-deriv-seg ${segClass(outgoing)}`} />}
-            </div>
-            <div className="zen-deriv-body">
-              <div className="zen-deriv-line" dangerouslySetInnerHTML={{ __html: renderLatex(ln, true) }} />
-              {incoming?.verdict === "wrong" && (
-                <div className="zen-deriv-flag">{incoming.note ?? "This line doesn't follow from the one above."}</div>
-              )}
-              {incoming?.verdict === "unknown" && incoming.note && (
-                <div className="zen-deriv-flag-muted" title="The checker couldn't symbolically confirm or refute this step.">
-                  {incoming.note}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
   );
 }
