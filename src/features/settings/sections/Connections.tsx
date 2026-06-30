@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { loadSettings, saveSettings } from "@/services/ai/settings";
-import { loadGoogleSettings, saveGoogleSettings } from "@/services/google/settings";
+import { loadGoogleSettings, saveGoogleSettings, isUsingBundledCredentials } from "@/services/google/settings";
 import { deepseek } from "@/services/ai/deepseek";
 import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/services/google/auth";
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
@@ -21,6 +21,7 @@ export function Connections() {
   const [showSecret, setShowSecret] = useState(false);
   const [testing, setTesting] = useState(false);
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
+  const usingBundled = isUsingBundledCredentials({ clientId, clientSecret });
   const [sync, setSync] = useState(() => loadSyncSettings());
   const [syncing, setSyncing] = useState(false);
   const syncStatus = useStatus((s) => s.sync);
@@ -69,7 +70,7 @@ export function Connections() {
     if (enabled) {
       if (!signedIn) notify.error("Connect Google first to sync.");
       else if (!sync.baseUrl.trim()) notify.error("Set the Sync API URL first.");
-      else void syncOnce();
+      else syncOnce().catch((e) => notify.error((e as Error).message || "Sync failed"));
     } else {
       clearSyncState();
       notify.success("Sync turned off");
@@ -171,6 +172,13 @@ export function Connections() {
             </div>
           </Field>
         )}
+        {usingBundled && isConfigured() && (
+          <p className="text-xs text-[var(--text-dim)]">
+            Using <span className="text-[var(--text)]">Zen's built-in Google connection</span> — you
+            haven't set your own Client ID{IS_TAURI ? " + secret" : ""} above. Fine for personal use;
+            while unverified, Google caps shared clients at 100 users and shows a warning screen.
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <span
             className="inline-block h-2 w-2 rounded-full"
@@ -178,6 +186,7 @@ export function Connections() {
           />
           <span className="text-xs text-[var(--text-dim)]">
             {signedIn ? "Connected" : isConfigured() ? "Not connected" : "No Client ID set"}
+            {usingBundled && isConfigured() ? " · built-in client" : ""}
           </span>
           <div className="ml-auto flex gap-2">
             <button className="zen-btn-ghost" onClick={saveGoogle}>Save</button>

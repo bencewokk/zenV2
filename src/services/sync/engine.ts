@@ -38,7 +38,7 @@ function canSync(): boolean {
 }
 
 /** Pull then push one adapter, advancing its cursor. Returns false on failure. */
-async function syncAdapter(a: SyncAdapter): Promise<boolean> {
+async function syncAdapter(a: SyncAdapter, onError: (e: unknown) => void): Promise<boolean> {
   try {
     // Pull (drain pages) so inbound changes land before we push ours.
     let cursor = getCursor(a.collection);
@@ -59,31 +59,57 @@ async function syncAdapter(a: SyncAdapter): Promise<boolean> {
     return true;
   } catch (e) {
     console.warn(`[sync] ${a.collection} failed`, e);
+    onError(e);
     return false;
   }
 }
 
-/** Run a full sync pass across all adapters; drives the status badge. */
+/**
+ * Run a full sync pass across all adapters; drives the status badge. Throws with
+ * a user-facing message on failure or when sync can't run yet, so callers (e.g.
+ * the Settings "Sync now" button) can show an accurate success/error toast
+ * instead of always reporting success.
+ */
 export async function syncOnce(): Promise<void> {
-  if (running || !canSync()) return;
+  if (running) throw new Error("A sync is already in progress.");
+  if (!canSync()) {
+    throw new Error(
+      !loadSyncSettings().baseUrl.trim()
+        ? "Set the Sync API URL first."
+        : !isSignedIn()
+          ? "Connect Google first to sync."
+          : "Sync is turned off.",
+    );
+  }
   running = true;
   useStatus.getState().set({ sync: "connecting" });
   let ok = true;
+  let firstError: unknown = null;
   try {
     for (const a of adapters) {
-      if (!(await syncAdapter(a))) ok = false;
+      if (!(await syncAdapter(a, (e) => (firstError ??= e)))) ok = false;
     }
   } finally {
     running = false;
     useStatus.getState().set({ sync: ok ? "on" : "error" });
   }
+  if (!ok) {
+    const reason = firstError instanceof Error ? firstError.message : String(firstError ?? "");
+    throw new Error(reason ? `Sync failed: ${reason}` : "Sync failed.");
+  }
+}
+
+/** Fire-and-forget sync for internal triggers (poll, dirty-debounce, auth change) —
+ *  errors are already reflected in the status badge, so just keep them out of the console. */
+function syncOnceQuiet(): void {
+  void syncOnce().catch(() => {});
 }
 
 function schedulePush(): void {
   if (pushTimer !== null) window.clearTimeout(pushTimer);
   pushTimer = window.setTimeout(() => {
     pushTimer = null;
-    void syncOnce();
+    syncOnceQuiet();
   }, PUSH_DEBOUNCE_MS);
 }
 
@@ -94,13 +120,13 @@ export function startSync(): void {
 
   unsubDirty = onDirty(schedulePush);
   unsubAuth = onAuthChange(() => {
-    if (canSync()) void syncOnce();
+    if (canSync()) syncOnceQuiet();
     else useStatus.getState().set({ sync: "off" });
   });
 
-  pollTimer = window.setInterval(() => void syncOnce(), POLL_MS);
+  pollTimer = window.setInterval(syncOnceQuiet, POLL_MS);
 
-  if (canSync()) void syncOnce();
+  if (canSync()) syncOnceQuiet();
   else useStatus.getState().set({ sync: "off" });
 }
 

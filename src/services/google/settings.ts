@@ -7,6 +7,8 @@
 // user supplies their own in Settings → Connections. The client id is public, not a secret.
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
 
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 export interface GoogleSettings {
   clientId: string;
   /** Desktop (Tauri) build only: OAuth client secret for the code flow.
@@ -33,6 +35,18 @@ export function loadGoogleSettings(): GoogleSettings {
 
 export function saveGoogleSettings(s: GoogleSettings): void {
   localStorage.setItem(KEY, JSON.stringify(s));
+}
+
+/**
+ * Whether sign-in is currently using Zen's bundled Google client rather than one
+ * the user supplied. Desktop: Rust only uses a saved custom client when BOTH a
+ * client id and secret are present (see `valid()`/`load_credentials` in auth.rs) —
+ * otherwise it falls through env/file to the build-time bundled default. Browser:
+ * bundled whenever the client id still matches the build-time default.
+ */
+export function isUsingBundledCredentials(s: GoogleSettings): boolean {
+  if (IS_TAURI) return !s.clientId.trim() || !s.clientSecret.trim();
+  return s.clientId.trim() === GOOGLE_CLIENT_ID;
 }
 
 // Scopes requested. Read + write so the AI-tooling phase can act on them later.

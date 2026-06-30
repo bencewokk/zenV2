@@ -189,7 +189,13 @@ export function App() {
 
       {/* Zen mode (and study/lesson mode) hide the whole header, including the
           window controls — the canvas exit-zen / End-lesson button is the way back. */}
-      {!zen && !lessonActive && <header data-tauri-drag-region className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
+      {!zen && !lessonActive && IS_TAURI && (
+        // A guaranteed-empty strip to grab and move the window. The header row below
+        // is also a drag region, but once Deep Work session tabs fill it there's
+        // little open space left to click — this strip is never occluded by buttons.
+        <div data-tauri-drag-region className="relative z-30 h-2.5 shrink-0" />
+      )}
+      {!zen && !lessonActive && <header data-tauri-drag-region className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
         <button
           className="zen-pressable zen-shine inline-flex h-7 items-center rounded-[6px] px-1.5 font-semibold tracking-tight text-[var(--text)] hover:text-[var(--accent)]"
           onClick={() => {

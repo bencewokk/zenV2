@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import katex from "katex";
 import { loadSettings, saveSettings } from "@/services/ai/settings";
-import { loadGoogleSettings, saveGoogleSettings } from "@/services/google/settings";
+import { loadGoogleSettings, saveGoogleSettings, isUsingBundledCredentials } from "@/services/google/settings";
 import { deepseek } from "@/services/ai/deepseek";
 import { isSignedIn, isConfigured, onAuthChange, signIn } from "@/services/google/auth";
 import { useHome } from "@/features/home/store";
@@ -127,12 +127,9 @@ export function Onboarding() {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      {/* Scrim */}
-      <button
-        className="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
-        aria-label="Close walkthrough"
-        onClick={finish}
-      />
+      {/* Scrim — purely visual; the tour only closes via "Skip tour"/"Close" below,
+          so an accidental click outside the dialog can't lose the user's place. */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" />
 
       <div
         role="dialog"
@@ -253,6 +250,7 @@ function GoogleStep() {
   const [show, setShow] = useState(false);
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
   const [connecting, setConnecting] = useState(false);
+  const usingBundled = isUsingBundledCredentials({ clientId, clientSecret });
 
   useEffect(() => onAuthChange(setSignedIn), []);
 
@@ -306,7 +304,13 @@ function GoogleStep() {
         </div>
       </details>
       <div className="flex items-center gap-2">
-        <Status ok={signedIn} label={signedIn ? "Connected" : isConfigured() ? "Not connected" : "No Client ID set"} />
+        <Status
+          ok={signedIn}
+          label={
+            (signedIn ? "Connected" : isConfigured() ? "Not connected" : "No Client ID set") +
+            (usingBundled && isConfigured() ? " · built-in client" : "")
+          }
+        />
         {!signedIn && (
           <button className="zen-btn ml-auto" onClick={connect} disabled={connecting || !clientId.trim()}>
             {connecting ? "Connecting…" : "Connect"}
