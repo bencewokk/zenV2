@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { loadMemories, deleteMemory } from "@/services/memory";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
+import { checkForUpdates } from "@/services/update";
 import { notify } from "@/shared/ui/notify";
 import { SettingsSection } from "../ui";
 
@@ -84,6 +85,14 @@ export function Data() {
             className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) importSettings(f); e.target.value = ""; }}
           />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Updates" hint="Check GitHub Releases for a newer desktop build.">
+        <div className="flex gap-2">
+          <button className="zen-btn-ghost" onClick={() => void checkForUpdates()}>
+            Check for updates
+          </button>
         </div>
       </SettingsSection>
 
