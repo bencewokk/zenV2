@@ -1,4 +1,6 @@
-import { DEEPSEEK_API_KEY } from "./secret";
+// Optional build-time default; real key is normally entered in-app (Settings →
+// Connections) or via a gitignored .env. Empty string when unset — the app runs fine.
+const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY ?? "";
 
 /** AI configuration persisted locally (DESIGN.md ai_config). */
 export interface AISettings {

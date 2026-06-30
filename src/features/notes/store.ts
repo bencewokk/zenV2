@@ -26,6 +26,125 @@ function newNote(parentId: string | null, order: number): Note {
   };
 }
 
+const SEEDED_KEY = "zen.welcome-seeded.v1";
+
+function hasSeeded(): boolean {
+  try {
+    return localStorage.getItem(SEEDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markSeeded(): void {
+  try {
+    localStorage.setItem(SEEDED_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** A friendly first-run note that doubles as a 60-second tour of Zen. */
+function buildWelcomeNote(): Note {
+  const note = newNote(null, 0);
+  const p = (text: string): JSONContent => ({ type: "paragraph", content: [{ type: "text", text }] });
+  const bullet = (text: string): JSONContent => ({
+    type: "listItem",
+    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+  });
+  return {
+    ...note,
+    title: "👋 Welcome to Zen",
+    inbox: false,
+    content: {
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Welcome to Zen" }] },
+        p("Zen is a calm, math-first, AI-integrated notebook for studying and deep work. Here's how to get going:"),
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "The basics" }] },
+        {
+          type: "bulletList",
+          content: [
+            bullet("Create a note with the + in the sidebar, or use Quick Capture in Deep Work."),
+            bullet("Type / inside a note for math, tables, and other blocks."),
+            bullet("Everything is stored locally on your device — nothing leaves your machine until you connect a service."),
+          ],
+        },
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Turn on the extras (optional)" }] },
+        {
+          type: "bulletList",
+          content: [
+            bullet("AI assistant — open Settings ⚙ → Connections & keys and paste a DeepSeek API key."),
+            bullet("Calendar & Mail — same screen, connect your Google account to pull events and email into your daily focus."),
+          ],
+        },
+        p("You can delete this note whenever you like — it won't come back."),
+      ],
+    },
+    updatedAt: Date.now(),
+  };
+}
+
+/**
+ * A small, self-contained math note so the AI study/quiz tools have real material
+ * to work on out of the box. Add it to a Deep Work session, then ask the AI to
+ * "quiz me on this" or build a study backbone from it.
+ */
+function buildSampleMathNote(): Note {
+  const note = newNote(null, 1);
+  const p = (text: string): JSONContent => ({ type: "paragraph", content: [{ type: "text", text }] });
+  const mathBlock = (latex: string): JSONContent => ({ type: "mathBlock", attrs: { latex } });
+  const bullet = (text: string): JSONContent => ({
+    type: "listItem",
+    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+  });
+  // A paragraph mixing prose with an inline math node.
+  const inlinePara = (before: string, latex: string, after: string): JSONContent => ({
+    type: "paragraph",
+    content: [
+      { type: "text", text: before },
+      { type: "mathInline", attrs: { latex } },
+      { type: "text", text: after },
+    ],
+  });
+  return {
+    ...note,
+    title: "Sample: Quadratic Equations",
+    inbox: false,
+    space: "Study",
+    subject: "Algebra",
+    unit: "Quadratics",
+    tags: ["sample"],
+    content: {
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Quadratic Equations" }] },
+        p("A quadratic equation has the standard form below, where a, b, and c are constants and a ≠ 0."),
+        mathBlock("ax^2 + bx + c = 0"),
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "The quadratic formula" }] },
+        p("Any quadratic can be solved with the quadratic formula:"),
+        mathBlock("x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}"),
+        inlinePara("The expression under the root, ", "b^2 - 4ac", ", is the discriminant. It tells you how many real roots exist:"),
+        {
+          type: "bulletList",
+          content: [
+            bullet("Positive discriminant → two distinct real roots."),
+            bullet("Zero discriminant → one repeated real root."),
+            bullet("Negative discriminant → no real roots (two complex roots)."),
+          ],
+        },
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Vertex form" }] },
+        p("Completing the square rewrites a quadratic in vertex form, exposing its turning point (h, k):"),
+        mathBlock("a(x - h)^2 + k = 0"),
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Worked example" }] },
+        inlinePara("Solve ", "x^2 - 5x + 6 = 0", ". It factors as (x − 2)(x − 3) = 0, so x = 2 or x = 3."),
+        p("Try it: add this note to a Deep Work session and ask the AI to quiz you on quadratics."),
+      ],
+    },
+    updatedAt: Date.now(),
+  };
+}
+
 interface NotesState {
   notes: Record<string, Note>;
   selectedId: string | null;
@@ -57,7 +176,17 @@ export const useNotes = create<NotesState>((set, get) => ({
   loaded: false,
 
   async load() {
-    const all = await store.all();
+    let all = await store.all();
+    // First launch on a fresh install: seed a welcome note so the app isn't an
+    // empty void. Guarded by a one-time flag so deleting it never re-seeds.
+    if (all.length === 0 && !hasSeeded()) {
+      markSeeded();
+      const welcome = buildWelcomeNote();
+      const sampleMath = buildSampleMathNote();
+      await store.put(welcome);
+      await store.put(sampleMath);
+      all = [welcome, sampleMath];
+    }
     const map: Record<string, Note> = {};
     // Tolerate notes persisted before `pdfIds` existed.
     for (const n of all) map[n.id] = { ...n, pdfIds: n.pdfIds ?? [], moc: n.moc ?? false };

@@ -96,8 +96,10 @@ export function LessonMode() {
 
   return (
     <div className="zen-anim-fade fixed inset-0 z-[60] flex bg-[var(--bg)]">
-      {/* Lesson board */}
-      <div className="zen-panel-scroll relative min-w-0 flex-1 overflow-y-auto px-6 py-5 sm:px-10">
+      {/* Lesson board — a column so the step controls pin to the visible bottom,
+          not the bottom of the (scrolling) content. */}
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <div className="zen-panel-scroll flex-1 overflow-y-auto px-6 py-5 sm:px-10">
         <div className="mx-auto w-full max-w-[760px]">
           <div className="mb-4 flex items-center gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Lesson</span>
@@ -140,6 +142,7 @@ export function LessonMode() {
               ))}
             </div>
           )}
+        </div>
         </div>
 
         {/* Paced step controls — one block at a time; ask about the current step or move on. */}

@@ -899,11 +899,21 @@ math-field:focus-within { border-color: var(--accent); }
   text-align: center;
 }
 .zen-svg svg {
+  display: block;
   max-width: 100%;
   height: auto;
+  margin: 0 auto;
   /* Guarantee currentColor resolves to a visible color on the dark panel, so
      diagrams using stroke/fill="currentColor" always show. */
   color: var(--text);
+}
+/* Model-drawn diagrams use a viewBox with no width/height attributes, so they have
+   no intrinsic size and collapse to 0×0 as a flex child (showing only a stray dot).
+   Give those the container width; height follows from the viewBox aspect ratio.
+   SVGs that DO set a width attribute keep their authored size (capped at 100%). */
+.zen-svg svg:not([width]) {
+  width: 100%;
+  max-width: 520px;
 }
 /* Visibility safety net for model-drawn diagrams. SVG's defaults (fill:black,
    stroke:none) are invisible on the dark board, and the model often omits paint.

@@ -10,14 +10,15 @@ import {
   nextToReview,
   fmtDuration,
   fmtAgo,
+  fmtClock,
 } from "@/features/home/deepwork/deepworkStore";
+import { useFocusSession, useFocusStore } from "@/features/home/deepwork/useFocusSession";
 import { useStudyLog, todayMs, computeStreak, HOUR_MS, dayKey } from "@/features/home/deepwork/studyLog";
 import { useQuiz, sessionQuizzes, sessionMistakes, type QuizRecord } from "@/features/home/deepwork/quizStore";
 import {
   planHealth, actionableSessions, fmtPlanDay, fmtStartMin, KIND_META, verdictLabel, verdictColor,
   type PlannedSession,
 } from "@/features/home/deepwork/studyPlan";
-import { useFocusStore } from "@/features/home/deepwork/useFocusSession";
 import { isSignedIn, onAuthChange } from "@/services/google/auth";
 
 /** {pdfId, page} pages highlighted for a given concept, keyed by concept title. */
@@ -50,6 +51,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   );
   const now = useNow();
   const next = nextToReview(backbone);
+  const focus = useFocusSession();
 
   // Flip past-due plan sessions to "missed" — on open and as time passes (the tick).
   useEffect(() => {
@@ -101,6 +103,17 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
     );
   }
 
+  /** Start a focused study session: a timer plus an AI tutor on the material. */
+  function startStudySession(durationMin = 25) {
+    if (useFocusStore.getState().session) useFocusStore.getState().endSession();
+    useFocusStore.getState().startSession(durationMin);
+    ask(
+      `Tutor me on my Deep Work material — a ${durationMin}-minute study session. First call ` +
+        "deepwork_read_material (and deepwork_weak_concepts if I have a backbone), then teach the " +
+        "highest-priority and weakest concepts, checking my understanding as we go. Keep it conversational."
+    );
+  }
+
   function startQuiz() {
     ask(
       "Make me a quiz on my Deep Work material. First call deepwork_read_material and deepwork_weak_concepts, " +
@@ -139,28 +152,51 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
-        <DailyGoalBar />
-
-        <PlanSection now={now} />
-
-        <div className="flex gap-2">
+        {/* Primary actions: the two ways to actually study. */}
+        <div className="grid grid-cols-2 gap-2">
+          {focus.sessionActive ? (
+            <button
+              className="zen-pressable rounded-[10px] border border-[#4ade80] bg-[rgba(74,222,128,0.1)] px-3 py-3 text-left disabled:opacity-50"
+              onClick={() => useFocusStore.getState().endSession()}
+              title="End the current focus timer"
+            >
+              <div className="text-sm font-semibold tabular-nums text-[var(--text)]">⏹ {fmtClock(focus.sessionRemaining)}</div>
+              <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">End session</div>
+            </button>
+          ) : (
+            <button
+              className="zen-pressable rounded-[10px] border border-[var(--border)] bg-[var(--bg-elev)] px-3 py-3 text-left disabled:opacity-50"
+              onClick={() => startStudySession()}
+              disabled={streaming}
+              title="Start a 25-minute focus timer and have the AI tutor you on this material"
+            >
+              <div className="text-sm font-semibold text-[var(--text)]">▶ Study session</div>
+              <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">25-min timer + AI tutor</div>
+            </button>
+          )}
           <button
-            className="zen-pressable flex-1 rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
-            onClick={prepReading}
-            disabled={streaming}
-            title="Find/create everything to read before a quiz"
-          >
-            📖 Prep reading
-          </button>
-          <button
-            className="zen-pressable flex-1 rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-2.5 py-1.5 text-xs text-[var(--text)] disabled:opacity-50"
+            className="zen-pressable rounded-[10px] border border-[var(--accent)] bg-[var(--accent-dim)] px-3 py-3 text-left disabled:opacity-50"
             onClick={startQuiz}
             disabled={streaming}
             title="Generate a quiz weighted toward your weak spots"
           >
-            ✎ Start quiz
+            <div className="text-sm font-semibold text-[var(--text)]">✎ Start quiz</div>
+            <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">Test your mastery</div>
           </button>
         </div>
+
+        <DailyGoalBar />
+
+        <PlanSection now={now} />
+
+        <button
+          className="zen-pressable w-full rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
+          onClick={prepReading}
+          disabled={streaming}
+          title="Find/create everything to read before a quiz"
+        >
+          📖 Prep reading
+        </button>
 
         {mistakeCount > 0 && (
           <button

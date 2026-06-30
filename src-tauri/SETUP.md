@@ -16,20 +16,30 @@ secure store), instead of the browser's ~1‑hour access token.
 > macOS/Linux: in `Cargo.toml` swap the `keyring` feature from `windows-native` to
 > `apple-native` (macOS) or `sync-secret-service` (Linux).
 
-## 2. Google OAuth credentials
+## 2. Google OAuth credentials (optional)
 
-The desktop flow needs a **Desktop app** OAuth client (the browser build used a Web client):
+The app **ships with a bundled default Desktop OAuth client**, so Calendar + Mail work
+out of the box with no setup. (While the app is unverified, Google caps it at 100 users
+and shows an "unverified app" notice — see the note below.)
+
+To use **your own** client instead (recommended for your own data, or to lift the cap):
 
 1. Google Cloud Console → APIs & Services → Credentials → *Create credentials* →
    *OAuth client ID* → Application type **Desktop app**.
 2. Copy the **Client ID** and **Client secret**.
-3. Provide them to the app one of two ways:
+3. Provide them in any of these ways (highest priority first):
+   - **In-app:** Settings → Connections & keys (stored in the OS keyring), **or**
+   - **Env vars:** `ZEN_GOOGLE_CLIENT_ID` / `ZEN_GOOGLE_CLIENT_SECRET`, **or**
    - **File:** copy `src-tauri/google_oauth.example.json` to `src-tauri/google_oauth.json`
-     and fill in the values (this file is gitignored), **or**
-   - **Env vars:** set `ZEN_GOOGLE_CLIENT_ID` and `ZEN_GOOGLE_CLIENT_SECRET` before running.
+     and fill in the values (gitignored).
 
 No redirect URI config is needed — the app uses a loopback redirect
 (`http://127.0.0.1:<random-port>`), which Google allows for Desktop clients.
+
+> **Verification & scope limits.** The Gmail/Calendar scopes are restricted/sensitive.
+> An unverified shared client is limited to 100 users and shows a warning screen. To go
+> further, complete Google's OAuth verification (and a CASA assessment for Gmail), or have
+> users supply their own client above.
 
 ## 3. Run
 

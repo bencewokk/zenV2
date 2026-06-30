@@ -1,7 +1,7 @@
 {
   "name": "zenv2",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +20,8 @@
     "@orama/orama": "^3.1.18",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-http": "^2.5.9",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "@tiptap/core": "^2.27.2",
     "@tiptap/extension-drag-handle-react": "^2.27.2",
     "@tiptap/extension-node-range": "^2.27.2",
