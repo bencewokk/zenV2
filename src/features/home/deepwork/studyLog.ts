@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { markBlobDirty } from "@/services/sync/cursor";
 
 /**
  * Study log — a global, cross-session record of how much time the user has
@@ -49,6 +50,7 @@ export const useStudyLog = create<StudyLogState>((set, get) => {
   function persist(p: PersistedLog) {
     try {
       localStorage.setItem(KEY, JSON.stringify(p));
+      markBlobDirty("studylog");
     } catch {
       /* ignore */
     }
@@ -76,6 +78,14 @@ export const useStudyLog = create<StudyLogState>((set, get) => {
     },
   };
 });
+
+export const STUDYLOG_KEY = KEY;
+
+/** Re-read persisted study log into the live store (used by sync apply). */
+export function hydrateStudyLog(): void {
+  const p = read();
+  useStudyLog.setState({ days: p.days, goalHours: p.goalHours });
+}
 
 /** Milliseconds focused today. */
 export function todayMs(days: Record<string, number>): number {

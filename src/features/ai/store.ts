@@ -8,6 +8,7 @@ import { memoryContext, recordActivity, recall, formatRecall } from "@/services/
 import { useNotes } from "@/features/notes/store";
 import { useStatus } from "@/shared/stores/status";
 import { notify } from "@/shared/ui/notify";
+import { markBlobDirty } from "@/services/sync/cursor";
 
 /** Visual tone for a tool-activity turn (drives the chip's dot colour). */
 export type ToolTone = "read" | "run" | "done" | "error" | "info" | "blocked";
@@ -666,7 +667,20 @@ function persistConversations(conversations: Conversation[], activeId: string): 
   try {
     const max = Math.max(1, loadSettings().maxConversations);
     localStorage.setItem(CONV_KEY, JSON.stringify({ conversations: conversations.slice(-max), activeId }));
+    markBlobDirty("ai");
   } catch { /* ignore */ }
+}
+
+export const AI_CONV_KEY = CONV_KEY;
+
+/** Re-read persisted conversations into the live store (used by sync apply).
+ *  Skipped mid-stream so an inbound merge never disrupts an in-flight reply. */
+export function hydrateAI(): void {
+  const s = useAI.getState();
+  if (s.streaming) return;
+  const { conversations, activeId } = readConversations();
+  const turns = conversations.find((c) => c.id === activeId)?.turns ?? [];
+  useAI.setState({ conversations, activeId, turns });
 }
 
 /** Add to the active conversation's cumulative token usage. */

@@ -25,6 +25,7 @@ import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { useOnboarding } from "@/features/onboarding/store";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
 import { checkForUpdates } from "@/services/update";
+import { startSync } from "@/services/sync/engine";
 import { applyAppearance } from "@/services/appearance";
 import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
@@ -85,6 +86,8 @@ export function App() {
     void load().then(() => seedSampleSession());
     // Check for a newer release shortly after launch (desktop only; no-op in browser).
     const t = window.setTimeout(() => void checkForUpdates(), 4000);
+    // Background cloud sync (no-op until enabled + signed in via Settings).
+    startSync();
     return () => window.clearTimeout(t);
   }, [load]);
   useEffect(() => {

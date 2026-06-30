@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { markBlobDirty } from "@/services/sync/cursor";
 
 /**
  * Persistent layout/workspace state (DESIGN.md #8): panel widths, last open note.
@@ -54,5 +55,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     set(fields);
     const { sidebarWidth, sidebarCollapsed, lastOpenId, surface, adminFocus, adminMailId } = get();
     localStorage.setItem(KEY, JSON.stringify({ sidebarWidth, sidebarCollapsed, lastOpenId, surface, adminFocus, adminMailId }));
+    markBlobDirty("workspace");
   },
 }));
+
+export const WORKSPACE_KEY = KEY;
+
+/** Re-read persisted workspace state into the live store (used by sync apply). */
+export function hydrateWorkspace(): void {
+  const p = read();
+  useWorkspace.setState({
+    sidebarWidth: p.sidebarWidth,
+    sidebarCollapsed: p.sidebarCollapsed,
+    lastOpenId: p.lastOpenId,
+    surface: p.surface,
+    adminFocus: p.adminFocus,
+    adminMailId: p.adminMailId,
+  });
+}

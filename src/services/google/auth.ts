@@ -286,6 +286,19 @@ async function getToken(): Promise<string> {
   });
 }
 
+/**
+ * A token the sync backend can identify the user with. On desktop this is a real
+ * Google ID token (a verifiable JWT) minted in Rust; in the browser the GIS token
+ * client can't issue one, so we fall back to the access token (the backend
+ * introspects it). Requires an active session.
+ */
+export async function getAuthToken(): Promise<string> {
+  if (IS_TAURI) {
+    return invoke<string>("google_id_token");
+  }
+  return getToken();
+}
+
 /** Authenticated fetch against a Google REST API. */
 export async function gapiFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
   const token = await getToken();

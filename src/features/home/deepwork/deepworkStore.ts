@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { HomeTarget } from "@/features/home/store";
 import type { PlannedSession, StudyPlan } from "@/features/home/deepwork/studyPlan";
 import { creditFocusToPlan, reconcilePlan as reconcilePlanPure } from "@/features/home/deepwork/studyPlan";
+import { markBlobDirty } from "@/services/sync/cursor";
 
 /**
  * Deep Work — a collection of named **sessions**. Each session is a curated canvas:
@@ -196,6 +197,7 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
         KEY,
         JSON.stringify({ sessions: p.sessions, order: p.order, activeId: p.activeId, zenMode: p.zenMode })
       );
+      markBlobDirty("deepwork");
     } catch {
       /* ignore */
     }
@@ -556,6 +558,21 @@ export function nextToReview(backbone: StudyBackbone | null, now: number = Date.
   const pending = backbone.concepts.filter((c) => c.mastery < 80);
   if (!pending.length) return null;
   return pending.slice().sort((a, b) => a.mastery - b.mastery || (a.lastReviewed ?? 0) - (b.lastReviewed ?? 0))[0];
+}
+
+export const DEEPWORK_KEY = KEY;
+
+/** Re-read persisted Deep Work state into the live store (used by sync apply). */
+export function hydrateDeepWork(): void {
+  const p = read();
+  const active = p.activeId ? p.sessions[p.activeId] ?? null : null;
+  useDeepWork.setState({
+    sessions: p.sessions,
+    order: p.order,
+    activeId: p.activeId,
+    zenMode: p.zenMode,
+    ...mirrorOf(active),
+  });
 }
 
 export function readinessColor(percent: number): string {

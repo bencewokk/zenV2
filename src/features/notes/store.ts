@@ -166,6 +166,7 @@ interface NotesState {
   move: (id: string, parentId: string | null, order: number) => Promise<void>;
   setFilter: (f: Partial<NoteFilter>) => void;
   resetFilter: () => void;
+  ingestRemote: (upserts: Note[], deletes: string[]) => void; // merge from sync
 }
 
 export const useNotes = create<NotesState>((set, get) => ({
@@ -295,5 +296,21 @@ export const useNotes = create<NotesState>((set, get) => ({
 
   resetFilter() {
     set({ filter: emptyFilter });
+  },
+
+  /**
+   * Merge notes that arrived from the sync engine into the live store. Storage has
+   * already been updated (LWW decided by the adapter); this only refreshes the
+   * in-memory map + open selection so the UI reflects remote changes immediately.
+   */
+  ingestRemote(upserts, deletes) {
+    if (upserts.length === 0 && deletes.length === 0) return;
+    set((s) => {
+      const notes = { ...s.notes };
+      for (const n of upserts) notes[n.id] = { ...n, pdfIds: n.pdfIds ?? [], moc: n.moc ?? false };
+      for (const id of deletes) delete notes[id];
+      const selectedGone = s.selectedId && deletes.includes(s.selectedId);
+      return { notes, selectedId: selectedGone ? null : s.selectedId };
+    });
   },
 }));

@@ -1,4 +1,38 @@
 import type { PdfDoc, PdfAnnotation, PdfOutlineItem } from "@/shared/lib/types";
+import { markDirty } from "@/services/sync/cursor";
+
+const COLLECTION = "pdfs";
+const TOMB_KEY = "zen.pdfs.tombstones.v1";
+
+/** Metadata-only view of a record for sync (no blob, no heavy page text). */
+export interface PdfSyncMeta {
+  id: string;
+  name: string;
+  tags: string[];
+  size: number;
+  addedAt: number;
+  pageCount?: number;
+  annotations?: PdfAnnotation[];
+  outline?: PdfOutlineItem[];
+  updatedAt: number;
+}
+
+export function readPdfTombstones(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(TOMB_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePdfTombstones(t: Record<string, number>): void {
+  try {
+    localStorage.setItem(TOMB_KEY, JSON.stringify(t));
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * PDF storage on IndexedDB — PDFs are multi-MB blobs that don't fit in the
@@ -21,6 +55,19 @@ interface PdfRecord extends PdfDoc {
   textExtractedAt?: number;
   annotations?: PdfAnnotation[];
   outline?: PdfOutlineItem[]; // embedded table of contents (may be empty)
+  updatedAt?: number; // last local mutation; drives last-write-wins sync
+}
+
+/** Stamp a record as locally changed and flag it for the sync engine. */
+function touch(rec: PdfRecord): PdfRecord {
+  rec.updatedAt = Date.now();
+  const t = readPdfTombstones();
+  if (rec.id in t) {
+    delete t[rec.id];
+    writePdfTombstones(t);
+  }
+  markDirty(COLLECTION, rec.id);
+  return rec;
 }
 
 let dbP: Promise<IDBDatabase> | null = null;
@@ -59,6 +106,7 @@ function get<T>(store: IDBObjectStore, id: string): Promise<T | undefined> {
 export const pdfStore = {
   async put(rec: PdfRecord): Promise<void> {
     const db = await openDb();
+    if (rec.updatedAt === undefined) touch(rec);
     await new Promise<void>((resolve, reject) => {
       const r = tx(db, "readwrite").put(rec);
       r.onsuccess = () => resolve();
@@ -99,7 +147,7 @@ export const pdfStore = {
       g.onsuccess = () => {
         const rec = g.result as PdfRecord | undefined;
         if (!rec) return resolve();
-        const next = { ...rec, ...fields };
+        const next = touch({ ...rec, ...fields });
         const p = store.put(next);
         p.onsuccess = () => resolve();
         p.onerror = () => reject(p.error);
@@ -123,7 +171,7 @@ export const pdfStore = {
       g.onsuccess = () => {
         const rec = g.result as PdfRecord | undefined;
         if (!rec) return resolve();
-        const next: PdfRecord = { ...rec, pages, pageCount: pages.length, textExtractedAt: Date.now() };
+        const next = touch({ ...rec, pages, pageCount: pages.length, textExtractedAt: Date.now() });
         const p = store.put(next);
         p.onsuccess = () => resolve();
         p.onerror = () => reject(p.error);
@@ -146,7 +194,7 @@ export const pdfStore = {
       g.onsuccess = () => {
         const rec = g.result as PdfRecord | undefined;
         if (!rec) return resolve();
-        const p = store.put({ ...rec, outline });
+        const p = store.put(touch({ ...rec, outline }));
         p.onsuccess = () => resolve();
         p.onerror = () => reject(p.error);
       };
@@ -168,7 +216,7 @@ export const pdfStore = {
       g.onsuccess = () => {
         const rec = g.result as PdfRecord | undefined;
         if (!rec) return resolve();
-        const p = store.put({ ...rec, annotations });
+        const p = store.put(touch({ ...rec, annotations }));
         p.onsuccess = () => resolve();
         p.onerror = () => reject(p.error);
       };
@@ -183,6 +231,88 @@ export const pdfStore = {
       r.onsuccess = () => resolve();
       r.onerror = () => reject(r.error);
     });
+    const t = readPdfTombstones();
+    t[id] = Date.now();
+    writePdfTombstones(t);
+    markDirty(COLLECTION, id);
+  },
+
+  // ── Sync helpers ──────────────────────────────────────────────────────────
+
+  /** A record's sync metadata (no blob, no page text), or null if absent. */
+  async syncMeta(id: string): Promise<PdfSyncMeta | null> {
+    const db = await openDb();
+    const rec = await get<PdfRecord>(tx(db, "readonly"), id);
+    if (!rec) return null;
+    return {
+      id: rec.id,
+      name: rec.name,
+      tags: rec.tags,
+      size: rec.size,
+      addedAt: rec.addedAt,
+      pageCount: rec.pageCount,
+      annotations: rec.annotations,
+      outline: rec.outline,
+      updatedAt: rec.updatedAt ?? rec.addedAt,
+    };
+  },
+
+  /** Whether a blob exists locally for this id (used to decide a lazy download). */
+  async hasBlob(id: string): Promise<boolean> {
+    return (await this.getBlob(id)) != null;
+  },
+
+  /** The local updatedAt for an id (record or tombstone), or -Infinity if unknown. */
+  async localUpdatedAt(id: string): Promise<number> {
+    const db = await openDb();
+    const rec = await get<PdfRecord>(tx(db, "readonly"), id);
+    if (rec) return rec.updatedAt ?? rec.addedAt;
+    const t = readPdfTombstones();
+    return id in t ? t[id] : -Infinity;
+  },
+
+  /** Apply remote metadata without re-flagging it dirty. Preserves any local blob. */
+  async applyRemoteMeta(meta: PdfSyncMeta, blob: Blob | null): Promise<void> {
+    const db = await openDb();
+    const existing = await get<PdfRecord>(tx(db, "readonly"), meta.id);
+    const rec: PdfRecord = {
+      ...(existing ?? {}),
+      id: meta.id,
+      name: meta.name,
+      tags: meta.tags,
+      size: meta.size,
+      addedAt: meta.addedAt,
+      pageCount: meta.pageCount,
+      annotations: meta.annotations,
+      outline: meta.outline,
+      updatedAt: meta.updatedAt,
+      blob: blob ?? existing?.blob ?? new Blob([]),
+    };
+    const dbw = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const r = tx(dbw, "readwrite").put(rec);
+      r.onsuccess = () => resolve();
+      r.onerror = () => reject(r.error);
+    });
+    // A blob arrived → re-extract page text lazily elsewhere; clear any tombstone.
+    const t = readPdfTombstones();
+    if (meta.id in t) {
+      delete t[meta.id];
+      writePdfTombstones(t);
+    }
+  },
+
+  /** Apply a remote delete without re-flagging dirty. */
+  async applyRemoteDelete(id: string, at: number): Promise<void> {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const r = tx(db, "readwrite").delete(id);
+      r.onsuccess = () => resolve();
+      r.onerror = () => reject(r.error);
+    });
+    const t = readPdfTombstones();
+    t[id] = at;
+    writePdfTombstones(t);
   },
 };
 

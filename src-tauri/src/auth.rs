@@ -14,7 +14,10 @@ const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 
-const SCOPES: &str = "https://www.googleapis.com/auth/calendar.events \
+// `openid email` make Google return an ID token (a verifiable JWT carrying the
+// user's account id), which the sync backend uses to identify the user.
+const SCOPES: &str = "openid email \
+https://www.googleapis.com/auth/calendar.events \
 https://www.googleapis.com/auth/calendar.readonly \
 https://www.googleapis.com/auth/gmail.readonly \
 https://www.googleapis.com/auth/gmail.compose \
@@ -36,6 +39,7 @@ static CREDS: Mutex<Option<OAuthCredentials>> = Mutex::new(None);
 struct CachedToken {
     token: String,
     expires_at: u64, // epoch seconds
+    id_token: Option<String>, // Google ID token (JWT) for the sync backend
 }
 
 /// Returned to the frontend after login / refresh.
@@ -51,6 +55,8 @@ struct TokenResponse {
     expires_in: u64,
     #[serde(default)]
     refresh_token: Option<String>,
+    #[serde(default)]
+    id_token: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -158,11 +164,14 @@ fn load_refresh_token() -> Option<String> {
     keyring_entry().ok()?.get_password().ok()
 }
 
-fn cache_access(token: &str, expires_in: u64) {
+fn cache_access(token: &str, expires_in: u64, id_token: Option<String>) {
     if let Ok(mut guard) = ACCESS.lock() {
+        // A refresh may omit the id_token; keep the previously cached one if so.
+        let prev_id = guard.as_ref().and_then(|c| c.id_token.clone());
         *guard = Some(CachedToken {
             token: token.to_string(),
             expires_at: now_secs() + expires_in,
+            id_token: id_token.or(prev_id),
         });
     }
 }
@@ -257,7 +266,7 @@ pub fn google_login() -> Result<TokenOut, String> {
         store_refresh_token(rt)?;
     }
     // If Google omitted a refresh token (already granted), keep any existing one.
-    cache_access(&resp.access_token, resp.expires_in);
+    cache_access(&resp.access_token, resp.expires_in, resp.id_token);
 
     Ok(TokenOut {
         access_token: resp.access_token,
@@ -298,11 +307,34 @@ pub fn google_access_token() -> Result<TokenOut, String> {
         .json()
         .map_err(|e| format!("Token refresh failed: {e}"))?;
 
-    cache_access(&resp.access_token, resp.expires_in);
+    cache_access(&resp.access_token, resp.expires_in, resp.id_token);
     Ok(TokenOut {
         access_token: resp.access_token,
         expires_in: resp.expires_in,
     })
+}
+
+/// Return a valid Google ID token (JWT) for the sync backend, refreshing the
+/// session if the cached token is stale. Errors if the user has never signed in.
+#[tauri::command]
+pub fn google_id_token() -> Result<String, String> {
+    // A still-valid cached id token (shares the access token's ~1h lifetime).
+    if let Ok(guard) = ACCESS.lock() {
+        if let Some(cached) = guard.as_ref() {
+            if cached.expires_at > now_secs() + 60 {
+                if let Some(id) = cached.id_token.as_ref() {
+                    return Ok(id.clone());
+                }
+            }
+        }
+    }
+    // Refresh to mint a fresh access + id token, then return the cached id token.
+    google_access_token()?;
+    ACCESS
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|c| c.id_token.clone()))
+        .ok_or_else(|| "No Google ID token available (re-sign in).".into())
 }
 
 /// Whether a refresh token is stored (i.e. the user has a persisted session).

@@ -36,7 +36,11 @@ export function saveGoogleSettings(s: GoogleSettings): void {
 }
 
 // Scopes requested. Read + write so the AI-tooling phase can act on them later.
+// `openid email` make Google issue an ID token used to identify the user to the
+// sync backend.
 export const GOOGLE_SCOPES = [
+  "openid",
+  "email",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/gmail.readonly",
