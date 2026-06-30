@@ -58,6 +58,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Authoritative version for this build — the tag that triggered it.
+          # scripts/version.mjs honours this over `git describe`, so the bundle,
+          # frontend __APP_VERSION__, and updater all agree with the release tag.
+          ZEN_RELEASE_VERSION: ${{ github.ref_name }}
           # Bundled Google client, baked into the released binaries at build time.
           # Add these in the repo: Settings → Secrets and variables → Actions.
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}

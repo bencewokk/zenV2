@@ -16,6 +16,13 @@ import { readFileSync } from "node:fs";
  * with no tags): the version baked into package.json, then `0.0.0`.
  */
 export function gitVersion() {
+  // Explicit override, set by CI from the pushed tag ref (GITHUB_REF_NAME).
+  // This is authoritative: a tag-triggered release build must use the tag it
+  // was triggered by, not whatever `git describe` resolves to in a CI checkout
+  // (which has bitten us — see release.yml). Local builds leave it unset and
+  // fall through to git.
+  const override = process.env.ZEN_RELEASE_VERSION?.trim();
+  if (override) return override.replace(/^v/, "");
   try {
     const tag = execSync("git describe --tags --abbrev=0", {
       encoding: "utf8",
