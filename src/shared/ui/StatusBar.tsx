@@ -9,6 +9,8 @@ import { useHome } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { useStudyLog, todayMs, HOUR_MS } from "@/features/home/deepwork/studyLog";
 
+const APP_VERSION = __APP_VERSION__;
+
 const DOT: Record<Conn | AiStatus, string> = {
   off: "var(--text-dim)",
   on: "var(--ok)",
@@ -141,6 +143,9 @@ export function StatusBar() {
               ◷ {todayH.toFixed(1)} / {goalHours}h
             </span>
           )}
+          <span className="tabular-nums opacity-55" title="Current release">
+            {APP_VERSION}
+          </span>
         </div>
       )}
     </footer>
