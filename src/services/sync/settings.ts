@@ -3,7 +3,9 @@
  * released builds, but stays overridable at runtime (Settings → Connections) like
  * the Google client id and AI key.
  */
-const DEFAULT_URL = import.meta.env.VITE_SYNC_API_URL ?? "";
+// Public sync backend URL. Not a secret — it's just an endpoint. Overridable at
+// build time (VITE_SYNC_API_URL) and at runtime (Settings → Connections).
+const DEFAULT_URL = import.meta.env.VITE_SYNC_API_URL ?? "https://zen-v2-plum.vercel.app";
 
 const KEY = "zen.sync.settings.v1";
 
