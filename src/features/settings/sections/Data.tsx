@@ -1,7 +1,7 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { loadMemories, deleteMemory } from "@/services/memory";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
-import { checkForUpdates } from "@/services/update";
+import { checkForUpdates, type UpdateCheckResult } from "@/services/update";
 import { notify } from "@/shared/ui/notify";
 import { SettingsSection } from "../ui";
 
@@ -19,6 +19,7 @@ const CONV_KEY = "zen.ai.conversations.v1";
 export function Data() {
   const resetPolicies = useToolPolicy((s) => s.resetAll);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [updateState, setUpdateState] = useState<UpdateCheckResult | { status: "checking" } | { status: "idle" }>({ status: "idle" });
 
   function clearConversations() {
     if (!confirm("Delete ALL chat conversations? This can't be undone.")) return;
@@ -72,6 +73,47 @@ export function Data() {
     reader.readAsText(file);
   }
 
+  async function handleCheckUpdates() {
+    setUpdateState({ status: "checking" });
+    const result = await checkForUpdates();
+    setUpdateState(result);
+    if (result.status === "no-update") notify.info("You're up to date");
+    if (result.status === "unsupported") notify.info("Update checks are desktop-only");
+    if (result.status === "error") notify.error("Couldn't check for updates");
+  }
+
+  const updateFeedback = (() => {
+    switch (updateState.status) {
+      case "idle":
+        return "";
+      case "checking":
+        return "Checking…";
+      case "update-available":
+        return `Zen ${updateState.version} available`;
+      case "no-update":
+        return "Up to date";
+      case "unsupported":
+        return "Desktop only";
+      case "error":
+        return "Check failed";
+      default:
+        return "";
+    }
+  })();
+
+  const updateFeedbackClass = (() => {
+    switch (updateState.status) {
+      case "update-available":
+        return "text-[var(--accent)]";
+      case "checking":
+        return "text-[var(--text-dim)]";
+      case "error":
+        return "text-[var(--danger)]";
+      default:
+        return "text-[var(--text-dim)]";
+    }
+  })();
+
   return (
     <div className="space-y-6">
       <SettingsSection title="Backup" hint="Export or restore your keys, tool permissions, and appearance (no note content).">
@@ -89,10 +131,11 @@ export function Data() {
       </SettingsSection>
 
       <SettingsSection title="Updates" hint="Check GitHub Releases for a newer desktop build.">
-        <div className="flex gap-2">
-          <button className="zen-btn-ghost" onClick={() => void checkForUpdates()}>
+        <div className="flex items-center gap-2">
+          <button className="zen-btn-ghost" onClick={() => void handleCheckUpdates()} disabled={updateState.status === "checking"}>
             Check for updates
           </button>
+          {updateFeedback && <span className={`text-xs ${updateFeedbackClass}`}>{updateFeedback}</span>}
         </div>
       </SettingsSection>
 
