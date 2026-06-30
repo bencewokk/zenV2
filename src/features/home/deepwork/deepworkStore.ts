@@ -90,6 +90,11 @@ export function targetKey(t: HomeTarget): string {
 
 const DEFAULT_W = 380;
 const DEFAULT_H = 340;
+// Floor for a window's stored size — shared with WindowFrame's resize-drag clamp
+// and the canvas-resize rescale below, so neither path can shrink a window past
+// the point its header/content stop being usable.
+export const MIN_W = 280;
+export const MIN_H = 200;
 
 /** Cascade new windows so they don't stack exactly. */
 function defaultGeom(index: number): WindowGeom {
@@ -156,6 +161,11 @@ interface DeepWorkState extends SessionStudyState {
   addItem: (t: HomeTarget) => void;
   removeItem: (t: HomeTarget) => void;
   setWindow: (key: string, geom: WindowGeom) => void;
+  /** Proportionally rescale every window in the active session — used when the
+   *  canvas viewport itself resizes (e.g. the Study/AI panel opening or closing)
+   *  so a window's position/size keeps its ratio to the canvas instead of holding
+   *  its old absolute pixels against the new space. One atomic commit. */
+  rescaleWindows: (scaleX: number, scaleY: number) => void;
   setIntent: (intent: string) => void;
   setBackbone: (intent: string, concepts: { title: string; summary: string }[], overall?: number) => void;
   setMastery: (updates: { concept: string; sub?: string; mastery: number }[], overall?: number) => void;
@@ -267,6 +277,23 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
 
     setWindow(key, geom) {
       mutateActive((s) => ({ ...s, windows: { ...s.windows, [key]: geom } }));
+    },
+
+    rescaleWindows(scaleX, scaleY) {
+      if (scaleX === 1 && scaleY === 1) return;
+      if (Object.keys(get().windows).length === 0) return; // nothing to rescale — skip the write
+      mutateActive((s) => {
+        const windows: Record<string, WindowGeom> = {};
+        for (const [key, g] of Object.entries(s.windows)) {
+          windows[key] = {
+            x: Math.round(g.x * scaleX),
+            y: Math.round(g.y * scaleY),
+            w: Math.max(MIN_W, Math.round(g.w * scaleX)),
+            h: Math.max(MIN_H, Math.round(g.h * scaleY)),
+          };
+        }
+        return { ...s, windows };
+      });
     },
 
     setIntent(intent) {

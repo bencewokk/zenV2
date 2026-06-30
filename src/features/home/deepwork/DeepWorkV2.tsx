@@ -140,6 +140,7 @@ export function DeepWorkV2({
   const items = useDeepWork((s) => s.items);
   const windows = useDeepWork((s) => s.windows);
   const setWindow = useDeepWork((s) => s.setWindow);
+  const rescaleWindows = useDeepWork((s) => s.rescaleWindows);
   const addItem = useDeepWork((s) => s.addItem);
   const removeItem = useDeepWork((s) => s.removeItem);
   const logFocus = useDeepWork((s) => s.logFocus);
@@ -220,6 +221,37 @@ export function DeepWorkV2({
     e.preventDefault();
     setRelatedMenu({ x: e.clientX, y: e.clientY, source });
   }
+
+  // Rescale every window proportionally when the canvas viewport itself resizes —
+  // e.g. opening/closing the Study or AI panel shrinks/grows the canvas — so a
+  // window's position/size keeps its ratio to the canvas (a half-canvas snap stays
+  // half) instead of holding its old absolute pixels against the new space.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const canvasSizeRef = useRef<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    // Measure synchronously now (the DOM is already committed/painted at this point),
+    // rather than waiting for ResizeObserver's own first callback to establish the
+    // baseline — otherwise a resize landing immediately after mount (e.g. the user
+    // opening the AI panel right after entering Deep Work) can coalesce with that
+    // first callback and get silently treated as "just the baseline" instead of an
+    // actual resize to react to.
+    const rect0 = el.getBoundingClientRect();
+    canvasSizeRef.current = { w: rect0.width, h: rect0.height };
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      const { width: w, height: h } = rect;
+      const prev = canvasSizeRef.current;
+      canvasSizeRef.current = { w, h };
+      if (!prev || prev.w <= 0 || prev.h <= 0) return;
+      if (Math.abs(prev.w - w) < 1 && Math.abs(prev.h - h) < 1) return;
+      rescaleWindows(w / prev.w, h / prev.h);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [rescaleWindows]);
 
   // Credit focused time when a session ends.
   const focusStartRef = useRef<number | null>(null);
@@ -303,7 +335,10 @@ export function DeepWorkV2({
           </button>
         </div>
       </div>
-      <div className="zen-panel-scroll relative min-h-0 flex-1 overflow-auto rounded-[16px] border border-[rgba(255,255,255,0.06)] bg-[rgba(0,0,0,0.12)]">
+      <div
+        ref={canvasRef}
+        className="zen-panel-scroll relative min-h-0 flex-1 overflow-auto rounded-[16px] border border-[rgba(255,255,255,0.06)] bg-[rgba(0,0,0,0.12)]"
+      >
         {items.length === 0 ? (
           <div className="flex h-full items-center justify-center p-8 text-center text-sm text-[var(--text-dim)]">
             Nothing here yet. Use <span className="mx-1 text-[var(--text)]">＋ Add source</span> (top bar), or right-click a note, email, or event → <span className="mx-1 text-[var(--text)]">Add to Deep Work</span>.

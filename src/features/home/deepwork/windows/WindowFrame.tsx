@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { WindowGeom } from "@/features/home/deepwork/deepworkStore";
+import { MIN_W, MIN_H, type WindowGeom } from "@/features/home/deepwork/deepworkStore";
 
-const MIN_W = 280;
-const MIN_H = 200;
 const SNAP_MARGIN = 28; // px from a container edge that triggers an edge snap
 // Corner band: while hugging one edge, being within this distance of a perpendicular
 // edge promotes the half-snap to a quarter. Generous so corners are easy to hit.
