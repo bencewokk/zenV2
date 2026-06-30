@@ -222,9 +222,25 @@ export function ChatPanel() {
         )}
         {turns.map((t, i) =>
           t.role === "tool" ? (
-            <div key={i} className="zen-anim-rise flex items-center gap-2 text-xs text-[var(--text-dim)]">
-              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: toneColor(t.tone) }} />
-              <span className="min-w-0 flex-1 truncate">{t.content}</span>
+            <div key={i} className="zen-anim-rise flex flex-col gap-0.5 text-xs">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${t.tone === "run" ? "zen-glow" : ""}`}
+                  style={{ background: toneColor(t.tone), "--zen-glow-color": "rgba(110, 168, 254, 0.45)" } as React.CSSProperties}
+                />
+                <span className="min-w-0 flex-1 truncate text-[var(--text-dim)]" title={`${t.content}${t.detail ? " · " + t.detail : ""}`}>
+                  <span className="text-[var(--text)]">{t.content}</span>
+                  {t.detail && <span> · {t.detail}</span>}
+                </span>
+              </div>
+              {t.result && (
+                <div
+                  className={`truncate pl-3.5 ${t.tone === "error" ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}
+                  title={t.result}
+                >
+                  {t.result}
+                </div>
+              )}
             </div>
           ) : (
             <div key={i} className={`zen-anim-rise ${t.role === "user" ? "text-right" : ""}`}>
@@ -381,7 +397,13 @@ function ActivityPanel({ turns, onClose }: { turns: ChatTurn[]; onClose: () => v
           acts.map((t, i) => (
             <div key={i} className="flex items-start gap-2">
               <span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: toneColor(t.tone) }} />
-              <span className="min-w-0 flex-1 break-words text-[var(--text-dim)]">{t.content}</span>
+              <span className="min-w-0 flex-1 break-words">
+                <span className="text-[var(--text)]">{t.content}</span>
+                {t.detail && <span className="text-[var(--text-dim)]"> · {t.detail}</span>}
+                {t.result && (
+                  <span className={t.tone === "error" ? "block text-[var(--danger)]" : "block text-[var(--text-dim)]"}>{t.result}</span>
+                )}
+              </span>
             </div>
           ))
         )}

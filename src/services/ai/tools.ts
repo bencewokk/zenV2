@@ -390,15 +390,35 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "insert_math",
-    "Append a math equation to a note (LaTeX). Set block=true for a display equation.",
-    obj({ id: str("note id"), latex: str("LaTeX, e.g. x^2+1"), block: bool("display block? default true") }, ["id", "latex"]),
+    "Append a math equation to a note (LaTeX). Set block=true for a display equation. " +
+      "Optionally pass `target` (the correct answer in LaTeX) to make the block checkable by the note's " +
+      "Math Checker — useful for a practice problem where `latex` is blank/partial and `target` is the answer.",
+    obj({
+      id: str("note id"),
+      latex: str("LaTeX, e.g. x^2+1"),
+      block: bool("display block? default true"),
+      target: str("optional correct-answer LaTeX, enables the Math Checker for this block"),
+    }, ["id", "latex"]),
     async (a) => {
       const block = a.block !== false;
       const ok = await appendBlock(String(a.id), {
         type: block ? "mathBlock" : "mathInline",
-        attrs: { latex: String(a.latex) },
+        attrs: { latex: String(a.latex), ...(a.target ? { target: String(a.target) } : {}) },
       });
       return ok ? "Math inserted." : "No note with that id.";
+    }
+  ),
+  tool(
+    "insert_svg",
+    "Append an inline SVG diagram to a note. Pass the full <svg>…</svg> markup; it renders " +
+      "inline (not as a code block). Scripts, event handlers and foreignObject are stripped for safety, " +
+      "so make diagrams draw-only (paths, shapes, text). Set an explicit viewBox and stroke/fill colors.",
+    obj({ id: str("note id"), svg: str("full <svg>…</svg> markup") }, ["id", "svg"]),
+    async (a) => {
+      const svg = String(a.svg ?? "");
+      if (!/<svg[\s\S]*<\/svg>/i.test(svg)) return "The svg argument must contain a full <svg>…</svg> element.";
+      const ok = await appendBlock(String(a.id), { type: "svg", attrs: { svg } });
+      return ok ? "SVG inserted." : "No note with that id.";
     }
   ),
   tool(
@@ -1104,8 +1124,31 @@ const TOOLS: ToolImpl[] = [
               mastery: Number(u!.mastery) || 0,
             }))
         : [];
+      // A flat update (no `sub`) on a concept that HAS sub-skills is intentionally
+      // ignored by the store (the average of its subs is the source of truth). Surface
+      // that so the model knows it didn't take effect — and resends with a `sub`.
+      const concepts = useDeepWork.getState().backbone?.concepts ?? [];
+      const norm = (s: string) => s.toLowerCase().trim();
+      const ignored = updates
+        .filter((u) => !u.sub)
+        .filter((u) => {
+          const c = concepts.find((x) => norm(x.title) === norm(u.concept) || x.id === u.concept);
+          return c && (c.subs?.length ?? 0) > 0;
+        })
+        .map((u) => u.concept);
+      const unknown = updates
+        .filter((u) => !concepts.some((x) => norm(x.title) === norm(u.concept) || x.id === u.concept))
+        .map((u) => u.concept);
+
       useDeepWork.getState().setMastery(updates, a.overall != null ? Number(a.overall) : undefined);
-      return "Updated mastery.";
+
+      const applied = updates.length - ignored.length;
+      let msg = `Updated mastery (${applied}/${updates.length} applied).`;
+      if (ignored.length)
+        msg +=
+          ` Skipped (flat update on a concept that has sub-skills — pass a \`sub\` to credit a facet): ${[...new Set(ignored)].join(", ")}.`;
+      if (unknown.length) msg += ` No backbone concept matched: ${[...new Set(unknown)].join(", ")}.`;
+      return msg;
     }
   ),
   tool(
@@ -1815,7 +1858,7 @@ const CATEGORY_SETS: Array<[string, Set<string>]> = [
   ["Memory", new Set(["update_profile", "save_memory", "list_memories", "forget_memory", "recall"])],
   ["Notes", new Set([
     "search_notes", "read_note", "create_note", "update_note", "open_note", "get_tree",
-    "append_note", "set_metadata", "move_note", "delete_note", "insert_math", "insert_table", "link_notes",
+    "append_note", "set_metadata", "move_note", "delete_note", "insert_math", "insert_svg", "insert_table", "link_notes",
   ])],
   ["Calendar", new Set(["list_events", "get_event", "create_event", "update_event", "delete_event", "find_free_slots"])],
   ["Gmail", new Set([
@@ -1898,6 +1941,7 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "move_note": return d("Move note", noteTitle(s("id")));
     case "set_metadata": return d("Update note metadata", noteTitle(s("id")));
     case "insert_math": return d("Insert math into note", noteTitle(s("id")));
+    case "insert_svg": return d("Insert SVG into note", noteTitle(s("id")));
     case "insert_table": return d("Insert table into note", noteTitle(s("id")));
     case "link_notes": return d("Link notes", `${noteTitle(s("id"))} → ${noteTitle(s("targetId"))}`);
     // Memory

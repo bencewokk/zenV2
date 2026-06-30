@@ -8,6 +8,12 @@ const latexAttr = {
     parseHTML: (el: HTMLElement) => el.getAttribute("data-latex") ?? "",
     renderHTML: (attrs: { latex: string }) => ({ "data-latex": attrs.latex }),
   },
+  // Optional known-answer for the Math Checker; empty when the block isn't checkable.
+  target: {
+    default: "",
+    parseHTML: (el: HTMLElement) => el.getAttribute("data-target") ?? "",
+    renderHTML: (attrs: { target?: string }) => (attrs.target ? { "data-target": attrs.target } : {}),
+  },
 };
 
 /** Block (display) math: $$ ... $$ on its own line. */

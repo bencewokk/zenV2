@@ -1093,6 +1093,155 @@ math-field:focus-within { border-color: var(--accent); }
   font-size: 12px;
 }
 
+/* ── Math Checker — live verdict on math blocks ── */
+.zen-math-block.zen-check-ok {
+  box-shadow: inset 0 0 0 1.5px rgba(74, 222, 128, 0.7);
+  border-radius: 8px;
+}
+.zen-math-block.zen-check-bad {
+  box-shadow: inset 0 0 0 1.5px rgba(246, 104, 94, 0.7);
+  border-radius: 8px;
+}
+.zen-math-inline.zen-check-ok {
+  text-decoration: underline wavy rgba(74, 222, 128, 0.9);
+  text-underline-offset: 4px;
+}
+.zen-math-inline.zen-check-bad {
+  text-decoration: underline wavy rgba(246, 104, 94, 0.9);
+  text-underline-offset: 4px;
+}
+.zen-check-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+}
+.zen-check-ok + .zen-check-badge,
+.zen-math-block.zen-check-ok .zen-check-badge {
+  color: #4ade80;
+}
+.zen-check-panel {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+}
+.zen-math-inline {
+  position: relative;
+}
+.zen-math-inline .zen-check-panel {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 5;
+  min-width: 220px;
+  background: var(--bg-elev);
+}
+.zen-check-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.zen-check-panel-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+}
+.zen-check-clear {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.zen-check-clear:hover {
+  color: var(--text);
+}
+.zen-check-verdict {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.zen-check-verdict.zen-check-ok {
+  color: #4ade80;
+}
+.zen-check-verdict.zen-check-bad {
+  color: #f6685e;
+}
+.zen-check-note {
+  color: var(--text-dim);
+}
+
+/* ── Derivation rail — line-by-line step checking ── */
+.zen-deriv {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.zen-deriv-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-height: 2.2em;
+}
+.zen-deriv-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 12px;
+  flex-shrink: 0;
+}
+.zen-deriv-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 0.55em;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+.zen-deriv-seg {
+  width: 2px;
+  flex: 1;
+  margin: 2px 0;
+  background: var(--text-dim);
+  border-radius: 2px;
+}
+.zen-deriv-ok {
+  background: #4ade80;
+}
+.zen-deriv-bad {
+  background: #f6685e;
+}
+.zen-deriv-neutral {
+  background: var(--border);
+}
+.zen-deriv-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.zen-deriv-line {
+  overflow-x: auto;
+}
+.zen-deriv-line .katex-display {
+  margin: 0;
+  text-align: left;
+}
+.zen-deriv-flag {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #f6685e;
+}
+
 /* Clickable inline citation chip in AI replies ([id:..] / [pdf:.. p3]). */
 .zen-cite {
   display: inline;

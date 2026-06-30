@@ -16,6 +16,10 @@ export interface ChatTurn {
   role: "user" | "assistant" | "tool";
   content: string;
   tone?: ToolTone;
+  /** For tool turns: the target (e.g. note title) and the tool's returned summary, so
+   *  the chat can show WHAT happened and whether it succeeded — not just the action name. */
+  detail?: string;
+  result?: string;
 }
 
 /** A mutating tool call the assistant suggests; the user runs or dismisses it. */
@@ -71,6 +75,34 @@ const CONTEXT_BUDGET = 220_000; // chars of total request body before trimming
 
 function clampToolResult(s: string): string {
   return s.length > MAX_TOOL_RESULT ? `${s.slice(0, MAX_TOOL_RESULT)}\n…(truncated — re-read a smaller part if needed)` : s;
+}
+
+/** Immutably patch the tool turn at `idx` (used to fold a result/tone in after the call). */
+function updateTurn(s: { turns: ChatTurn[] }, idx: number, patch: Partial<ChatTurn>): { turns: ChatTurn[] } {
+  if (!s.turns[idx]) return { turns: s.turns };
+  const turns = [...s.turns];
+  turns[idx] = { ...turns[idx], ...patch };
+  return { turns };
+}
+
+/** One-line summary of a tool result for the chat activity line. */
+function summarizeResult(s: string): string {
+  const line = (s ?? "").replace(/\s+/g, " ").trim();
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line;
+}
+
+/** Heuristic: did a tool result report a failure (vs. a valid, possibly-empty success)?
+ *  Used only to colour the chat status dot — the model still reads the full text. */
+function isErrorResult(s: string): boolean {
+  const t = (s ?? "").trim();
+  return (
+    /^no (note|event|thread|pdf|backbone|matching)/i.test(t) ||
+    /\bfailed\b/i.test(t) ||
+    /^not connected/i.test(t) ||
+    /^the user has disabled/i.test(t) ||
+    /^tool ".*" failed/i.test(t) ||
+    /received no /i.test(t)
+  );
 }
 
 /** Shrink an over-budget message list by truncating the OLDEST tool/system contents,
@@ -173,6 +205,8 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "elements — it would show literal dollar signs. Write labels in <text> as plain Unicode instead " +
     "(e.g. x₁, x², ∫, √, π, ≤, →, θ, f(x)); keep $...$ math only in the surrounding Markdown prose. " +
     "Prefer $...$ math for formulas and an SVG only when a picture helps. " +
+    "To put a diagram INTO a note, call insert_svg with the full <svg>…</svg> markup (it renders inline, " +
+    "not as code); a ```svg fenced block inside create_note/update_note/append_note Markdown works too. " +
     "Write ALL mathematics as LaTeX wrapped in $...$ for inline or $$...$$ for display math " +
     "(e.g. $\\frac{1}{x}$, $$\\int_0^1 x^2\\,dx$$) — never write bare LaTeX without $ delimiters " +
     "and never paste raw \\frac/\\int outside math delimiters. This applies in chat AND in notes. " +
@@ -190,6 +224,15 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "When the user tells you a durable fact about themselves or a preference, save it with " +
     "update_profile (about them / how to work) or save_memory (any other fact). Don't ask " +
     "permission to remember — just do it and mention briefly that you saved it. " +
+    "TOOL DISCIPLINE (avoid hallucinating success): (1) Never say you did, changed, saved, or sent " +
+    "something unless you actually issued the tool call THIS turn — describing an action is not doing it. " +
+    "(2) READ BACK every tool result before you reply: the returned text is the ground truth. If it reports " +
+    "an error, 'No note with that id', 'Skipped', or anything short of success, do NOT claim success — fix the " +
+    "call and retry, or tell the user what failed. (3) Use only [id:...] values from a fresh search/list/read " +
+    "result in THIS conversation — never reuse an id from earlier context or invent one; if unsure, look it up " +
+    "again first. (4) Match each tool's required arguments and field names exactly; if a required value is " +
+    "missing, fetch it (search/list/read) before calling. (5) On an error, change something and retry once or " +
+    "switch approach — don't repeat the identical failing call, and don't silently give up. " +
     "STUDY/TUTOR MODE: When the user wants to study, learn, or prepare for an exam using their " +
     "Deep Work material, first call deepwork_read_material to read everything they've gathered " +
     "(notes, full PDF text, their highlights, events, emails). Synthesize the key concepts into a " +
@@ -372,22 +415,30 @@ export const useAI = create<AIState>((set, get) => {
                 result = `The user chose: ${choice}`;
               }
             } else if (isReadTool(name)) {
-              set((s) => ({ turns: [...s.turns, { role: "tool", content: describeToolCall(name, args).title, tone: "read" }] }));
+              const desc = describeToolCall(name, args);
+              let idx = 0;
+              set((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "read" }] }; });
               const key = readKey(name, args);
               if (!readCache.has(key)) readCache.set(key, runToolSafe(name, args));
               result = await readCache.get(key)!;
+              set((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "read", result: summarizeResult(result) }));
             } else if (isAutoTool(name)) {
-              set((s) => ({ turns: [...s.turns, { role: "tool", content: describeToolCall(name, args).title, tone: "run" }] }));
+              const desc = describeToolCall(name, args);
+              let idx = 0;
+              set((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "run" }] }; });
               result = await runToolSafe(name, args);
+              set((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "done", result: summarizeResult(result) }));
             } else {
               const policy = policyFor(name);
               const desc = describeToolCall(name, args);
               if (policy === "off") {
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${desc.title} (disabled)`, tone: "blocked" }] }));
+                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${desc.title} (disabled)`, detail: desc.detail, tone: "blocked", result: "Turned off in tool settings" }] }));
                 result = `The user has disabled the "${name}" tool. Do not use it; tell the user it's turned off or find another way.`;
               } else if (policy === "auto") {
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: desc.title, tone: "run" }] }));
+                let idx = 0;
+                set((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "run" }] }; });
                 result = await runToolSafe(name, args);
+                set((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "done", result: summarizeResult(result) }));
               } else {
                 const id = crypto.randomUUID();
                 set((s) => ({ proposals: [...s.proposals, { id, name, args, ...desc, status: "pending" }] }));
@@ -551,7 +602,7 @@ export const useAI = create<AIState>((set, get) => {
       set((s) => ({
         proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "done", result } : x)),
         // Record the outcome so later turns have context.
-        turns: [...s.turns, { role: "tool", content: `${p.title}: ${p.detail} — ${result}`, tone: "done" }],
+        turns: [...s.turns, { role: "tool", content: p.title, detail: p.detail, result: summarizeResult(result), tone: isErrorResult(result) ? "error" : "done" }],
       }));
       syncActive();
     } catch (e) {
@@ -559,7 +610,7 @@ export const useAI = create<AIState>((set, get) => {
       set((s) => ({
         proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "error", result } : x)),
         // Record the failure inline so the card can leave the bottom of the chat.
-        turns: [...s.turns, { role: "tool", content: `${p.title}: ${p.detail} — ${result}`, tone: "error" }],
+        turns: [...s.turns, { role: "tool", content: p.title, detail: p.detail, result: summarizeResult(result), tone: "error" }],
       }));
       syncActive();
       notify.error(`${p.title} failed: ${result}`);
@@ -573,7 +624,7 @@ export const useAI = create<AIState>((set, get) => {
     set((s) => ({
       proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "dismissed" } : x)),
       // Record the decline so the model knows it was declined.
-      turns: p ? [...s.turns, { role: "tool", content: `${p.title}: ${p.detail} — dismissed by user`, tone: "blocked" }] : s.turns,
+      turns: p ? [...s.turns, { role: "tool", content: p.title, detail: p.detail, result: "Dismissed by user", tone: "blocked" }] : s.turns,
     }));
     if (p) syncActive();
     // Continue once nothing is left pending — so a "ran A, dismissed B" batch still
@@ -594,8 +645,11 @@ export const useAI = create<AIState>((set, get) => {
     useStatus.getState().set({ ai: "busy" });
     try {
       let out = "";
-      for await (const chunk of deepseek.streamChat(messages, get().model, controller.signal)) {
-        out += chunk;
+      const gen = streamChatWithTools(messages, get().model, [], controller.signal);
+      for (;;) {
+        const next = await gen.next();
+        if (next.done) break;
+        out += next.value;
       }
       useStatus.getState().set({ ai: "idle" });
       return out.trim();

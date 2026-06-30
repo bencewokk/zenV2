@@ -11,6 +11,7 @@ import { useNotes } from "@/features/notes/store";
 import { SlashCommand } from "@/features/notes/extensions/slashCommand";
 import { WikiLink } from "@/features/notes/extensions/wikiLink";
 import { MathBlock, MathInline } from "@/features/math/math-nodes";
+import { useMathCheck } from "@/features/math/checkStore";
 import { TrailingNode } from "@/features/notes/extensions/trailingNode";
 import { Geometry } from "@/features/geometry/geometry-node";
 import { Svg } from "@/features/svg/svg-node";
@@ -23,8 +24,17 @@ export function Editor({ noteId }: { noteId: string }) {
   const saveContent = useNotes((s) => s.saveContent);
   const markDirty = useNotes((s) => s.patch);
   const rename = useNotes((s) => s.rename);
+  const saveMeta = useNotes((s) => s.saveMeta);
   const saveTimer = useRef<number | null>(null);
   const [inTable, setInTable] = useState(false);
+
+  // Mirror this note's Math Checker flag into the global toggle store that math node
+  // views read; re-sync whenever the open note (or its flag) changes.
+  const mathCheck = note?.mathCheck ?? false;
+  useEffect(() => {
+    useMathCheck.getState().setEnabled(mathCheck);
+    return () => useMathCheck.getState().setEnabled(false);
+  }, [noteId, mathCheck]);
 
   const editor = useEditor(
     {
@@ -105,6 +115,21 @@ export function Editor({ noteId }: { noteId: string }) {
         placeholder="Untitled"
         className="mb-2 w-full bg-transparent text-3xl font-bold outline-none placeholder:text-[var(--text-dim)]"
       />
+
+      {/* Note-wide controls */}
+      <div className="mb-2 flex items-center gap-2">
+        <button
+          className={`zen-pressable rounded-[6px] border px-2 py-1 text-xs ${
+            mathCheck
+              ? "border-[var(--accent)] text-[var(--accent)]"
+              : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
+          }`}
+          onClick={() => void saveMeta(noteId, { mathCheck: !mathCheck })}
+          title="Live-check every math block against its expected answer"
+        >
+          ✓ Math check{mathCheck ? " · on" : ""}
+        </button>
+      </div>
 
       {/* Stable wrapper so toggling the toolbar never reshuffles siblings
           around the BubbleMenu (which relocates its own DOM into a popup). */}

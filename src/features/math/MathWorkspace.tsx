@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
-import { renderLatex } from "@/shared/lib/renderMarkdown";
+import { useState } from "react";
+import { MathField } from "@/features/math/MathField";
 import { simplify, evaluate, type CasResult } from "@/features/math/cas";
 
 /**
- * Self-contained LaTeX scratch workspace: type LaTeX, see a live KaTeX preview,
- * optionally run CAS simplify/evaluate, and insert the expression into the host's
- * active answer field via `onInsert`. No quiz/lesson coupling beyond that callback.
+ * Self-contained LaTeX scratch workspace: compose math in the same MathLive field
+ * the notes editor uses (so entry/rendering is identical everywhere), optionally
+ * run CAS simplify/evaluate, and insert the expression into the host's active
+ * answer field via `onInsert`. No quiz/lesson coupling beyond that callback.
  */
 export function MathWorkspace({
   onInsert,
@@ -18,16 +19,12 @@ export function MathWorkspace({
   const [casOn, setCasOn] = useState(false);
   const [result, setResult] = useState<CasResult | null>(null);
 
-  const previewHtml = useMemo(
-    () => (latex.trim() ? renderLatex(latex, true) : ""),
-    [latex]
-  );
-
-  const resultHtml = useMemo(() => {
-    if (!result || !result.ok) return "";
-    if (result.value === "equivalent" || result.value === "not equivalent") return "";
-    return renderLatex(result.value, true);
-  }, [result]);
+  // CAS results that are LaTeX get rendered in a read-only field; verdict strings
+  // ("equivalent") are shown as plain text.
+  const resultLatex =
+    result?.ok && result.value !== "equivalent" && result.value !== "not equivalent"
+      ? result.value
+      : null;
 
   return (
     <div className="zen-math-ws">
@@ -40,24 +37,14 @@ export function MathWorkspace({
         )}
       </div>
 
-      <textarea
-        className="zen-math-ws-input"
+      <MathField
         value={latex}
-        spellCheck={false}
-        placeholder="Type LaTeX… e.g. \frac{d}{dx}x^2"
-        onChange={(e) => {
-          setLatex(e.target.value);
+        onChange={(v) => {
+          setLatex(v);
           setResult(null);
         }}
+        ariaLabel="Math scratch input"
       />
-
-      <div className="zen-math-ws-preview">
-        {previewHtml ? (
-          <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
-        ) : (
-          <span className="zen-math-ws-dim">Preview appears here</span>
-        )}
-      </div>
 
       <label className="zen-math-ws-toggle">
         <input type="checkbox" checked={casOn} onChange={(e) => setCasOn(e.target.checked)} />
@@ -76,8 +63,10 @@ export function MathWorkspace({
           </div>
           {result &&
             (result.ok ? (
-              resultHtml ? (
-                <div className="zen-math-ws-result" dangerouslySetInnerHTML={{ __html: resultHtml }} />
+              resultLatex ? (
+                <div className="zen-math-ws-result">
+                  <MathField value={resultLatex} readOnly ariaLabel="CAS result" />
+                </div>
               ) : (
                 <div className="zen-math-ws-result">{result.value}</div>
               )

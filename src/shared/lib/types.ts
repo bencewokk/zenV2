@@ -9,6 +9,7 @@ export interface Note {
   content: JSONContent | null; // TipTap doc
   collapsed: boolean; // tree collapse/expand state
   moc: boolean; // Map of Content: render child notes inline within this note
+  mathCheck?: boolean; // Math Checker: live-validate every math block against its target
 
   // metadata for filtering
   space: string | null;

@@ -125,9 +125,15 @@ function blockTokens(tokens: Token[]): JSONContent[] {
       case "hr":
         out.push({ type: "horizontalRule" });
         break;
+      case "html": {
+        // Raw HTML blocks are dropped — except an <svg>, which becomes a rendered
+        // SVG node (the AI often emits diagrams as raw <svg> markup, not a ```svg fence).
+        const m = String(t.text ?? t.raw ?? "").match(/<svg[\s\S]*<\/svg>/i);
+        if (m) out.push({ type: "svg", attrs: { svg: m[0] } });
+        break;
+      }
       case "space":
-      case "html":
-        break; // ignore blank lines and raw HTML blocks
+        break; // ignore blank lines
       default:
         if (t.tokens) out.push(...blockTokens(t.tokens));
     }
