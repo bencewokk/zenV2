@@ -145,6 +145,34 @@ function buildSampleMathNote(): Note {
   };
 }
 
+/**
+ * A second, small sample note purely so the onboarding walkthrough's wiki-link
+ * card has a real note to link to. Tagged distinctly from `buildSampleMathNote`'s
+ * "sample" tag so lookups for the primary sample note stay unambiguous.
+ */
+function buildSampleFunctionsNote(): Note {
+  const note = newNote(null, 2);
+  const p = (text: string): JSONContent => ({ type: "paragraph", content: [{ type: "text", text }] });
+  return {
+    ...note,
+    title: "Sample: Functions",
+    inbox: false,
+    space: "Study",
+    subject: "Algebra",
+    unit: "Functions",
+    tags: ["sample-secondary"],
+    content: {
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Functions" }] },
+        p("A function maps every input to exactly one output. A quadratic like the one in the linked Quadratics note is just one family of functions."),
+        p("Its domain is every real x; its range depends on the vertex and whether it opens up or down."),
+      ],
+    },
+    updatedAt: Date.now(),
+  };
+}
+
 interface NotesState {
   notes: Record<string, Note>;
   selectedId: string | null;
@@ -184,9 +212,11 @@ export const useNotes = create<NotesState>((set, get) => ({
       markSeeded();
       const welcome = buildWelcomeNote();
       const sampleMath = buildSampleMathNote();
+      const sampleFunctions = buildSampleFunctionsNote();
       await store.put(welcome);
       await store.put(sampleMath);
-      all = [welcome, sampleMath];
+      await store.put(sampleFunctions);
+      all = [welcome, sampleMath, sampleFunctions];
     }
     const map: Record<string, Note> = {};
     // Tolerate notes persisted before `pdfIds` existed.

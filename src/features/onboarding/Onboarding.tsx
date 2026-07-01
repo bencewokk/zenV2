@@ -1,17 +1,29 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import katex from "katex";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import JXG from "jsxgraph";
 import { loadSettings, saveSettings } from "@/services/ai/settings";
 import { loadGoogleSettings, saveGoogleSettings, isUsingBundledCredentials } from "@/services/google/settings";
 import { deepseek } from "@/services/ai/deepseek";
 import { isSignedIn, isConfigured, onAuthChange, signIn } from "@/services/google/auth";
-import { useHome } from "@/features/home/store";
+import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
+import { syncOnce } from "@/services/sync/engine";
+import { useHome, parseBriefItems } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { useNotes } from "@/features/notes/store";
+import { useAI } from "@/features/ai/store";
+import { MathField } from "@/features/math/MathField";
+import { type Construction } from "@/features/geometry/model";
+import { buildConstruction } from "@/features/geometry/build";
+import "@/features/geometry/jsxgraph.css";
 import { notify } from "@/shared/ui/notify";
 import { loadProfile, saveProfile, loadMemories, saveMemory, deleteMemory, type MemoryEntry } from "@/services/memory";
 import { useOnboarding } from "./store";
 import { ArtWelcome, ArtAI, ArtGoogle, ArtMemory, ArtGallery, ArtDeepWork, ArtStudyQuiz } from "./art";
+
+/** Matches `localDayKey` in features/home/store.ts (not exported) — local, not UTC. */
+function localDayKey(date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -37,11 +49,14 @@ export function Onboarding() {
       title: "Welcome to Zen",
       art: <ArtWelcome />,
       body: (
-        <p className="text-[var(--text-dim)]">
-          A calm, math-first notebook for studying and deep work. This 60-second tour connects the
-          optional extras and shows what Zen can do. Everything stays on your device — skip anything
-          you like.
-        </p>
+        <div className="space-y-3">
+          <p className="text-[var(--text-dim)]">
+            A calm, math-first notebook for studying and deep work. This 60-second tour connects the
+            optional extras and shows what Zen can do. Everything stays on your device — skip anything
+            you like.
+          </p>
+          <QuickGoogleSync onDone={finish} />
+        </div>
       ),
     },
     {
@@ -243,6 +258,40 @@ function AIStep() {
   );
 }
 
+/**
+ * One-click path for people who just want to sign in with Google and have
+ * everything sync — skips the rest of the tour once done. Separate from
+ * `GoogleStep` below, which is for the AI-first walkthrough.
+ */
+function QuickGoogleSync({ onDone }: { onDone: () => void }) {
+  const [signedIn, setSignedIn] = useState(() => isSignedIn());
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => onAuthChange(setSignedIn), []);
+
+  async function run() {
+    setBusy(true);
+    try {
+      if (!signedIn) await signIn();
+      const sync = loadSyncSettings();
+      if (!sync.enabled) saveSyncSettings({ ...sync, enabled: true });
+      await syncOnce();
+      notify.success("Signed in and synced");
+      onDone();
+    } catch (e) {
+      notify.error((e as Error).message || "Sign-in / sync failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button className="zen-btn zen-shine w-full" onClick={run} disabled={busy}>
+      {busy ? "Signing in & syncing…" : "Sign in with Google & sync everything"}
+    </button>
+  );
+}
+
 /** Inline Google connect, mirroring Settings → Connections. */
 function GoogleStep() {
   const [clientId, setClientId] = useState(() => loadGoogleSettings().clientId);
@@ -312,7 +361,11 @@ function GoogleStep() {
           }
         />
         {!signedIn && (
-          <button className="zen-btn ml-auto" onClick={connect} disabled={connecting || !clientId.trim()}>
+          <button
+            className="zen-btn ml-auto"
+            onClick={connect}
+            disabled={connecting || (!IS_TAURI && !clientId.trim())}
+          >
             {connecting ? "Connecting…" : "Connect"}
           </button>
         )}
@@ -373,84 +426,211 @@ function FeatureGallery({ onOpenSample }: { onOpenSample: () => void }) {
   );
 }
 
-/** A compact, representative example of one feature, rendered inside the tour. */
+/** A compact, real, interactive example of one feature, rendered inside the tour. */
 function FeaturePreview({ feature }: { feature: FeatureKey }) {
-  const mathHtml = useMemo(
-    () => katex.renderToString("x = \\frac{-b \\pm \\sqrt{b^{2} - 4ac}}{2a}", { throwOnError: false, displayMode: true }),
-    []
+  switch (feature) {
+    case "math": return <MathCardPreview />;
+    case "graph": return <GraphCardPreview />;
+    case "pdf": return <PdfCardPreview />;
+    case "ai": return <AiCardPreview />;
+    case "link": return <LinkCardPreview />;
+    case "dash": return <DashCardPreview />;
+  }
+}
+
+/** Real, editable MathLive field — the same web component the notes editor uses. */
+function MathCardPreview() {
+  const [latex, setLatex] = useState("x = \\frac{-b \\pm \\sqrt{b^{2} - 4ac}}{2a}");
+  return (
+    <div className="space-y-2">
+      <MathField value={latex} onChange={setLatex} ariaLabel="Try editing this equation" />
+      <p className="text-[11px] text-[var(--text-dim)]">
+        Type <code className="text-[var(--text)]">/math</code> or wrap in <code className="text-[var(--text)]">$…$</code> — this is
+        the real math field. Try editing it.
+      </p>
+    </div>
   );
+}
 
-  if (feature === "math") {
-    return (
-      <div className="space-y-2">
-        <div className="grid place-items-center py-1 text-[var(--text)]" dangerouslySetInnerHTML={{ __html: mathHtml }} />
-        <p className="text-[11px] text-[var(--text-dim)]">Type <code className="text-[var(--text)]">/math</code> or wrap in <code className="text-[var(--text)]">$…$</code> — rendered live with KaTeX, editable with MathLive.</p>
+/** Real JSXGraph board (the app's actual geometry engine) with a draggable triangle. */
+function GraphCardPreview() {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const idRef = useRef(`onboarding-jxg-${Math.random().toString(36).slice(2)}`);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    if (!host.id) host.id = idRef.current;
+    host.innerHTML = "";
+
+    let board: JXG.Board | null = null;
+    try {
+      board = JXG.JSXGraph.initBoard(host, {
+        boundingbox: [-5, 5, 5, -5],
+        axis: true,
+        grid: true,
+        showCopyright: false,
+        showNavigation: false,
+        keepAspectRatio: true,
+      });
+      const con: Construction = {
+        objects: [
+          { id: "a", kind: "point", x: -3, y: -2, name: "A" },
+          { id: "b", kind: "point", x: 3, y: -2, name: "B" },
+          { id: "c", kind: "point", x: 0, y: 3, name: "C" },
+          { id: "ab", kind: "segment", p1: "a", p2: "b" },
+          { id: "bc", kind: "segment", p1: "b", p2: "c" },
+          { id: "ca", kind: "segment", p1: "c", p2: "a" },
+        ],
+      };
+      buildConstruction(board, con, () => {});
+    } catch {
+      /* decorative demo — never let a board-init failure break the tour */
+    }
+
+    const created = board;
+    return () => {
+      try { if (created) JXG.JSXGraph.freeBoard(created); } catch { /* freed */ }
+    };
+  }, []);
+
+  return (
+    <div className="space-y-2">
+      <div ref={hostRef} className="zen-geometry-board" style={{ height: 140 }} />
+      <p className="text-[11px] text-[var(--text-dim)]">
+        Drag a point — this is the real geometry engine. Drop a graph block to plot functions or build
+        constructions in any note.
+      </p>
+    </div>
+  );
+}
+
+/** The real bundled sample PDF, rendered inline via the same native-iframe approach the PDF viewer uses. */
+function PdfCardPreview() {
+  return (
+    <div className="space-y-2">
+      <div className="overflow-hidden rounded-[8px] border border-[var(--border)]" style={{ height: 160 }}>
+        <iframe
+          src="/quadratic_advanced_insights.pdf#page=3&toolbar=0&navpanes=0"
+          title="Sample PDF, page 3"
+          className="h-full w-full"
+          style={{ border: "none" }}
+        />
       </div>
-    );
+      <p className="text-[11px] text-[var(--text-dim)]">
+        The real bundled sample PDF — indexed on your device. Ask the AI to "find the discriminant" and it
+        jumps straight to the page.
+      </p>
+    </div>
+  );
+}
+
+const AI_SAMPLE_TEXT = "this thing about roots is kinda important";
+const AI_CANNED_RESULT = "The nature of the roots is determined by the discriminant.";
+
+/** Real inline rewrite when an AI key is set; a canned example otherwise. */
+function AiCardPreview() {
+  const [result, setResult] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const hasKey = !!loadSettings().apiKey.trim();
+
+  async function rewrite() {
+    setBusy(true);
+    try {
+      const out = await useAI.getState().complete(
+        "Improve the clarity and precision of this sentence, keeping its meaning.",
+        AI_SAMPLE_TEXT
+      );
+      setResult(out);
+    } catch (e) {
+      notify.error((e as Error).message || "Rewrite failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  if (feature === "graph") {
-    return (
-      <div className="space-y-2">
-        <svg viewBox="0 0 200 84" width="100%" height="84" className="text-[var(--accent)]">
-          <line x1="10" y1="42" x2="190" y2="42" stroke="var(--border)" strokeWidth="1.5" />
-          <line x1="100" y1="6" x2="100" y2="78" stroke="var(--border)" strokeWidth="1.5" />
-          <path d="M30 12 Q100 96 170 12" fill="none" stroke="currentColor" strokeWidth="2" />
-        </svg>
-        <p className="text-[11px] text-[var(--text-dim)]">Drop a geometry/graph block and plot functions or constructions right in the note.</p>
-      </div>
-    );
-  }
-
-  if (feature === "pdf") {
-    return (
-      <div className="space-y-1.5">
-        <div className="space-y-1">
-          <div className="h-1.5 w-full rounded bg-[rgba(255,255,255,0.08)]" />
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 flex-1 rounded bg-[var(--accent-dim)]" />
-            <span className="rounded border border-[var(--accent)] px-1 text-[9px] text-[var(--accent)]">p.3</span>
-          </div>
-          <div className="h-1.5 w-2/3 rounded bg-[rgba(255,255,255,0.08)]" />
-        </div>
-        <p className="text-[11px] text-[var(--text-dim)]">Add a PDF and it's indexed on your device. Ask the AI to "find the discriminant" and it jumps to the page.</p>
-      </div>
-    );
-  }
-
-  if (feature === "ai") {
-    return (
-      <div className="space-y-1.5">
-        <div className="text-[11px] text-[var(--text-dim)] line-through">this thing about roots is kinda important</div>
-        <div className="text-[12px] text-[var(--text)]"><span className="mr-1 text-[var(--accent)]">✦</span>The nature of the roots is determined by the discriminant.</div>
-        <p className="text-[11px] text-[var(--text-dim)]">Select any text and ask the AI to rewrite, explain, or expand it in place.</p>
-      </div>
-    );
-  }
-
-  if (feature === "link") {
-    return (
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 text-[11px]">
-          <span className="rounded border border-[var(--accent)] bg-[var(--accent-dim)] px-1.5 py-0.5 text-[var(--text)]">Quadratics</span>
-          <span className="text-[var(--text-dim)]">↔</span>
-          <span className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[var(--text)]">Functions</span>
-        </div>
-        <p className="text-[11px] text-[var(--text-dim)]">Type <code className="text-[var(--text)]">[[</code> to link notes. Backlinks build a connected web of your knowledge.</p>
-      </div>
-    );
-  }
-
-  // dash
   return (
     <div className="space-y-1.5">
-      {["Review quadratics — exam in 5 days", "Calculus lecture · 2:00 PM", "Reply to Prof. Lang about pset 3"].map((line, i) => (
-        <div key={i} className="flex items-center gap-2 text-[11px] text-[var(--text)]">
+      <div className="text-[11px] text-[var(--text-dim)] line-through">{AI_SAMPLE_TEXT}</div>
+      <div className="text-[12px] text-[var(--text)]">
+        <span className="mr-1 text-[var(--accent)]">✦</span>
+        {busy ? "Rewriting…" : (result ?? AI_CANNED_RESULT)}
+      </div>
+      {hasKey ? (
+        <button className="zen-btn-ghost" onClick={rewrite} disabled={busy}>
+          {busy ? "Rewriting…" : result ? "Rewrite again" : "Rewrite live"}
+        </button>
+      ) : (
+        <p className="text-[11px] text-[var(--text-dim)]">
+          Connect AI (previous step) to try this live — showing an example above.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Two real sample notes, really linked — clicking one jumps into it (closes the tour). */
+function LinkCardPreview() {
+  const notes = useNotes((s) => s.notes);
+  const primary = Object.values(notes).find((n) => n.tags?.includes("sample"));
+  const secondary = Object.values(notes).find((n) => n.tags?.includes("sample-secondary"));
+
+  function openNote(id: string | undefined) {
+    if (!id) return;
+    useOnboarding.getState().finish();
+    useHome.getState().setManualDeepWork(false);
+    useWorkspace.getState().set({ surface: "home" });
+    useNotes.getState().select(id);
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-[11px]">
+        <button
+          className="rounded border border-[var(--accent)] bg-[var(--accent-dim)] px-1.5 py-0.5 text-[var(--text)] hover:opacity-80"
+          onClick={() => openNote(primary?.id)}
+        >
+          {primary?.title.replace(/^Sample:\s*/, "") ?? "Quadratics"}
+        </button>
+        <span className="text-[var(--text-dim)]">↔</span>
+        <button
+          className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[var(--text)] hover:border-[var(--text-dim)]"
+          onClick={() => openNote(secondary?.id)}
+        >
+          {secondary?.title.replace(/^Sample:\s*/, "") ?? "Functions"}
+        </button>
+      </div>
+      <p className="text-[11px] text-[var(--text-dim)]">
+        Real notes, really linked. Type <code className="text-[var(--text)]">[[</code> to link notes — click
+        either one to jump straight in.
+      </p>
+    </div>
+  );
+}
+
+/** Today's real brief if one exists yet, else a canned example. */
+function DashCardPreview() {
+  const summary = useHome((s) => s.summary);
+  const summaryDayKey = useHome((s) => s.summaryDayKey);
+  const live = summaryDayKey === localDayKey() && summary.trim() ? parseBriefItems(summary).slice(0, 3) : null;
+
+  const canned = [
+    "Review quadratics — exam in 5 days",
+    "Calculus lecture · 2:00 PM",
+    "Reply to Prof. Lang about pset 3",
+  ].map((text) => ({ key: text, text }));
+
+  return (
+    <div className="space-y-1.5">
+      {(live ?? canned).map((item) => (
+        <div key={item.key} className="flex items-center gap-2 text-[11px] text-[var(--text)]">
           <span className="grid h-3 w-3 place-items-center rounded-[3px] border border-[var(--border)]" />
-          {line}
+          {item.text}
         </div>
       ))}
-      <p className="text-[11px] text-[var(--text-dim)]">Your daily brief fuses notes, calendar, and mail into one focused list.</p>
+      <p className="text-[11px] text-[var(--text-dim)]">
+        {live ? "This is today's real brief." : "Your daily brief fuses notes, calendar, and mail into one focused list."}
+      </p>
     </div>
   );
 }
