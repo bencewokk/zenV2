@@ -1,3 +1,5 @@
+import { markBlobDirty } from "@/services/sync/cursor";
+
 // Optional build-time default; real key is normally entered in-app (Settings →
 // Connections) or via a gitignored .env. Empty string when unset — the app runs fine.
 const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY ?? "";
@@ -25,6 +27,9 @@ export interface AISettings {
 }
 
 const KEY = "zen.ai.settings.v1";
+export const AI_SETTINGS_KEY = KEY;
+/** Fields that must never leave this device — stripped before sync push. */
+export const AI_SETTINGS_SECRET_FIELDS = ["apiKey", "anthropicApiKey"] as const;
 
 const DEFAULTS: AISettings = {
   provider: "deepseek",
@@ -53,4 +58,11 @@ export function loadSettings(): AISettings {
 
 export function saveSettings(s: AISettings): void {
   localStorage.setItem(KEY, JSON.stringify(s));
+  markBlobDirty("aiSettings");
+}
+
+/** No live store subscribes to this blob — callers re-read via `loadSettings()`
+ *  on next mount, same as the memory profile blob. */
+export function hydrateAiSettings(): void {
+  /* no-op */
 }

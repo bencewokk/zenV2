@@ -1,3 +1,5 @@
+import { markBlobDirty } from "@/services/sync/cursor";
+
 /**
  * Google integration config. The OAuth Client ID is not a secret (it's a public
  * web client id), but we keep it overridable at runtime like the AI key.
@@ -17,6 +19,9 @@ export interface GoogleSettings {
 }
 
 const KEY = "zen.google.settings.v1";
+export const GOOGLE_SETTINGS_KEY = KEY;
+/** Fields that must never leave this device — stripped before sync push. */
+export const GOOGLE_SETTINGS_SECRET_FIELDS = ["clientSecret"] as const;
 
 const DEFAULTS: GoogleSettings = {
   clientId: GOOGLE_CLIENT_ID,
@@ -35,6 +40,13 @@ export function loadGoogleSettings(): GoogleSettings {
 
 export function saveGoogleSettings(s: GoogleSettings): void {
   localStorage.setItem(KEY, JSON.stringify(s));
+  markBlobDirty("googleSettings");
+}
+
+/** No live store subscribes to this blob — callers re-read via `loadGoogleSettings()`
+ *  on next mount, same as the memory profile blob. */
+export function hydrateGoogleSettings(): void {
+  /* no-op */
 }
 
 /**

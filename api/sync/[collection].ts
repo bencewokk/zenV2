@@ -5,7 +5,10 @@ import { userIdFromRequest } from "../_lib/auth.js";
 import { syncCollection, nextSeq, type SyncRecord } from "../_lib/db.js";
 
 /** Logical collections clients may sync. Anything else is rejected. */
-const ALLOWED = new Set(["notes", "ai", "deepwork", "studylog", "workspace", "pdfs"]);
+const ALLOWED = new Set([
+  "notes", "ai", "deepwork", "studylog", "workspace", "pdfs", "quiz",
+  "memoryProfile", "memoryEntries", "appearance", "toolPolicy", "aiSettings", "googleSettings",
+]);
 
 /** Page size cap for a single pull, to bound function memory/time. */
 const PULL_LIMIT = 500;

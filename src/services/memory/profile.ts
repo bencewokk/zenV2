@@ -1,3 +1,5 @@
+import { markBlobDirty } from "@/services/sync/cursor";
+
 /**
  * Layer 1 — Persistent profile memory (static).
  * A small set of baseline facts/preferences injected into every AI request
@@ -26,6 +28,16 @@ export function loadProfile(): Profile {
 
 export function saveProfile(p: Profile): void {
   localStorage.setItem(KEY, JSON.stringify(p));
+  markBlobDirty("memoryProfile");
+}
+
+export const PROFILE_KEY = KEY;
+
+/** No live store subscribes to this blob — callers re-read via `loadProfile()`
+ *  on next mount, same as any other settings panel. Exists for parity with the
+ *  other sync adapters' hydrate signature. */
+export function hydrateProfile(): void {
+  /* no-op */
 }
 
 /** Merge a partial update into the stored profile (used by the AI tool). */

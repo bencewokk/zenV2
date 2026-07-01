@@ -1,3 +1,5 @@
+import { markBlobDirty } from "@/services/sync/cursor";
+
 /**
  * Appearance preferences — accent color, motion, and UI font. Applied by setting
  * CSS custom properties on the document root, so they flow through the existing
@@ -30,6 +32,7 @@ export interface AppearanceSettings {
 }
 
 const KEY = "zen.appearance.v1";
+export const APPEARANCE_KEY = KEY;
 
 /** A handful of accent presets; the picker also allows any custom hex. */
 export const ACCENT_PRESETS = ["#6ea8fe", "#7dd3a8", "#f0a868", "#c792ea", "#f6685e", "#4cc9c0"];
@@ -50,7 +53,15 @@ export function loadAppearance(): AppearanceSettings {
 }
 
 export function saveAppearance(s: AppearanceSettings): void {
-  try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(KEY, JSON.stringify(s));
+    markBlobDirty("appearance");
+  } catch { /* ignore */ }
+}
+
+/** Re-read persisted appearance and re-apply it live (used by sync apply). */
+export function hydrateAppearance(): void {
+  applyAppearance(loadAppearance());
 }
 
 /** Darken a hex color toward black by `amount` (0-1) for the derived --accent-dim. */

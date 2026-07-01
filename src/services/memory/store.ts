@@ -1,3 +1,5 @@
+import { markBlobDirty } from "@/services/sync/cursor";
+
 /**
  * Persistent "memory files" — discrete facts the agent (or user) saves about
  * anything. Always injected into the system prompt and curatable in the UI.
@@ -31,6 +33,14 @@ export function loadMemories(): MemoryEntry[] {
 
 function writeMemories(list: MemoryEntry[]): void {
   localStorage.setItem(KEY, JSON.stringify(list));
+  markBlobDirty("memoryEntries");
+}
+
+export const MEMORY_ENTRIES_KEY = KEY;
+
+/** No live store subscribes to this blob — see `hydrateProfile` in profile.ts. */
+export function hydrateMemories(): void {
+  /* no-op */
 }
 
 /** Create or update by case-insensitive title. Returns the entry. */

@@ -1,7 +1,9 @@
 import { create } from "zustand";
+import { markBlobDirty } from "@/services/sync/cursor";
 import { TOOL_CATALOG, type ToolPolicy } from "./tools";
 
 const KEY = "zen.ai.toolPolicy.v1";
+export const TOOL_POLICY_KEY = KEY;
 
 function loadOverrides(): Record<string, ToolPolicy> {
   try {
@@ -23,15 +25,29 @@ export const useToolPolicy = create<ToolPolicyState>((set) => ({
   setPolicy(name, policy) {
     set((s) => {
       const overrides = { ...s.overrides, [name]: policy };
-      try { localStorage.setItem(KEY, JSON.stringify(overrides)); } catch { /* ignore */ }
+      try {
+        localStorage.setItem(KEY, JSON.stringify(overrides));
+        markBlobDirty("toolPolicy");
+      } catch { /* ignore */ }
       return { overrides };
     });
   },
   resetAll() {
-    try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+    // Write `{}` rather than removeItem — the sync adapter treats a missing/null
+    // blob as "nothing to apply", so a reset needs an actual empty object to
+    // propagate to other devices.
+    try {
+      localStorage.setItem(KEY, JSON.stringify({}));
+      markBlobDirty("toolPolicy");
+    } catch { /* ignore */ }
     set({ overrides: {} });
   },
 }));
+
+/** Re-read persisted tool-policy overrides into the live store (used by sync apply). */
+export function hydrateToolPolicy(): void {
+  useToolPolicy.setState({ overrides: loadOverrides() });
+}
 
 /** Resolve the effective policy for a tool (user override → catalog default → "auto"). */
 export function policyFor(name: string): ToolPolicy {

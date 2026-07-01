@@ -6,10 +6,18 @@ import { getCursor, setCursor, onDirty, resetSyncState } from "./cursor";
 import { notesAdapter } from "./adapters/notes";
 import { pdfsAdapter } from "./adapters/pdfs";
 import { makeBlobAdapter } from "./adapters/blob";
+import { makeFilteredBlobAdapter } from "./adapters/filteredBlob";
 import { WORKSPACE_KEY, hydrateWorkspace } from "@/shared/stores/workspace";
 import { STUDYLOG_KEY, hydrateStudyLog } from "@/features/home/deepwork/studyLog";
 import { DEEPWORK_KEY, hydrateDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { QUIZ_KEY, hydrateQuiz } from "@/features/home/deepwork/quizStore";
 import { AI_CONV_KEY, hydrateAI } from "@/features/ai/store";
+import { PROFILE_KEY, hydrateProfile } from "@/services/memory/profile";
+import { MEMORY_ENTRIES_KEY, hydrateMemories } from "@/services/memory/store";
+import { APPEARANCE_KEY, hydrateAppearance } from "@/services/appearance";
+import { TOOL_POLICY_KEY, hydrateToolPolicy } from "@/services/ai/toolPolicy";
+import { AI_SETTINGS_KEY, AI_SETTINGS_SECRET_FIELDS, hydrateAiSettings } from "@/services/ai/settings";
+import { GOOGLE_SETTINGS_KEY, GOOGLE_SETTINGS_SECRET_FIELDS, hydrateGoogleSettings } from "@/services/google/settings";
 import type { SyncAdapter } from "./types";
 
 /** Registered adapters. Notes sync per-record; the rest are singleton blobs (Part 4). */
@@ -19,7 +27,14 @@ const adapters: SyncAdapter[] = [
   makeBlobAdapter("workspace", WORKSPACE_KEY, hydrateWorkspace),
   makeBlobAdapter("studylog", STUDYLOG_KEY, hydrateStudyLog),
   makeBlobAdapter("deepwork", DEEPWORK_KEY, hydrateDeepWork),
+  makeBlobAdapter("quiz", QUIZ_KEY, hydrateQuiz),
   makeBlobAdapter("ai", AI_CONV_KEY, hydrateAI),
+  makeBlobAdapter("memoryProfile", PROFILE_KEY, hydrateProfile),
+  makeBlobAdapter("memoryEntries", MEMORY_ENTRIES_KEY, hydrateMemories),
+  makeBlobAdapter("appearance", APPEARANCE_KEY, hydrateAppearance),
+  makeBlobAdapter("toolPolicy", TOOL_POLICY_KEY, hydrateToolPolicy),
+  makeFilteredBlobAdapter("aiSettings", AI_SETTINGS_KEY, hydrateAiSettings, [...AI_SETTINGS_SECRET_FIELDS]),
+  makeFilteredBlobAdapter("googleSettings", GOOGLE_SETTINGS_KEY, hydrateGoogleSettings, [...GOOGLE_SETTINGS_SECRET_FIELDS]),
 ];
 
 const POLL_MS = 30_000;

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { markBlobDirty } from "@/services/sync/cursor";
 
 /**
  * Quiz engine for Deep Work study. The AI builds a quiz via `deepwork_start_quiz`
@@ -103,6 +104,7 @@ interface QuizState extends Persisted {
 }
 
 const KEY = "zen.quiz.v2";
+export const QUIZ_KEY = KEY;
 const MAX_HISTORY = 50;
 
 function read(): Persisted {
@@ -136,6 +138,7 @@ export const useQuiz = create<QuizState>((set, get) => {
     const { quizzes, order, activeId } = get();
     try {
       localStorage.setItem(KEY, JSON.stringify({ quizzes, order, activeId }));
+      markBlobDirty("quiz");
     } catch {
       /* ignore */
     }
@@ -450,6 +453,11 @@ export function quizQAList(rec: QuizRecord): string {
       return `Q${i + 1} [${tag}]: ${prompt} — my answer: ${ans.slice(0, 160)}`;
     })
     .join("\n");
+}
+
+/** Re-read persisted quiz history into the live store (used by sync apply). */
+export function hydrateQuiz(): void {
+  useQuiz.setState(read());
 }
 
 /** Count of questions the user has given some answer to. */

@@ -21,7 +21,10 @@ scoped to the token's Google account (`sub`).
 | `GET`  | `/api/pdfs/:id` | Download a PDF binary. |
 | `DELETE` | `/api/pdfs/:id` | Delete a PDF binary. |
 
-`:collection ∈ { notes, ai, deepwork, studylog, workspace, pdfs }`.
+`:collection ∈ { notes, ai, deepwork, studylog, workspace, pdfs, quiz, memoryProfile,
+memoryEntries, appearance, toolPolicy, aiSettings, googleSettings }`. The last two
+are filtered client-side before push — `apiKey`/`anthropicApiKey` and `clientSecret`
+never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
 
 ## Setup
 
