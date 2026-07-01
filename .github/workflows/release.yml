@@ -54,6 +54,13 @@ jobs:
 
       - run: npm ci
 
+      # tauri-action reads tauri.conf.json before it runs beforeBuildCommand, so
+      # the release version must be written before the action starts.
+      - name: Sync release version
+        run: node scripts/sync-version.mjs
+        env:
+          ZEN_RELEASE_VERSION: ${{ github.ref_name }}
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
