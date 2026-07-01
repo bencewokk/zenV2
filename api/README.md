@@ -17,8 +17,9 @@ scoped to the token's Google account (`sub`).
 |---|---|---|
 | `GET`  | `/api/sync/:collection?since=<seq>` | Pull docs changed after cursor `<seq>` (incl. tombstones). |
 | `POST` | `/api/sync/:collection` | Push `{ docs: [...] }`; LWW upsert; returns `{ accepted, rejected, cursor }`. |
-| `PUT`  | `/api/pdfs/:id` | Upload a PDF binary (octet-stream) to GridFS. |
-| `GET`  | `/api/pdfs/:id` | Download a PDF binary. |
+| `PUT`  | `/api/pdfs/:id?uploadId=&part=&parts=` | Upload one PDF part; the final part atomically assembles it in GridFS. |
+| `GET`  | `/api/pdfs/:id?meta=1` | Read the stored PDF byte length. |
+| `GET`  | `/api/pdfs/:id?start=&end=` | Download an end-exclusive byte range. |
 | `DELETE` | `/api/pdfs/:id` | Delete a PDF binary. |
 
 `:collection ∈ { notes, ai, deepwork, studylog, workspace, pdfs, quiz, memoryProfile,

@@ -50,7 +50,8 @@ const STORE = "pdfs";
 const VERSION = 2;
 
 interface PdfRecord extends PdfDoc {
-  blob: Blob;
+  // Missing on a device that has synced metadata but is still waiting for bytes.
+  blob?: Blob;
   pages?: string[]; // per-page plain text; index 0 = page 1
   textExtractedAt?: number;
   annotations?: PdfAnnotation[];
@@ -134,7 +135,11 @@ export const pdfStore = {
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const r = tx(db, "readonly").get(id);
-      r.onsuccess = () => resolve(r.result ? (r.result as PdfRecord).blob : null);
+      r.onsuccess = () => {
+        const rec = r.result as PdfRecord | undefined;
+        const blob = rec?.blob;
+        resolve(blob && blob.size > 0 && blob.size === rec.size ? blob : null);
+      };
       r.onerror = () => reject(r.error);
     });
   },
@@ -257,6 +262,34 @@ export const pdfStore = {
     };
   },
 
+  /** All PDF metadata, used to repair interrupted binary transfers on later passes. */
+  async allSyncMeta(): Promise<PdfSyncMeta[]> {
+    const db = await openDb();
+    const out: PdfSyncMeta[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const r = tx(db, "readonly").openCursor();
+      r.onsuccess = () => {
+        const cur = r.result;
+        if (!cur) return resolve();
+        const rec = cur.value as PdfRecord;
+        out.push({
+          id: rec.id,
+          name: rec.name,
+          tags: rec.tags,
+          size: rec.size,
+          addedAt: rec.addedAt,
+          pageCount: rec.pageCount,
+          annotations: rec.annotations,
+          outline: rec.outline,
+          updatedAt: rec.updatedAt ?? rec.addedAt,
+        });
+        cur.continue();
+      };
+      r.onerror = () => reject(r.error);
+    });
+    return out;
+  },
+
   /** Whether a blob exists locally for this id (used to decide a lazy download). */
   async hasBlob(id: string): Promise<boolean> {
     return (await this.getBlob(id)) != null;
@@ -271,7 +304,7 @@ export const pdfStore = {
     return id in t ? t[id] : -Infinity;
   },
 
-  /** Apply remote metadata without re-flagging it dirty. Preserves any local blob. */
+  /** Apply remote metadata without re-flagging it dirty. Preserves a valid local blob. */
   async applyRemoteMeta(meta: PdfSyncMeta, blob: Blob | null): Promise<void> {
     const db = await openDb();
     const existing = await get<PdfRecord>(tx(db, "readonly"), meta.id);
@@ -286,8 +319,11 @@ export const pdfStore = {
       annotations: meta.annotations,
       outline: meta.outline,
       updatedAt: meta.updatedAt,
-      blob: blob ?? existing?.blob ?? new Blob([]),
     };
+    const incoming = blob && blob.size === meta.size ? blob : null;
+    const local = existing?.blob && existing.blob.size === meta.size ? existing.blob : null;
+    if (incoming ?? local) rec.blob = (incoming ?? local)!;
+    else delete rec.blob;
     const dbw = await openDb();
     await new Promise<void>((resolve, reject) => {
       const r = tx(dbw, "readwrite").put(rec);

@@ -8,3 +8,4 @@ src-tauri/target/
 # local secrets — never commit
 src/services/ai/secret.ts
 src/services/google/secret.ts
+.vercel/

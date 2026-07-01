@@ -5,6 +5,7 @@ import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { useIndexProgress } from "@/features/memory/useIndexProgress";
 import { isPdfIndexed, primeIndex, buildPdfIndex } from "@/services/memory";
 import { notify } from "@/shared/ui/notify";
+import { syncOnce } from "@/services/sync/engine";
 import type { PdfAnnotation, PdfOutlineItem } from "@/shared/lib/types";
 
 const EMPTY: PdfAnnotation[] = []; // stable empty ref to avoid re-renders
@@ -24,6 +25,7 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
 
   const [url, setUrl] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [pages, setPages] = useState<string[] | null>(null);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
@@ -102,6 +104,21 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
 
   const removeBookmark = (id: string) => void usePdfs.getState().removeAnnotation(pdfId, id);
 
+  const retryDownload = async () => {
+    setRetrying(true);
+    try {
+      await syncOnce();
+      const nextUrl = await usePdfs.getState().urlFor(pdfId);
+      if (!nextUrl) throw new Error("The PDF file is still unavailable on the sync server.");
+      setUrl(nextUrl);
+      setMissing(false);
+    } catch (error) {
+      notify.error((error as Error).message || "Could not download PDF");
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const sorted = useMemo(() => [...bookmarks].sort((a, b) => a.page - b.page || a.createdAt - b.createdAt), [bookmarks]);
 
   // Group highlights by concept (concept-tagged groups first, plain bookmarks last).
@@ -116,7 +133,25 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
     return [...groups.entries()].sort((a, b) => (a[0] ? 0 : 1) - (b[0] ? 0 : 1) || a[0].localeCompare(b[0]));
   }, [sorted]);
 
-  if (missing) return <div className="p-4 text-sm text-[var(--text-dim)]">This PDF is no longer available.</div>;
+  if (missing) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-center text-sm">
+        <div className="max-w-sm">
+          <div className="font-medium text-[var(--text)]">PDF file not downloaded</div>
+          <p className="mt-1 text-[var(--text-dim)]">
+            Its title and table of contents synced, but the PDF bytes are not available on this device yet.
+          </p>
+          <button
+            className="zen-pressable mt-3 rounded bg-[var(--accent)] px-3 py-1.5 text-white disabled:opacity-50"
+            onClick={() => void retryDownload()}
+            disabled={retrying}
+          >
+            {retrying ? "Retrying sync…" : "Retry download"}
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!url) return <div className="p-4 text-sm text-[var(--text-dim)]">Loading PDF…</div>;
 
   // Toolbar/nav hash drives the native viewer's page. Changing the fragment

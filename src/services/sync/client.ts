@@ -50,22 +50,48 @@ export async function push(collection: string, docs: WireDoc[]): Promise<PushRes
   return (await res.json()) as PushResult;
 }
 
-/** Upload a PDF binary blob. */
+// Keep every request comfortably below common serverless request/response limits.
+// The API assembles upload parts in GridFS and serves downloads as byte ranges.
+const PDF_CHUNK_SIZE = 3 * 1024 * 1024;
+
+/** Upload a PDF binary blob in bounded parts. */
 export async function putPdfBlob(id: string, blob: Blob): Promise<void> {
+  if (blob.size === 0) throw new Error(`pdf upload ${id}: file is empty`);
   const headers = await authHeaders();
-  const res = await httpFetch(`${base()}/api/pdfs/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    headers: { ...headers, "Content-Type": "application/octet-stream" },
-    body: blob,
-  });
-  if (!res.ok) throw new Error(`pdf upload ${id}: ${res.status}`);
+  const uploadId = crypto.randomUUID();
+  const parts = Math.ceil(blob.size / PDF_CHUNK_SIZE);
+  for (let part = 0; part < parts; part++) {
+    const start = part * PDF_CHUNK_SIZE;
+    const body = blob.slice(start, Math.min(blob.size, start + PDF_CHUNK_SIZE));
+    const params = new URLSearchParams({ uploadId, part: String(part), parts: String(parts) });
+    const res = await httpFetch(`${base()}/api/pdfs/${encodeURIComponent(id)}?${params}`, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/octet-stream" },
+      body,
+    });
+    if (!res.ok) throw new Error(`pdf upload ${id} part ${part + 1}/${parts}: ${res.status}`);
+  }
 }
 
-/** Download a PDF binary blob, or null if the server has none. */
+/** Download a PDF binary blob in bounded ranges, or null if the server has none. */
 export async function getPdfBlob(id: string): Promise<Blob | null> {
   const headers = await authHeaders();
-  const res = await httpFetch(`${base()}/api/pdfs/${encodeURIComponent(id)}`, { headers });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`pdf download ${id}: ${res.status}`);
-  return res.blob();
+  const url = `${base()}/api/pdfs/${encodeURIComponent(id)}`;
+  const meta = await httpFetch(`${url}?meta=1`, { headers });
+  if (meta.status === 404) return null;
+  if (!meta.ok) throw new Error(`pdf download ${id}: ${meta.status}`);
+  const { size } = (await meta.json()) as { size: number };
+  if (!Number.isSafeInteger(size) || size <= 0) throw new Error(`pdf download ${id}: invalid size`);
+
+  const chunks: Blob[] = [];
+  for (let start = 0; start < size; start += PDF_CHUNK_SIZE) {
+    const end = Math.min(size, start + PDF_CHUNK_SIZE);
+    const params = new URLSearchParams({ start: String(start), end: String(end) });
+    const res = await httpFetch(`${url}?${params}`, { headers });
+    if (!res.ok) throw new Error(`pdf download ${id} bytes ${start}-${end}: ${res.status}`);
+    chunks.push(await res.blob());
+  }
+  const blob = new Blob(chunks, { type: "application/pdf" });
+  if (blob.size !== size) throw new Error(`pdf download ${id}: expected ${size} bytes, got ${blob.size}`);
+  return blob;
 }
