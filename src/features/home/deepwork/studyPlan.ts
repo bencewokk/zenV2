@@ -48,9 +48,10 @@ export interface StudyPlan {
 
 /** Readiness (overall mastery %) we aim to reach by the deadline. */
 export const TARGET_READINESS = 85;
-/** Rough study minutes needed to gain one point of overall mastery. */
-export const MIN_PER_POINT = 9;
 export const DEFAULT_HORIZON_DAYS = 7;
+const TARGET_EVIDENCE_REVIEWS = 3;
+const FORECAST_SAFETY_MARGIN = 1.15;
+const RETENTION_WINDOW_DAYS = 14;
 /** Under-booked by more than this (min) → the plan has drifted, offer a re-plan. */
 const DRIFT_DEFICIT_MIN = 30;
 /** Over-booked by more than this (min) while nearly mastered → trim, offer re-plan. */
@@ -127,19 +128,54 @@ export function reconcilePlan(plan: StudyPlan, now: number): { plan: StudyPlan; 
 }
 
 export interface PlanHealth {
-  daysLeft: number; // until exam, or the horizon when there's no deadline
+  daysLeft: number; // until the goal date, or the horizon when there's no deadline
   hasDeadline: boolean;
   overall: number; // current overall readiness
+  effectiveReadiness: number; // evidence/staleness-adjusted readiness
+  projectedReadiness: number; // forecast from work currently booked before the goal
+  evidenceCoverage: number; // 0..100: repeat evidence across the backbone
   masteryGap: number; // points still to gain to hit TARGET_READINESS
   requiredMin: number; // estimated study minutes still needed
   neededPerDayMin: number; // requiredMin spread over the days left
   plannedRemainingMin: number; // minutes booked in upcoming (non-missed) sessions
   deficitMin: number; // requiredMin shortfall vs what's booked
   pressure: number; // neededPerDay / dailyTarget (>1 = need more than your daily budget)
+  availableMin: number; // capacity before the goal at the daily budget
+  daysNeeded: number; // study days required at the daily budget
+  bufferDays: number; // daysLeft - daysNeeded
+  feasible: boolean;
   missedCount: number;
   onTrack: boolean;
   drift: boolean; // the plan should be revised
-  verdict: "ahead" | "on-track" | "behind";
+  verdict: "ahead" | "on-track" | "at-risk" | "overcommitted";
+}
+
+function clamp(n: number, min = 0, max = 100): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function conceptEvidence(c: StudyBackbone["concepts"][number]): number {
+  if (!c.subs?.length) return c.reviewCount ?? 0;
+  return c.subs.reduce((sum, sub) => sum + (sub.reviewCount ?? 0), 0) / c.subs.length;
+}
+
+function conceptScope(c: StudyBackbone["concepts"][number]): number {
+  return Math.min(2.5, 1 + Math.max(0, (c.subs?.length ?? 1) - 1) * 0.3);
+}
+
+/** Conservative readiness: thin evidence lowers confidence, while overdue
+ * material decays until it is successfully retrieved again. */
+function effectiveConceptReadiness(c: StudyBackbone["concepts"][number], now: number): number {
+  const mastery = clamp(c.mastery);
+  const evidence = conceptEvidence(c);
+  const confidence = 1 - Math.exp(-evidence / 2);
+  const thinEvidencePenalty = (1 - confidence) * Math.min(35, mastery * 0.35);
+  let overduePenalty = 0;
+  if (c.due != null && now >= c.due) {
+    const overdueDays = (now - c.due) / 86400000;
+    overduePenalty = Math.min(15, 5 + (overdueDays / Math.max(1, c.interval ?? 1)) * 5);
+  }
+  return clamp(mastery - thinEvidencePenalty - overduePenalty);
 }
 
 /**
@@ -149,30 +185,80 @@ export interface PlanHealth {
  */
 export function planHealth(plan: StudyPlan | null, backbone: StudyBackbone | null, now: number): PlanHealth {
   const overall = backbone?.overall ?? 0;
-  const masteryGap = Math.max(0, TARGET_READINESS - overall);
   const examDays = daysUntilExam(plan?.examDate, now);
   const hasDeadline = examDays != null;
   const horizon = plan?.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const daysLeft = Math.max(1, examDays != null ? examDays : horizon);
+  const concepts = backbone?.concepts ?? [];
+  const weighted = concepts.map((concept) => ({
+    concept,
+    scope: conceptScope(concept),
+    effective: effectiveConceptReadiness(concept, now),
+    evidence: conceptEvidence(concept),
+  }));
+  const totalScope = weighted.reduce((sum, item) => sum + item.scope, 0);
+  const effectiveReadiness = totalScope
+    ? Math.round(weighted.reduce((sum, item) => sum + item.effective * item.scope, 0) / totalScope)
+    : 0;
+  const evidenceCoverage = totalScope
+    ? Math.round(
+        (weighted.reduce(
+          (sum, item) => sum + Math.min(1, item.evidence / TARGET_EVIDENCE_REVIEWS) * item.scope,
+          0
+        ) / totalScope) * 100
+      )
+    : 0;
+  const masteryGap = Math.max(0, TARGET_READINESS - effectiveReadiness);
 
-  const requiredMin = Math.round(masteryGap * MIN_PER_POINT);
+  const deadlineAt = hasDeadline && plan?.examDate
+    ? new Date(`${plan.examDate}T00:00:00`).getTime()
+    : now + daysLeft * 86400000;
+  const rawRequiredMin = weighted.reduce((sum, item) => {
+    const gap = Math.max(0, TARGET_READINESS - item.effective);
+    const minutesPerPoint = 1.3 + (item.effective / 100) * 1.2;
+    const learning = gap * minutesPerPoint * item.scope;
+    const evidence = Math.max(0, TARGET_EVIDENCE_REVIEWS - item.evidence) * 8 * item.scope;
+    const orientation = item.evidence === 0 ? 15 * item.scope : 0;
+    const dueReview = item.concept.due != null && item.concept.due <= deadlineAt ? 10 * item.scope : 0;
+    const maintenanceReviews = item.effective >= 70
+      ? Math.min(4, Math.floor(Math.max(0, daysLeft - 1) / RETENTION_WINDOW_DAYS))
+      : 0;
+    return sum + learning + evidence + orientation + dueReview + maintenanceReviews * 10 * item.scope;
+  }, 0);
+  const requiredMin = Math.round(rawRequiredMin * FORECAST_SAFETY_MARGIN);
   const neededPerDayMin = Math.ceil(requiredMin / daysLeft);
-  const dailyTargetMin = Math.max(1, plan?.dailyTargetMin ?? 0);
+  const dailyTargetMin = Math.max(15, plan?.dailyTargetMin ?? 60);
 
-  const upcoming = upcomingSessions(plan, now).filter((s) => s.status === "planned");
-  const plannedRemainingMin = upcoming.reduce((sum, s) => sum + s.durationMin, 0);
+  const upcoming = upcomingSessions(plan, now).filter(
+    (s) => s.status === "planned" && (!hasDeadline || planSessionStart(s).getTime() < deadlineAt)
+  );
+  const plannedRemainingMin = Math.round(
+    upcoming.reduce(
+      (sum, s) => sum + Math.max(0, s.durationMin - (s.completedMs ?? 0) / 60000),
+      0
+    )
+  );
   const deficitMin = Math.max(0, requiredMin - plannedRemainingMin);
   const surplusMin = Math.max(0, plannedRemainingMin - requiredMin);
   const pressure = neededPerDayMin / dailyTargetMin;
+  const availableMin = dailyTargetMin * daysLeft;
+  const daysNeeded = Math.ceil(requiredMin / dailyTargetMin);
+  const bufferDays = daysLeft - daysNeeded;
   const missedCount = plan ? plan.sessions.filter((s) => s.status === "missed").length : 0;
   const examPassed = hasDeadline && examDays! < 0;
-
-  const onTrack = deficitMin <= 0 && pressure <= 1.15;
-  const verdict: PlanHealth["verdict"] = masteryGap <= 5 || (surplusMin > DRIFT_SURPLUS_MIN && pressure < 0.6)
+  const feasible = !examPassed && requiredMin <= availableMin * 1.05;
+  const bookedFraction = requiredMin > 0 ? plannedRemainingMin / requiredMin : 1;
+  const projectedReadiness = Math.round(clamp(
+    effectiveReadiness + masteryGap * Math.min(1, bookedFraction)
+  ));
+  const onTrack = feasible && bookedFraction >= 0.9 && projectedReadiness >= TARGET_READINESS - 2;
+  const verdict: PlanHealth["verdict"] = effectiveReadiness >= TARGET_READINESS && bufferDays >= 2
     ? "ahead"
     : onTrack
       ? "on-track"
-      : "behind";
+      : feasible
+        ? "at-risk"
+        : "overcommitted";
   const drift =
     missedCount > 0 ||
     deficitMin > DRIFT_DEFICIT_MIN ||
@@ -183,12 +269,19 @@ export function planHealth(plan: StudyPlan | null, backbone: StudyBackbone | nul
     daysLeft: examDays != null ? examDays : horizon,
     hasDeadline,
     overall,
+    effectiveReadiness,
+    projectedReadiness,
+    evidenceCoverage,
     masteryGap,
     requiredMin,
     neededPerDayMin,
     plannedRemainingMin,
     deficitMin,
     pressure,
+    availableMin,
+    daysNeeded,
+    bufferDays,
+    feasible,
     missedCount,
     onTrack,
     drift,
@@ -247,15 +340,18 @@ export function fmtStartMin(startMin: number): string {
 
 /** A short, human verdict line for the plan header. */
 export function verdictLabel(h: PlanHealth): string {
-  if (h.hasDeadline && h.daysLeft < 0) return "Exam date passed — re-plan";
+  if (h.hasDeadline && h.daysLeft < 0) return "Goal date passed — re-plan";
   if (h.verdict === "ahead") return "Ahead of schedule";
-  if (h.verdict === "behind")
-    return `Behind — aim for ~${Math.round(h.neededPerDayMin / 6) / 10}h/day`;
-  return "On track";
+  if (h.verdict === "overcommitted")
+    return `Overcommitted — needs ~${Math.round(h.neededPerDayMin / 6) / 10}h/day`;
+  if (h.verdict === "at-risk")
+    return `At risk — needs ~${Math.round(h.neededPerDayMin / 6) / 10}h/day`;
+  return h.bufferDays > 0 ? `On track · ${h.bufferDays}d buffer` : "On track";
 }
 
 export function verdictColor(h: PlanHealth): string {
-  if (h.verdict === "behind" || (h.hasDeadline && h.daysLeft < 0)) return "#f6685e";
+  if (h.verdict === "overcommitted" || (h.hasDeadline && h.daysLeft < 0)) return "#f6685e";
+  if (h.verdict === "at-risk") return "#f5b14c";
   if (h.verdict === "ahead") return "#4ade80";
   return "#60A5FA";
 }

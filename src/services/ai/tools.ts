@@ -1309,7 +1309,7 @@ const TOOLS: ToolImpl[] = [
     "Get the active study session's PLAN STATUS — call this BEFORE deepwork_set_plan or " +
       "deepwork_revise_plan. Returns the deadline & days left, current overall mastery and the gap to " +
       "the target, estimated study time still needed, how much is already booked, whether the user is " +
-      "on track / behind / ahead, any missed sessions, the weakest concepts to prioritise, and the " +
+      "on track / at risk / overcommitted, any missed sessions, the weakest concepts to prioritise, and the " +
       "currently planned sessions WITH ids (so you can reschedule or remove them).",
     obj({}),
     async () => {
@@ -1326,19 +1326,26 @@ const TOOLS: ToolImpl[] = [
       const lines: string[] = [];
       lines.push(`Goal: ${plan?.goal || dw.intent || bb.intent || "(none set)"}`);
       lines.push(`Today: ${dayKey(new Date(now))}`);
-      if (plan?.examDate) lines.push(`Exam: ${plan.examDate} (${h.daysLeft} day(s) away)`);
+      if (plan?.examDate) lines.push(`Goal date: ${plan.examDate} (${h.daysLeft} day(s) away)`);
       else lines.push(`No exam date set — planning over a ${h.daysLeft}-day horizon. Ask the user for a deadline if there is one.`);
-      lines.push(`Overall readiness ${h.overall}% / target ${TARGET_READINESS}% → gap ${h.masteryGap} pts.`);
+      lines.push(
+        `Displayed mastery ${h.overall}%; evidence-adjusted readiness ${h.effectiveReadiness}% / ` +
+          `target ${TARGET_READINESS}% → reliable gap ${h.masteryGap} pts. Evidence coverage: ${h.evidenceCoverage}%.`
+      );
       lines.push(
         `Daily study budget: ${dailyTargetMin} min. Estimated time still needed: ~${h.requiredMin} min ` +
-          `(~${h.neededPerDayMin} min/day over ${h.daysLeft} day(s)).`
+          `(~${h.neededPerDayMin} min/day over ${h.daysLeft} day(s)); available capacity: ${h.availableMin} min ` +
+          `(${h.bufferDays >= 0 ? `${h.bufferDays} day(s) buffer` : `${Math.abs(h.bufferDays)} day(s) over capacity`}).`
       );
       if (plan) {
         lines.push(
           `Booked in upcoming sessions: ${h.plannedRemainingMin} min. ` +
             (h.deficitMin > 0 ? `Under-booked by ${h.deficitMin} min — add more.` : "Enough time booked.")
         );
-        lines.push(`Status: ${h.verdict.toUpperCase()}${h.missedCount ? ` · ${h.missedCount} missed session(s) to make up` : ""}.`);
+        lines.push(
+          `Forecast from booked work: ${h.projectedReadiness}%. Status: ${h.verdict.toUpperCase()}` +
+            `${h.missedCount ? ` · ${h.missedCount} missed session(s) to make up` : ""}.`
+        );
       } else {
         lines.push("No plan yet — build one with deepwork_set_plan (one entry per study block, weighting weak concepts and days left).");
       }

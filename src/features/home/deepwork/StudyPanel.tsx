@@ -454,16 +454,23 @@ function PlanSection({ now }: { now: number }) {
     <div className="space-y-2">
       <div className="rounded-[8px] border border-[var(--border)] px-2.5 py-2">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">This week</span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Goal forecast</span>
           <span className="ml-auto text-[11px] font-medium" style={{ color: verdictColor(h) }}>
             {verdictLabel(h)}
           </span>
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--text-dim)]">
-          <span>{h.hasDeadline ? (h.daysLeft <= 0 ? "Exam today / passed" : `${h.daysLeft}d to exam`) : `${h.daysLeft}d horizon`}</span>
+          <span>{h.hasDeadline ? (h.daysLeft <= 0 ? "Goal today / passed" : `${h.daysLeft}d to goal`) : `${h.daysLeft}d horizon`}</span>
           <span>·</span>
+          <span>{h.effectiveReadiness}% reliable now</span>
+          <span>· {h.projectedReadiness}% projected</span>
+          <span>· {h.evidenceCoverage}% evidence</span>
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--text-dim)]">
           <span>{hrs(h.plannedRemainingMin)} booked</span>
+          <span>· {hrs(h.requiredMin)} estimated</span>
           {h.deficitMin > 0 && <span>· need +{hrs(h.deficitMin)}</span>}
+          {!h.feasible && <span className="text-[#f6685e]">· capacity {hrs(h.availableMin)}</span>}
           {h.missedCount > 0 && <span className="text-[#f6685e]">· {h.missedCount} missed</span>}
         </div>
       </div>
