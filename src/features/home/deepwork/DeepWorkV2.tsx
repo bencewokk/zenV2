@@ -256,13 +256,17 @@ export function DeepWorkV2({
   // Credit focused time when a session ends.
   const focusStartRef = useRef<number | null>(null);
   useEffect(() => {
-    if (sessionActive) {
-      if (focusStartRef.current === null) focusStartRef.current = Date.now();
-    } else if (focusStartRef.current !== null) {
+    if (!sessionActive) return;
+    if (focusStartRef.current === null) focusStartRef.current = Date.now();
+    return () => {
+      // Also commit when the board closes while a timer transition is batched.
+      // Without this cleanup, finishing a class could unmount the canvas before
+      // the `sessionActive=false` render and silently lose its focused minutes.
+      if (focusStartRef.current === null) return;
       const ms = Date.now() - focusStartRef.current;
       focusStartRef.current = null;
       logFocus(ms);
-    }
+    };
   }, [sessionActive, logFocus]);
 
   if (!activeId) return <SessionLauncher />;

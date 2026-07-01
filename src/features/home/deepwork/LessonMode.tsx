@@ -21,6 +21,7 @@ export function LessonMode() {
   const blocks = useLesson((s) => s.blocks);
   const cursor = useLesson((s) => s.cursor);
   const revealAll = useLesson((s) => s.revealAll);
+  const boardComplete = useLesson((s) => s.boardComplete);
   const streaming = useAI((s) => s.streaming);
   const { sessionActive, sessionRemaining } = useFocusSession();
   const [showWS, setShowWS] = useState(false);
@@ -59,9 +60,7 @@ export function LessonMode() {
       } else if (e.key === "ArrowRight" || e.key === " ") {
         if (block?.kind === "question" && !block.answered) return; // gated on the check
         e.preventDefault();
-        if (!useLesson.getState().next() && !useAI.getState().streaming) {
-          void useAI.getState().send("[Lesson] I've finished the steps shown — present the NEXT part now via study_present (mode: append) with a few more small blocks. If the topic is fully covered, append a short recap text block and call deepwork_end_lesson.");
-        }
+        if (!useLesson.getState().next() && !useAI.getState().streaming) finishOrContinueLesson();
       }
     }
     window.addEventListener("keydown", onKey);
@@ -78,8 +77,20 @@ export function LessonMode() {
 
   function handleNext() {
     if (useLesson.getState().next()) return; // revealed the next authored step
-    // Reached the end of what's authored — ask the tutor to continue the lesson.
-    if (!streaming) useAI.getState().send("[Lesson] I've finished the steps shown — present the NEXT part now via study_present (mode: append) with a few more small blocks. If the topic is fully covered, append a short recap text block and call deepwork_end_lesson.");
+    if (!streaming) finishOrContinueLesson();
+  }
+
+  function finishOrContinueLesson() {
+    const lesson = useLesson.getState();
+    if (lesson.boardComplete) {
+      lesson.end();
+      return;
+    }
+    void useAI.getState().send(
+      "[Lesson] The current slide batch is finished. Decide whether an important uncovered objective remains. " +
+      "If yes, append only the necessary next slides with study_present and mark whether that batch completes the lesson. " +
+      "If no, call deepwork_end_lesson now. Do not repeat covered material."
+    );
   }
 
   function askAbout(kind: "more" | "simpler" | "example" | "stuck") {
@@ -119,9 +130,9 @@ export function LessonMode() {
             <button
               className="zen-pressable rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
               onClick={() => useLesson.getState().end()}
-              title="End lesson"
+              title="Finish class and close the board"
             >
-              ◑ End lesson
+              ◑ Finish class
             </button>
           </div>
 
@@ -186,9 +197,9 @@ export function LessonMode() {
                   className="zen-pressable ml-auto rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-4 py-1.5 text-sm text-[var(--text)] disabled:opacity-40"
                   onClick={handleNext}
                   disabled={blockedByQuestion || (atEnd && streaming)}
-                  title={blockedByQuestion ? "Answer the question to continue" : atEnd ? "Ask the tutor for the next step" : "Next step"}
+                  title={blockedByQuestion ? "Answer the question to continue" : atEnd ? (boardComplete ? "Finish class and close the board" : "Let the tutor decide what remains") : "Next step"}
                 >
-                  {atEnd ? (streaming ? "…" : "Continue →") : "Next →"}
+                  {atEnd ? (streaming ? "…" : boardComplete ? "Finish class" : "Continue →") : "Next →"}
                 </button>
               </div>
             </div>

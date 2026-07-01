@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import { useFocusStore } from "@/features/home/deepwork/useFocusSession";
+import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { useHome } from "@/features/home/store";
+import { notify } from "@/shared/ui/notify";
 
 /** Default lesson length (minutes) when the AI doesn't specify one. */
 const DEFAULT_LESSON_MIN = 25;
@@ -39,11 +42,13 @@ interface LessonState {
   cursor: number;
   /** When true, the board shows every block at once instead of stepping. */
   revealAll: boolean;
+  /** Set by the tutor for the latest batch: reaching its end completes the class. */
+  boardComplete: boolean;
   /** Start a lesson and a focus timer for it (minutes defaults to 25). */
   start: (title?: string, minutes?: number) => void;
   end: () => void;
   /** Replace or append board blocks (the AI drives this via study_present). */
-  present: (blocks: LessonBlock[], mode: "replace" | "append") => void;
+  present: (blocks: LessonBlock[], mode: "replace" | "append", complete: boolean) => void;
   /** Reveal the next block. Returns false if already at the end (caller asks the AI
    *  to continue the lesson). No-op in reveal-all mode. */
   next: () => boolean;
@@ -68,6 +73,7 @@ export const useLesson = create<LessonState>((set, get) => ({
   blocks: [],
   cursor: 0,
   revealAll: false,
+  boardComplete: false,
   focusedQid: null,
   insertReq: null,
 
@@ -83,7 +89,7 @@ export const useLesson = create<LessonState>((set, get) => ({
   },
 
   start(title, minutes) {
-    set({ active: true, title: title ?? "", blocks: [], cursor: 0, revealAll: false });
+    set({ active: true, title: title ?? "", blocks: [], cursor: 0, revealAll: false, boardComplete: false });
     // Start a focus timer for the lesson — but don't clobber one already running.
     if (!useFocusStore.getState().session) {
       useFocusStore.getState().startSession(Math.max(1, Math.round(minutes ?? DEFAULT_LESSON_MIN)));
@@ -94,24 +100,29 @@ export const useLesson = create<LessonState>((set, get) => ({
   },
 
   end() {
-    set({ active: false, title: "", blocks: [], cursor: 0, revealAll: false, focusedQid: null, insertReq: null });
     // Stop (and credit) the timer only if this lesson started it.
     if (lessonOwnsTimer && useFocusStore.getState().session) useFocusStore.getState().endSession();
     lessonOwnsTimer = false;
+    // Finish the fullscreen class and its underlying board as one transition.
+    // The Deep Work session itself remains saved and can be resumed later.
+    useDeepWork.getState().setZenMode(false);
+    useHome.getState().setManualDeepWork(false);
+    set({ active: false, title: "", blocks: [], cursor: 0, revealAll: false, boardComplete: false, focusedQid: null, insertReq: null });
+    notify.success("Class finished · board saved");
   },
 
-  present(blocks, mode) {
+  present(blocks, mode, complete) {
     set((s) => {
       if (mode !== "append") {
         // Fresh screen — reveal just the first step.
-        return { blocks, cursor: blocks.length ? 1 : 0 };
+        return { blocks, cursor: blocks.length ? 1 : 0, boardComplete: complete };
       }
       const next = [...s.blocks, ...blocks];
       // If the user had caught up to the end (was waiting for more), auto-reveal the
       // first appended block so "Next → continue" flows straight into the new step.
       const caughtUp = s.cursor >= s.blocks.length && s.blocks.length > 0;
       const cursor = caughtUp ? s.blocks.length + 1 : s.cursor || (next.length ? 1 : 0);
-      return { blocks: next, cursor };
+      return { blocks: next, cursor, boardComplete: complete };
     });
   },
 

@@ -1638,7 +1638,8 @@ const TOOLS: ToolImpl[] = [
         "Study mode started (focus timer running). Present the WHOLE lesson now with study_present as many " +
         "SMALL blocks (text / svg / snippet / pdf / question) — the app reveals them one at a time as the user " +
         "taps Next, so don't drip them out across turns. Interleave a few 'question' blocks; grade each answer " +
-        "into the concept's sub-skill as it arrives. On the '[Lesson]' continue signal, recap and call deepwork_end_lesson."
+        "into the concept's sub-skill as it arrives. Set study_present.complete=true only when that batch covers " +
+        "the remaining objectives; otherwise Zen will ask you to decide and append what is still needed."
       );
     }
   ),
@@ -1654,10 +1655,12 @@ const TOOLS: ToolImpl[] = [
       "to advance, so make each block SMALL and self-contained — one idea/step per block (a short explanation, " +
       "a single diagram, one snippet, or one question), not a long wall of text. Present the COMPLETE lesson " +
       "up front as many small blocks (use a few append calls in the same turn if it's long); the app paces the " +
-      "reveal, so do NOT drip blocks out across turns. Interleave 'question' blocks to check understanding. On " +
-      "a '[Lesson]' continue message the lesson is finished — append a short recap block and end the lesson.",
+      "reveal, so do NOT drip blocks out across turns. Interleave 'question' blocks to check understanding. " +
+      "The required 'complete' flag is your explicit completion decision: true means Zen closes locally after " +
+      "the final slide; false means another focused batch may still be needed.",
     obj({
       mode: str("replace | append (default replace)"),
+      complete: bool("true if this batch completes the remaining lesson objectives; false if more slides may still be needed"),
       blocks: {
         type: "array",
         description: "the board blocks, in display order",
@@ -1678,23 +1681,24 @@ const TOOLS: ToolImpl[] = [
           sub: str("question: the concept sub-skill it tests"),
         }, ["kind"]),
       },
-    }, ["blocks"]),
+    }, ["blocks", "complete"]),
     async (a) => {
       if (!useLesson.getState().active) useLesson.getState().start("");
       const blocks = parseLessonBlocks(a.blocks);
       if (!blocks.length) return "No valid blocks to present (each needs a recognized `kind` and its fields).";
       const mode = String(a.mode) === "append" ? "append" : "replace";
-      useLesson.getState().present(blocks, mode);
-      return `Presented ${blocks.length} block(s) on the lesson board (${mode}).`;
+      const complete = a.complete === true;
+      useLesson.getState().present(blocks, mode, complete);
+      return `Presented ${blocks.length} block(s) on the lesson board (${mode}; ${complete ? "final batch" : "more objectives remain"}).`;
     }
   ),
   tool(
     "deepwork_end_lesson",
-    "Exit study mode / end the lesson and return to the normal view.",
+    "Finish the class, close its Deep Work board, and return Home. The saved board can be resumed later.",
     obj({}),
     async () => {
       useLesson.getState().end();
-      return "Lesson ended.";
+      return "Class finished and its board closed. The Deep Work session was saved.";
     }
   ),
   tool(
