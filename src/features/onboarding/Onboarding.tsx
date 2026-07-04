@@ -16,6 +16,9 @@ import { type Construction } from "@/features/geometry/model";
 import { buildConstruction } from "@/features/geometry/build";
 import "@/features/geometry/jsxgraph.css";
 import { notify } from "@/shared/ui/notify";
+import { backupConnectionsToVault, listVaultConnections, restoreConnectionsFromVault } from "@/services/connections/vault";
+import { loadCanvasSettings } from "@/services/canvas/settings";
+import { loadExternalConnectionSettings } from "@/services/connections/settings";
 import { loadProfile, saveProfile, loadMemories, saveMemory, deleteMemory, type MemoryEntry } from "@/services/memory";
 import { useOnboarding } from "./store";
 import { ArtWelcome, ArtAI, ArtGoogle, ArtMemory, ArtGallery, ArtDeepWork, ArtStudyQuiz } from "./art";
@@ -52,12 +55,17 @@ export function Onboarding() {
         <div className="space-y-3">
           <p className="text-[var(--text-dim)]">
             A calm, math-first notebook for studying and deep work. This 60-second tour connects the
-            optional extras and shows what Zen can do. Everything stays on your device — skip anything
-            you like.
+            optional extras and shows what Zen can do. Your content remains local-first; encrypted
+            sync and external connections are optional, and you can skip anything.
           </p>
-          <QuickGoogleSync onDone={finish} />
+          <QuickGoogleSync />
         </div>
       ),
+    },
+    {
+      title: "Bring in your world",
+      art: <ArtGoogle />,
+      body: <SourceConnectionsStep onOpenSettings={() => { finish(); useWorkspace.getState().set({ surface: "settings" }); }} />,
     },
     {
       title: "Connect the AI assistant",
@@ -213,6 +221,7 @@ function AIStep() {
       const models = await deepseek.listModels();
       if (models.length) {
         setOk(true);
+        if (isSignedIn()) await backupConnectionsToVault();
         notify.success(`Key works — ${models.length} models available`);
       } else {
         setOk(false);
@@ -263,7 +272,7 @@ function AIStep() {
  * everything sync — skips the rest of the tour once done. Separate from
  * `GoogleStep` below, which is for the AI-first walkthrough.
  */
-function QuickGoogleSync({ onDone }: { onDone: () => void }) {
+function QuickGoogleSync() {
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
   const [busy, setBusy] = useState(false);
 
@@ -277,7 +286,6 @@ function QuickGoogleSync({ onDone }: { onDone: () => void }) {
       if (!sync.enabled) saveSyncSettings({ ...sync, enabled: true });
       await syncOnce();
       notify.success("Signed in and synced");
-      onDone();
     } catch (e) {
       notify.error((e as Error).message || "Sign-in / sync failed");
     } finally {
@@ -287,9 +295,49 @@ function QuickGoogleSync({ onDone }: { onDone: () => void }) {
 
   return (
     <button className="zen-btn zen-shine w-full" onClick={run} disabled={busy}>
-      {busy ? "Signing in & syncing…" : "Sign in with Google & sync everything"}
+      {busy ? "Signing in & syncing…" : signedIn ? "Google account connected" : "Sign in with Google"}
     </button>
   );
+}
+
+function SourceConnectionsStep({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const [signedIn, setSignedIn] = useState(() => isSignedIn());
+  const [vault, setVault] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => onAuthChange(setSignedIn), []);
+  useEffect(() => { if (signedIn) void listVaultConnections().then((items) => setVault(items.map((item) => item.provider))).catch(() => {}); }, [signedIn]);
+  const canvas = loadCanvasSettings();
+  const external = loadExternalConnectionSettings();
+  const cards = [
+    { id: "ai", name: "AI provider", ready: !!loadSettings().apiKey || vault.includes("ai"), detail: "Assistant model credentials" },
+    { id: "drive", name: "Google Drive", ready: signedIn && external.driveFolderIds.length > 0, detail: "Selected folders only · read-only" },
+    { id: "canvas", name: "Canvas", ready: !!canvas.accessToken || vault.includes("canvas"), detail: "Courses, assignments, and files" },
+    { id: "zotero", name: "Zotero", ready: !!external.zoteroApiKey || vault.includes("zotero"), detail: "Papers, annotations, and citations" },
+    { id: "github", name: "GitHub", ready: !!external.githubRepositories.length, detail: "Selected repositories and issues" },
+  ];
+
+  async function secureOrRestore() {
+    if (!signedIn) { notify.error("Sign in with Google on the first step."); return; }
+    setBusy(true);
+    try {
+      if (vault.length) await restoreConnectionsFromVault(); else await backupConnectionsToVault();
+      const next = await listVaultConnections();
+      setVault(next.map((item) => item.provider));
+      notify.success(vault.length ? "Connections restored" : "Existing connections secured");
+    } catch (e) { notify.error((e as Error).message || "Connection vault failed"); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="space-y-3 text-[var(--text-dim)]">
+    <p>Connect only the places you want Zen to read. Each connection is optional and can be revoked later.</p>
+    <div className="grid grid-cols-2 gap-2">
+      {cards.map((card) => <div key={card.id} className="rounded-[9px] border border-[var(--border)] bg-[var(--bg)] p-2.5">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text)]"><span className="h-2 w-2 rounded-full" style={{ background: card.ready ? "var(--ok)" : "var(--text-dim)" }} />{card.name}</div>
+        <div className="mt-1 text-[11px] leading-snug">{card.detail}</div>
+      </div>)}
+    </div>
+    <div className="flex gap-2"><button className="zen-btn-ghost flex-1" onClick={onOpenSettings}>Choose connections…</button><button className="zen-btn flex-1" disabled={!signedIn || busy} onClick={() => void secureOrRestore()}>{busy ? "Working…" : vault.length ? "Restore saved" : "Secure existing"}</button></div>
+  </div>;
 }
 
 /** Inline Google connect, mirroring Settings → Connections. */

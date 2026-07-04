@@ -20,6 +20,7 @@ import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker"
 import { CalendarPanel } from "@/features/google/CalendarPanel";
 import { MailPanel } from "@/features/google/MailPanel";
 import { SettingsView } from "@/features/settings/SettingsView";
+import { SourcesPanel } from "@/features/sources/SourcesPanel";
 import { Onboarding } from "@/features/onboarding/Onboarding";
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { useOnboarding } from "@/features/onboarding/store";
@@ -32,6 +33,10 @@ import { useAI } from "@/features/ai/store";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { usePdfs } from "@/features/pdfs/store";
 import { useStatus } from "@/shared/stores/status";
+import { ensureSourcesLoaded } from "@/services/sources/store";
+import { startSourceRefresh } from "@/services/sources/refresh";
+import { isSignedIn, onAuthChange } from "@/services/google/auth";
+import { clearLocalConnectionSecrets, reconcileConnectionVault } from "@/services/connections/vault";
 
 /**
  * Phase 1 shell — a thin composer of feature modules (the anti-ui.py).
@@ -62,7 +67,7 @@ export function App() {
   const surface = useWorkspace((s) => s.surface);
   const adminFocus = useWorkspace((s) => s.adminFocus);
   const adminMailId = useWorkspace((s) => s.adminMailId);
-  const setSurface = (surface: "home" | "admin" | "settings") => setWs({ surface });
+  const setSurface = (surface: "home" | "admin" | "sources" | "settings") => setWs({ surface });
   const setAdminFocus = (adminFocus: "calendar" | "mail") => setWs({ adminFocus });
   const setAdminMailId = (adminMailId: string | null) => setWs({ adminMailId });
   const shellRef = useRef<HTMLDivElement>(null);
@@ -81,6 +86,7 @@ export function App() {
   useEffect(() => {
     applyAppearance();
     void usePdfs.getState().load();
+    void ensureSourcesLoaded();
     useOnboarding.getState().startIfFirstRun();
     // Seed notes first, then build the ready-made sample Deep Work session from them.
     void load().then(() => seedSampleSession());
@@ -88,7 +94,13 @@ export function App() {
     const t = window.setTimeout(() => void checkForUpdates(), 4000);
     // Background cloud sync (no-op until enabled + signed in via Settings).
     startSync();
-    return () => window.clearTimeout(t);
+    const stopVaultAuth = onAuthChange((signedIn) => {
+      if (signedIn) void reconcileConnectionVault().catch(() => {});
+      else clearLocalConnectionSecrets();
+    });
+    if (isSignedIn()) void reconcileConnectionVault().catch(() => {});
+    const stopSourceRefresh = startSourceRefresh();
+    return () => { window.clearTimeout(t); stopSourceRefresh(); stopVaultAuth(); };
   }, [load]);
   useEffect(() => {
     if (loaded && !restored.current) {
@@ -138,10 +150,11 @@ export function App() {
   const note = selectedId ? notes[selectedId] : null;
   const showAdmin = !note && surface === "admin";
   const showSettings = !note && surface === "settings";
+  const showSources = !note && surface === "sources";
   const showHome = !note && surface === "home";
   const deepWork = showHome && manualDeepWork;
   const zen = deepWork && zenMode;
-  const sidebarApplicable = !showAdmin && !showSettings && !deepWork;
+  const sidebarApplicable = !showAdmin && !showSources && !showSettings && !deepWork;
   const sidebarVisible = sidebarApplicable && !sidebarCollapsed;
   const noteList = Object.values(notes);
   const inboxCount = noteList.filter((item) => item.inbox).length;
@@ -262,6 +275,13 @@ export function App() {
               {label}
             </button>
           ))}
+          <button
+            className={`${HEADER_BTN} ${showSources ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
+            onClick={() => { select(null); setManualDeepWork(false); setAdminMailId(null); setSurface("sources"); }}
+            title="Connected sources"
+          >
+            Sources
+          </button>
           {deepWork && (
             // Deep-Work-only controls, lightly grouped so they read as one cluster
             // that appears when you enter Deep Work.
@@ -341,16 +361,18 @@ export function App() {
           }}
         />
 
-        <main className={`min-w-0 flex-1 ${note || showAdmin || showSettings || deepWork ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`min-w-0 flex-1 ${note || showAdmin || showSources || showSettings || deepWork ? "overflow-hidden" : "overflow-y-auto"}`}>
           {/* Keyed by surface so switching views re-mounts and crossfades in. */}
           <div
-            key={note ? "note" : showAdmin ? "admin" : showSettings ? "settings" : deepWork ? (zen ? "zen" : "deep") : "home"}
+            key={note ? "note" : showAdmin ? "admin" : showSources ? "sources" : showSettings ? "settings" : deepWork ? (zen ? "zen" : "deep") : "home"}
             className="zen-anim-rise-scale h-full min-h-0"
           >
             {note ? (
               <NoteSurface note={note} />
             ) : showAdmin ? (
               <AdminPanel focus={adminFocus} mailId={adminMailId} />
+            ) : showSources ? (
+              <SourcesPanel />
             ) : showSettings ? (
               <SettingsView />
             ) : (

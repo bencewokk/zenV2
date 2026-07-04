@@ -21,6 +21,10 @@ scoped to the token's Google account (`sub`).
 | `GET`  | `/api/pdfs/:id?meta=1` | Read the stored PDF byte length. |
 | `GET`  | `/api/pdfs/:id?start=&end=` | Download an end-exclusive byte range. |
 | `DELETE` | `/api/pdfs/:id` | Delete a PDF binary. |
+| `GET` | `/api/connections` | List encrypted provider connections owned by the Google account. |
+| `GET` | `/api/connections?restore=1` | Restore decrypted credentials after Google authentication. |
+| `PUT` | `/api/connections?provider=ai|canvas|zotero|github` | Encrypt and upsert one provider connection. |
+| `DELETE` | `/api/connections?provider=...` | Revoke a saved provider connection. |
 
 `:collection ∈ { notes, ai, deepwork, studylog, workspace, pdfs, quiz, memoryProfile,
 memoryEntries, appearance, toolPolicy, aiSettings, googleSettings }`. The last two
@@ -32,7 +36,7 @@ never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
 1. Create a free Atlas M0 cluster, a DB user, and network access (0.0.0.0/0 for dev or
    the host's egress range for prod).
 2. `cp .env.example .env` and fill in `MONGODB_URI`, `MONGODB_DB`, `GOOGLE_CLIENT_ID`,
-   and `CORS_ALLOWED_ORIGINS`.
+   `CONNECTION_VAULT_KEY`, and `CORS_ALLOWED_ORIGINS`.
 3. `npm install`
 4. `npm run dev` (`vercel dev`) to run locally, or `vercel deploy` to ship. Set the same
    env vars in the host dashboard for production.

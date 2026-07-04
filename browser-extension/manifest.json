@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Zen Web Capture",
+  "version": "1.0.0",
+  "description": "Capture a webpage or selection into Zen's connected source library.",
+  "permissions": ["activeTab", "scripting", "downloads"],
+  "action": {
+    "default_title": "Capture to Zen",
+    "default_popup": "popup.html"
+  }
+}

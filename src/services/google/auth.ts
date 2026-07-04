@@ -317,3 +317,14 @@ export async function gapiFetch<T>(url: string, init: RequestInit = {}): Promise
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
 }
+
+/** Authenticated Google request for non-JSON exports (Drive text/binary content). */
+export async function gapiFetchRaw(url: string, init: RequestInit = {}): Promise<Response> {
+  const token = await getToken();
+  const res = await fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Google ${res.status}: ${body.slice(0, 200)}`);
+  }
+  return res;
+}

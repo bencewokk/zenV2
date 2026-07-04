@@ -18,6 +18,8 @@ import { APPEARANCE_KEY, hydrateAppearance } from "@/services/appearance";
 import { TOOL_POLICY_KEY, hydrateToolPolicy } from "@/services/ai/toolPolicy";
 import { AI_SETTINGS_KEY, AI_SETTINGS_SECRET_FIELDS, hydrateAiSettings } from "@/services/ai/settings";
 import { GOOGLE_SETTINGS_KEY, GOOGLE_SETTINGS_SECRET_FIELDS, hydrateGoogleSettings } from "@/services/google/settings";
+import { CANVAS_SETTINGS_KEY, CANVAS_SETTINGS_SECRET_FIELDS, hydrateCanvasSettings } from "@/services/canvas/settings";
+import { EXTERNAL_CONNECTIONS_KEY, EXTERNAL_CONNECTIONS_SECRET_FIELDS, hydrateExternalConnectionSettings } from "@/services/connections/settings";
 import type { SyncAdapter } from "./types";
 
 /** Registered adapters. Notes sync per-record; the rest are singleton blobs (Part 4). */
@@ -35,6 +37,8 @@ const adapters: SyncAdapter[] = [
   makeBlobAdapter("toolPolicy", TOOL_POLICY_KEY, hydrateToolPolicy),
   makeFilteredBlobAdapter("aiSettings", AI_SETTINGS_KEY, hydrateAiSettings, [...AI_SETTINGS_SECRET_FIELDS]),
   makeFilteredBlobAdapter("googleSettings", GOOGLE_SETTINGS_KEY, hydrateGoogleSettings, [...GOOGLE_SETTINGS_SECRET_FIELDS]),
+  makeFilteredBlobAdapter("canvasSettings", CANVAS_SETTINGS_KEY, hydrateCanvasSettings, [...CANVAS_SETTINGS_SECRET_FIELDS]),
+  makeFilteredBlobAdapter("externalConnections", EXTERNAL_CONNECTIONS_KEY, hydrateExternalConnectionSettings, [...EXTERNAL_CONNECTIONS_SECRET_FIELDS]),
 ];
 
 const POLL_MS = 30_000;

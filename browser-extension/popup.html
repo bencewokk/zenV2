@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Capture to Zen</title>
+    <style>
+      body { width: 290px; margin: 0; padding: 16px; background: #121314; color: #ecebea; font: 13px system-ui, sans-serif; }
+      h1 { margin: 0 0 4px; font-size: 16px; } p { margin: 0 0 14px; color: #9b9b9b; line-height: 1.4; }
+      button { width: 100%; margin-top: 8px; padding: 9px 12px; border: 1px solid #383838; border-radius: 7px; background: #232425; color: #ecebea; cursor: pointer; }
+      button.primary { background: #d6b476; border-color: #d6b476; color: #17130d; font-weight: 600; }
+      #status { min-height: 18px; margin-top: 10px; color: #d6b476; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Zen Web Capture</h1>
+    <p>Save a clean page extract or only the text currently selected.</p>
+    <button id="selection" class="primary">Capture selection</button>
+    <button id="page">Capture page</button>
+    <button id="screenshot">Capture visible screenshot</button>
+    <div id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

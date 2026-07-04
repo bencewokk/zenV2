@@ -31,6 +31,13 @@ import {
   listThreads, getThread, createDraft,
   sendEmail, replyInThread, modifyThread,
 } from "@/services/google/gmail";
+import {
+  getCanvasAssignment, listCanvasAnnouncements, listCanvasAssignments,
+  listCanvasCourses, listCanvasFiles, listCanvasModules,
+  type CanvasAssignment, type CanvasCourse,
+} from "@/services/canvas/client";
+import { ensureSourcesLoaded, searchConnectedSources, useSources } from "@/services/sources/store";
+import { refreshAllSources } from "@/services/sources/refresh";
 
 interface ToolImpl {
   def: ToolDef;
@@ -79,6 +86,34 @@ function clipText(text: string, max: number): string {
 
 function needGoogle(): string | null {
   return isSignedIn() ? null : "Not connected to Google. Ask the user to open the Calendar or Mail tab and click Connect.";
+}
+
+function plainHtml(value: string | null | undefined): string {
+  if (!value) return "";
+  const doc = new DOMParser().parseFromString(value, "text/html");
+  return (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function canvasDate(value: string | null | undefined): string {
+  if (!value) return "no due date";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function canvasCourseLabel(course: CanvasCourse): string {
+  return `${course.name} (${course.course_code}) [course:${course.id}]`;
+}
+
+function canvasAssignmentLine(assignment: CanvasAssignment, course?: CanvasCourse): string {
+  const submission = assignment.submission;
+  const state = submission?.missing
+    ? "missing"
+    : submission?.late
+      ? "late"
+      : submission?.workflow_state ?? "not submitted";
+  const points = assignment.points_possible != null ? ` · ${assignment.points_possible} pts` : "";
+  const coursePart = course ? `${course.name} · ` : "";
+  return `- ${coursePart}${assignment.name} · due ${canvasDate(assignment.due_at)} · ${state}${points} [course:${assignment.course_id}] [assignment:${assignment.id}]`;
 }
 
 const PLAN_KINDS: PlanSessionKind[] = ["learn", "review", "quiz", "catchup"];
@@ -683,6 +718,157 @@ const TOOLS: ToolImpl[] = [
       if (g) return g;
       await modifyThread(String(a.threadId), [], ["UNREAD"]);
       return "Marked as read.";
+    }
+  ),
+
+  // ---- Canvas (read-only) ----
+  tool(
+    "canvas_list_courses",
+    "List the user's active Canvas courses, including term and current score when Canvas exposes it.",
+    obj({}),
+    async () => {
+      const courses = await listCanvasCourses();
+      if (!courses.length) return "No active Canvas courses.";
+      return courses.map((course) => {
+        const score = course.enrollments?.find((e) => e.computed_current_score != null)?.computed_current_score;
+        return `- ${canvasCourseLabel(course)}${course.term?.name ? ` · ${course.term.name}` : ""}${score != null ? ` · current score ${score}%` : ""}`;
+      }).join("\n");
+    }
+  ),
+  tool(
+    "canvas_list_assignments",
+    "List Canvas assignments and submission state. Pass courseId for one course; omit it to combine all active courses. Optionally limit to assignments due in the next N days.",
+    obj({ courseId: num("optional Canvas course id"), dueWithinDays: num("optional: include assignments due between now and N days from now") }),
+    async (a) => {
+      const courses = await listCanvasCourses();
+      const selected = a.courseId != null
+        ? courses.filter((course) => course.id === Number(a.courseId))
+        : courses;
+      if (!selected.length) return a.courseId != null ? "No active Canvas course with that id." : "No active Canvas courses.";
+      const groups = await Promise.all(selected.map(async (course) => ({ course, assignments: await listCanvasAssignments(course.id) })));
+      const now = Date.now();
+      const horizon = a.dueWithinDays != null ? now + Math.max(0, Number(a.dueWithinDays)) * 86400000 : null;
+      const rows = groups.flatMap(({ course, assignments }) => assignments.map((assignment) => ({ course, assignment })))
+        .filter(({ assignment }) => {
+          if (horizon == null) return true;
+          const due = assignment.due_at ? new Date(assignment.due_at).getTime() : NaN;
+          return Number.isFinite(due) && due >= now && due <= horizon;
+        })
+        .sort((x, y) => {
+          const aDue = x.assignment.due_at ? new Date(x.assignment.due_at).getTime() : Number.MAX_SAFE_INTEGER;
+          const bDue = y.assignment.due_at ? new Date(y.assignment.due_at).getTime() : Number.MAX_SAFE_INTEGER;
+          return aDue - bDue;
+        });
+      if (!rows.length) return horizon == null ? "No Canvas assignments found." : "No Canvas assignments due in that window.";
+      const visible = rows.slice(0, 60);
+      return visible.map(({ course, assignment }) => canvasAssignmentLine(assignment, course)).join("\n") +
+        (rows.length > visible.length ? `\n…${rows.length - visible.length} more assignments omitted; query one course.` : "");
+    }
+  ),
+  tool(
+    "canvas_get_assignment",
+    "Read one Canvas assignment's instructions, dates, points, submission types, and the user's submission state.",
+    obj({ courseId: num("Canvas course id"), assignmentId: num("Canvas assignment id") }, ["courseId", "assignmentId"]),
+    async (a) => {
+      const assignment = await getCanvasAssignment(Number(a.courseId), Number(a.assignmentId));
+      const description = plainHtml(assignment.description);
+      return [
+        `# ${assignment.name}`,
+        `Course: ${assignment.course_id} · Due: ${canvasDate(assignment.due_at)} · Points: ${assignment.points_possible ?? "not specified"}`,
+        `Submission types: ${assignment.submission_types?.join(", ") || "not specified"}`,
+        `Status: ${assignment.submission?.workflow_state ?? "not submitted"}${assignment.submission?.missing ? " · missing" : ""}${assignment.submission?.late ? " · late" : ""}`,
+        assignment.html_url ? `Canvas: ${assignment.html_url}` : "",
+        description ? `\n${description.slice(0, 9000)}` : "\nNo assignment instructions provided.",
+      ].filter(Boolean).join("\n");
+    }
+  ),
+  tool(
+    "canvas_list_modules",
+    "List a Canvas course's modules and their items, including completion state when exposed.",
+    obj({ courseId: num("Canvas course id") }, ["courseId"]),
+    async (a) => {
+      const modules = await listCanvasModules(Number(a.courseId));
+      if (!modules.length) return "No modules found in that Canvas course.";
+      return modules.slice(0, 30).map((module) => {
+        const items = (module.items ?? []).slice(0, 40).map((item) =>
+          `  - ${item.title} (${item.type})${item.completion_requirement?.completed === true ? " · complete" : item.completion_requirement ? " · incomplete" : ""}`
+        );
+        return `- ${module.name} [module:${module.id}]${items.length ? `\n${items.join("\n")}` : ""}`;
+      }).join("\n");
+    }
+  ),
+  tool(
+    "canvas_list_announcements",
+    "List recent Canvas course announcements. Pass courseId for one course or omit it for all active courses.",
+    obj({ courseId: num("optional Canvas course id"), days: num("how many days back; default 30") }),
+    async (a) => {
+      const courses = await listCanvasCourses();
+      const ids = a.courseId != null ? [Number(a.courseId)] : courses.map((course) => course.id);
+      const announcements = await listCanvasAnnouncements(ids, Number(a.days ?? 30));
+      if (!announcements.length) return "No recent Canvas announcements.";
+      return announcements.slice(0, 40).map((item) =>
+        `- ${item.title} · ${canvasDate(item.posted_at)}${item.author?.display_name ? ` · ${item.author.display_name}` : ""}\n  ${plainHtml(item.message).slice(0, 600)}${item.html_url ? `\n  ${item.html_url}` : ""}`
+      ).join("\n");
+    }
+  ),
+  tool(
+    "canvas_list_files",
+    "List files in a Canvas course, newest first, with download URLs when available.",
+    obj({ courseId: num("Canvas course id") }, ["courseId"]),
+    async (a) => {
+      const files = await listCanvasFiles(Number(a.courseId));
+      if (!files.length) return "No files found in that Canvas course.";
+      return files.slice(0, 50).map((file) =>
+        `- ${file.display_name} · ${file.content_type ?? "file"} · updated ${canvasDate(file.updated_at)} [file:${file.id}]${file.url ? `\n  ${file.url}` : ""}`
+      ).join("\n");
+    }
+  ),
+  tool(
+    "search_sources",
+    "Search all connected Canvas, Drive, Zotero, GitHub, and web-capture sources. Returns stable source ids for read_source and citations.",
+    obj({ query: str("topic, title, author, course, repository, or phrase"), provider: str("optional: canvas | drive | zotero | github | web") }, ["query"]),
+    async (a) => {
+      await ensureSourcesLoaded();
+      const provider = a.provider ? String(a.provider) : "";
+      const hits = searchConnectedSources(String(a.query), 15).filter((source) => !provider || source.provider === provider);
+      if (!hits.length) return "No matching connected sources.";
+      return hits.map((source) => `- ${source.title} · ${source.provider}/${source.kind}${source.container ? ` · ${source.container}` : ""} [source:${source.id}]\n  ${clipText(source.text, 320)}`).join("\n");
+    }
+  ),
+  tool(
+    "read_source",
+    "Read one connected source by the id returned from search_sources. Includes citation and original URL.",
+    obj({ id: str("connected source id") }, ["id"]),
+    async (a) => {
+      await ensureSourcesLoaded();
+      const source = useSources.getState().sources[String(a.id)];
+      if (!source) return "No connected source with that id.";
+      return [`# ${source.title}`, `Provider: ${source.provider} · Type: ${source.kind}${source.container ? ` · ${source.container}` : ""}`, source.citation ? `Citation: ${source.citation}` : "", source.url ? `Original: ${source.url}` : "", "", source.text.slice(0, 12000)].filter((part) => part !== "").join("\n");
+    }
+  ),
+  tool(
+    "refresh_sources",
+    "Refresh every configured external source connection, updating the local Sources library.",
+    obj({}),
+    async () => {
+      const results = await refreshAllSources();
+      if (!results.length) return "No external source connections are configured.";
+      return results.map((result) => `${result.provider}: ${result.imported} sources${result.message ? ` (${result.message})` : ""}`).join("\n");
+    }
+  ),
+  tool(
+    "cite_source",
+    "Append a labelled excerpt and original link from a connected source to a note.",
+    obj({ sourceId: str("connected source id"), noteId: str("destination note id"), excerpt: str("optional short excerpt; defaults to the beginning of the source") }, ["sourceId", "noteId"]),
+    async (a) => {
+      await ensureSourcesLoaded();
+      const source = useSources.getState().sources[String(a.sourceId)];
+      if (!source) return "No connected source with that id.";
+      if (!useNotes.getState().notes[String(a.noteId)]) return "No note with that id.";
+      const excerpt = String(a.excerpt ?? "").trim() || source.text.slice(0, 1200);
+      const label = `[${source.provider}: ${source.title}]${source.url ? ` ${source.url}` : ""}`;
+      const ok = await appendBlock(String(a.noteId), { type: "paragraph", content: [{ type: "text", text: `${label}\n${excerpt}` }] });
+      return ok ? `Added citation from "${source.title}" to the note.` : "Failed to add source citation.";
     }
   ),
 
@@ -1782,8 +1968,8 @@ const TOOLS: ToolImpl[] = [
   ),
   tool(
     "open_view",
-    "Switch the app to a top-level view: home | deepwork | calendar | mail.",
-    obj({ view: str("home | deepwork | calendar | mail") }, ["view"]),
+    "Switch the app to a top-level view: home | deepwork | calendar | mail | sources.",
+    obj({ view: str("home | deepwork | calendar | mail | sources") }, ["view"]),
     async (a) => {
       const view = String(a.view);
       const notes = useNotes.getState();
@@ -1794,7 +1980,8 @@ const TOOLS: ToolImpl[] = [
         case "deepwork": notes.select(null); ws.set({ surface: "home" }); home.setManualDeepWork(true); break;
         case "calendar": notes.select(null); ws.set({ surface: "admin", adminFocus: "calendar" }); break;
         case "mail": notes.select(null); ws.set({ surface: "admin", adminFocus: "mail" }); break;
-        default: return "view must be home, deepwork, calendar, or mail.";
+        case "sources": notes.select(null); ws.set({ surface: "sources" }); home.setManualDeepWork(false); break;
+        default: return "view must be home, deepwork, calendar, mail, or sources.";
       }
       return `Opened ${view}.`;
     }
@@ -1816,6 +2003,9 @@ export const READ_TOOLS = new Set([
   "list_tags", "list_facets", // added in phase 3
   "list_pdfs", "read_pdf", "search_pdf", "find_in_pdf", "pdf_outline",
   "deepwork_read_material", "deepwork_weak_concepts", "deepwork_plan_status",
+  "canvas_list_courses", "canvas_list_assignments", "canvas_get_assignment",
+  "canvas_list_modules", "canvas_list_announcements", "canvas_list_files",
+  "search_sources", "read_source", "refresh_sources",
 ]);
 
 export function isReadTool(name: string): boolean {
@@ -1876,6 +2066,11 @@ const CATEGORY_SETS: Array<[string, Set<string>]> = [
     "search_mail", "read_mail", "draft_email", "send_email", "reply_in_thread",
     "archive_thread", "mark_read", "add_email_label", "remove_email_label",
   ])],
+  ["Canvas", new Set([
+    "canvas_list_courses", "canvas_list_assignments", "canvas_get_assignment",
+    "canvas_list_modules", "canvas_list_announcements", "canvas_list_files",
+  ])],
+  ["Sources", new Set(["search_sources", "read_source", "refresh_sources", "cite_source"])],
   ["PDF", new Set([
     "list_pdfs", "find_in_pdf", "read_pdf", "search_pdf", "cite_pdf", "highlight_pdf",
     "unhighlight_pdf", "rename_pdf", "tag_pdf", "delete_pdf", "attach_pdf", "detach_pdf", "pdf_goto", "pdf_outline",
@@ -1969,6 +2164,17 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "reply_in_thread": return d("Reply in thread", threadSubject(s("threadId")));
     case "archive_thread": return d("Archive thread", threadSubject(s("threadId")));
     case "mark_read": return d("Mark thread read", threadSubject(s("threadId")));
+    // Canvas
+    case "canvas_list_courses": return d("List Canvas courses", "");
+    case "canvas_list_assignments": return d("List Canvas assignments", s("courseId") ? `course ${s("courseId")}` : "all courses");
+    case "canvas_get_assignment": return d("Read Canvas assignment", `course ${s("courseId")} · assignment ${s("assignmentId")}`);
+    case "canvas_list_modules": return d("List Canvas modules", `course ${s("courseId")}`);
+    case "canvas_list_announcements": return d("List Canvas announcements", s("courseId") ? `course ${s("courseId")}` : "all courses");
+    case "canvas_list_files": return d("List Canvas files", `course ${s("courseId")}`);
+    case "search_sources": return d("Search connected sources", s("query"));
+    case "read_source": return d("Read connected source", s("id"));
+    case "refresh_sources": return d("Refresh connected sources", "all configured connections");
+    case "cite_source": return d("Cite connected source", `${s("sourceId")} → ${noteTitle(s("noteId"))}`);
     // Deep Work
     case "deepwork_add": {
       const type = s("type");

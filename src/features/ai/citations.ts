@@ -1,5 +1,6 @@
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
+import { useSources } from "@/services/sources/store";
 
 /**
  * Turn the assistant's inline citation tokens into clickable chips:
@@ -27,6 +28,10 @@ export function linkifyCitations(html: string): string {
     const title = useNotes.getState().notes[id]?.title;
     // Leave unknown ids as-is so we don't fabricate a dead link.
     return title ? `<button type="button" class="zen-cite" data-cite-note="${id}">✎ ${escapeHtml(title)}</button>` : `[id:${id}]`;
+  });
+  out = out.replace(/\[source:([^\]]+)\]/g, (_m, id) => {
+    const source = useSources.getState().sources[id];
+    return source ? `<button type="button" class="zen-cite" data-cite-source="${escapeHtml(id)}">⌘ ${escapeHtml(source.title)}</button>` : `[source:${escapeHtml(id)}]`;
   });
   return out;
 }

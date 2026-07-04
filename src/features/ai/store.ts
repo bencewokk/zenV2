@@ -9,6 +9,7 @@ import { useNotes } from "@/features/notes/store";
 import { useStatus } from "@/shared/stores/status";
 import { notify } from "@/shared/ui/notify";
 import { markBlobDirty } from "@/services/sync/cursor";
+import { ensureSourcesLoaded, searchConnectedSources } from "@/services/sources/store";
 
 /** Visual tone for a tool-activity turn (drives the chip's dot colour). */
 export type ToolTone = "read" | "run" | "done" | "error" | "info" | "blocked";
@@ -554,6 +555,17 @@ export const useAI = create<AIState>((set, get) => {
         });
       }
     } catch { /* memory unavailable — proceed without it */ }
+
+    try {
+      await ensureSourcesLoaded();
+      const sources = searchConnectedSources(userText, 5);
+      if (sources.length) messages.splice(1, 0, {
+        role: "system",
+        content: "Relevant connected sources (cite [source:...], use read_source for full text):\n" + sources.map((source) =>
+          `- ${source.title} [source:${source.id}] (${source.provider}/${source.kind})\n  ${source.text.replace(/\s+/g, " ").slice(0, 500)}`
+        ).join("\n"),
+      });
+    } catch { /* source library unavailable — proceed */ }
 
     await runAgent(messages, controller);
   },

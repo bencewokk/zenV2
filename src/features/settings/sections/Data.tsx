@@ -10,6 +10,8 @@ import { SettingsSection } from "../ui";
 const CONFIG_KEYS = [
   "zen.ai.settings.v1",
   "zen.google.settings.v1",
+  "zen.canvas.settings.v1",
+  "zen.externalConnections.v1",
   "zen.ai.toolPolicy.v1",
   "zen.appearance.v1",
 ];

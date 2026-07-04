@@ -12,6 +12,8 @@ import { useMemoryStatus } from "@/features/memory/useMemoryStatus";
 import { usePresence } from "@/shared/ui/usePresence";
 import { Dropdown } from "@/shared/ui/Dropdown";
 import { loadSettings } from "@/services/ai/settings";
+import { useSources } from "@/services/sources/store";
+import { useWorkspace } from "@/shared/stores/workspace";
 
 /** Dot colour for a tool-activity tone (no emojis — a small status dot instead). */
 const TONE_DOT: Record<ToolTone, string> = {
@@ -91,15 +93,21 @@ export function ChatPanel() {
     const el = scrollRef.current;
     if (!el) return;
     const onClick = (e: MouseEvent) => {
-      const cite = (e.target as HTMLElement).closest<HTMLElement>("[data-cite-note],[data-cite-pdf]");
+      const cite = (e.target as HTMLElement).closest<HTMLElement>("[data-cite-note],[data-cite-pdf],[data-cite-source]");
       if (!cite) return;
       const noteId = cite.getAttribute("data-cite-note");
       const pdfId = cite.getAttribute("data-cite-pdf");
+      const sourceId = cite.getAttribute("data-cite-source");
       if (noteId) {
         useNotes.getState().select(noteId);
       } else if (pdfId) {
         useHome.getState().launchDeepWork({ type: "pdf", id: pdfId });
         usePdfNav.getState().goTo(pdfId, Number(cite.getAttribute("data-cite-page")) || 1);
+      } else if (sourceId) {
+        useSources.getState().select(sourceId);
+        useNotes.getState().select(null);
+        useHome.getState().setManualDeepWork(false);
+        useWorkspace.getState().set({ surface: "sources" });
       }
     };
     el.addEventListener("click", onClick);

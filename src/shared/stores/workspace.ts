@@ -5,7 +5,7 @@ import { markBlobDirty } from "@/services/sync/cursor";
  * Persistent layout/workspace state (DESIGN.md #8): panel widths, last open note.
  * Restored on launch. Persisted to localStorage now; SQLite `workspace_state` later.
  */
-type Surface = "home" | "admin" | "settings";
+type Surface = "home" | "admin" | "sources" | "settings";
 type AdminFocus = "calendar" | "mail";
 
 type PersistedWorkspace = {
