@@ -11,6 +11,11 @@ on:
 permissions:
   contents: write
 
+# A newer release of the same tag/ref supersedes any still-running attempt.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release:
     strategy:
@@ -18,15 +23,15 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            target: ""
+            args: "--bundles nsis"
           - platform: macos-latest
-            target: "--target aarch64-apple-darwin"
+            args: "--target aarch64-apple-darwin --bundles app,dmg"
           - platform: ubuntu-22.04
-            target: ""
+            args: "--bundles appimage"
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history + tags so scripts/version.mjs can resolve the release
           # version from `git describe --tags` (default checkout is shallow and
@@ -37,11 +42,11 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
@@ -62,7 +67,7 @@ jobs:
           ZEN_RELEASE_VERSION: ${{ github.ref_name }}
 
       - name: Build and publish
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           # Private repos can keep using the default Actions token, or set
           # RELEASE_GITHUB_TOKEN as a GitHub variable/secret if needed.
@@ -83,6 +88,17 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Zen ${{ github.ref_name }}"
           releaseBody: "See the assets below to download and install Zen."
-          releaseDraft: false
+          # Keep private until every platform has uploaded and latest.json is complete.
+          releaseDraft: true
           prerelease: false
-          args: ${{ matrix.target }}
+          args: ${{ matrix.args }}
+
+  publish:
+    name: Publish complete release
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ vars.RELEASE_GITHUB_TOKEN || secrets.RELEASE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
