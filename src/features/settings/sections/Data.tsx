@@ -4,6 +4,7 @@ import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { checkForUpdates, type UpdateCheckResult } from "@/services/update";
 import { useReleaseNotes } from "@/features/home/ReleaseNotes";
 import { notify } from "@/shared/ui/notify";
+import { signOut } from "@/services/google/auth";
 import { SettingsSection } from "../ui";
 
 // Config-only keys safe to export/import (no note/PDF/deepwork content).
@@ -36,6 +37,19 @@ export function Data() {
     if (!confirm("Forget ALL saved memories? This can't be undone.")) return;
     for (const m of loadMemories()) deleteMemory(m.id);
     notify.success("Memories wiped");
+  }
+
+  async function resetFirstRun() {
+    if (!confirm("Delete ALL local Zen data and return to first-run onboarding? Your cloud account and subscription will not be deleted.")) return;
+    signOut();
+    try { localStorage.clear(); } catch { /* ignore */ }
+    try { sessionStorage.clear(); } catch { /* ignore */ }
+    await Promise.all(["zen-pdfs", "zen-vectors", "zen-sources"].map(clearIndexedDb));
+    if ("caches" in window) {
+      try { await Promise.all((await caches.keys()).map((key) => caches.delete(key))); } catch { /* ignore */ }
+    }
+    // Give the desktop keyring logout a moment to finish before the app restarts.
+    setTimeout(() => location.reload(), 350);
   }
 
   function exportSettings() {
@@ -151,8 +165,27 @@ export function Data() {
           </button>
           <button className="zen-btn-danger" onClick={clearConversations}>Clear all conversations</button>
           <button className="zen-btn-danger" onClick={wipeMemories}>Wipe saved memories</button>
+          <button className="zen-btn-danger" onClick={() => void resetFirstRun()}>Reset all local data & onboarding</button>
         </div>
       </SettingsSection>
     </div>
   );
+}
+
+function clearIndexedDb(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    const open = indexedDB.open(name);
+    open.onerror = () => resolve();
+    open.onupgradeneeded = () => { /* a missing database is empty already */ };
+    open.onsuccess = () => {
+      const db = open.result;
+      const stores = Array.from(db.objectStoreNames);
+      if (!stores.length) { db.close(); indexedDB.deleteDatabase(name); resolve(); return; }
+      const tx = db.transaction(stores, "readwrite");
+      for (const store of stores) tx.objectStore(store).clear();
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); resolve(); };
+      tx.onabort = () => { db.close(); resolve(); };
+    };
+  });
 }
