@@ -3,6 +3,9 @@
   "functions": {
     "pdfs/[id].ts": {
       "maxDuration": 30
+    },
+    "ai/chat.ts": {
+      "maxDuration": 60
     }
   }
 }

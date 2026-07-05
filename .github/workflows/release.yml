@@ -64,7 +64,9 @@ jobs:
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Private repos can keep using the default Actions token, or set
+          # RELEASE_GITHUB_TOKEN as a GitHub variable/secret if needed.
+          GITHUB_TOKEN: ${{ vars.RELEASE_GITHUB_TOKEN || secrets.RELEASE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           # Authoritative version for this build — the tag that triggered it.
           # scripts/version.mjs honours this over `git describe`, so the bundle,
           # frontend __APP_VERSION__, and updater all agree with the release tag.

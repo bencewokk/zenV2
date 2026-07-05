@@ -45,6 +45,10 @@ export async function getDb(): Promise<Db> {
     // Best-effort; safe to call repeatedly. Don't block requests on failure.
     await Promise.all([
       db.collection("counters").createIndex({ userId: 1 }, { unique: true }).catch(() => {}),
+      db.collection("subscriptions").createIndex({ userId: 1 }, { unique: true }).catch(() => {}),
+      db.collection("ai_usage").createIndex({ userId: 1, period: 1, provider: 1, model: 1 }, { unique: true }).catch(() => {}),
+      db.collection("ai_usage_reservations").createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      db.collection("ai_usage_reservations").createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 }).catch(() => {}),
     ]);
   }
   return db;

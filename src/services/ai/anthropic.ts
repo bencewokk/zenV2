@@ -1,13 +1,7 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { AIMessage, ToolCall, ToolDef } from "./types";
 import type { AssistantReply, Usage } from "./deepseek";
-import { loadSettings } from "./settings";
+import { aiGatewayFetch } from "./usage";
 
-const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const httpFetch: typeof fetch = IS_TAURI ? (tauriFetch as typeof fetch) : fetch;
-
-const BASE = "https://api.anthropic.com";
-const ANTHROPIC_VERSION = "2023-06-01";
 const MAX_TOKENS = 8192;
 
 /** Hardcoded Claude model list (Anthropic's /models endpoint requires a key we may not have yet). */
@@ -92,14 +86,6 @@ function convertTools(tools: ToolDef[]) {
   }));
 }
 
-function authHeaders(apiKey: string) {
-  return {
-    "Content-Type": "application/json",
-    "x-api-key": apiKey,
-    "anthropic-version": ANTHROPIC_VERSION,
-  };
-}
-
 // ── Streaming completion ─────────────────────────────────────────────────────
 
 export async function* streamChatWithTools(
@@ -108,9 +94,6 @@ export async function* streamChatWithTools(
   tools: ToolDef[],
   signal?: AbortSignal
 ): AsyncGenerator<string, AssistantReply, void> {
-  const { anthropicApiKey } = loadSettings();
-  if (!anthropicApiKey) throw new Error("No Anthropic API key set (open Settings → Connections).");
-
   const { system, messages: converted } = convertMessages(messages);
 
   const body: Record<string, unknown> = {
@@ -122,13 +105,7 @@ export async function* streamChatWithTools(
   if (system) body.system = system;
   if (tools.length) body.tools = convertTools(tools);
 
-  const url = IS_TAURI ? `${BASE}/v1/messages` : "/anthropic/v1/messages";
-  const res = await httpFetch(url, {
-    method: "POST",
-    headers: authHeaders(anthropicApiKey),
-    body: JSON.stringify(body),
-    signal,
-  });
+  const res = await aiGatewayFetch("anthropic", model, body, signal);
 
   if (!res.ok || !res.body) {
     const t = await res.text().catch(() => "");
@@ -214,21 +191,12 @@ export async function chatOnce(
   tools: ToolDef[],
   signal?: AbortSignal
 ): Promise<AssistantReply> {
-  const { anthropicApiKey } = loadSettings();
-  if (!anthropicApiKey) throw new Error("No Anthropic API key set.");
-
   const { system, messages: converted } = convertMessages(messages);
   const body: Record<string, unknown> = { model, max_tokens: MAX_TOKENS, stream: false, messages: converted };
   if (system) body.system = system;
   if (tools.length) body.tools = convertTools(tools);
 
-  const url = IS_TAURI ? `${BASE}/v1/messages` : "/anthropic/v1/messages";
-  const res = await httpFetch(url, {
-    method: "POST",
-    headers: authHeaders(anthropicApiKey),
-    body: JSON.stringify(body),
-    signal,
-  });
+  const res = await aiGatewayFetch("anthropic", model, body, signal);
   if (!res.ok) {
     const t = await res.text().catch(() => "");
     throw new Error(`Anthropic ${res.status}: ${t.slice(0, 200)}`);

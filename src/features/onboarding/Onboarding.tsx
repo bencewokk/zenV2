@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import JXG from "jsxgraph";
-import { loadSettings, saveSettings } from "@/services/ai/settings";
-import { deepseek } from "@/services/ai/deepseek";
+import { accountTypeLabel, canAccessPaidFeatures, loadAccountStatus } from "@/services/account";
 import { isSignedIn, isConfigured, onAuthChange, signIn } from "@/services/google/auth";
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
 import { syncOnce } from "@/services/sync/engine";
@@ -15,7 +14,7 @@ import { type Construction } from "@/features/geometry/model";
 import { buildConstruction } from "@/features/geometry/build";
 import "@/features/geometry/jsxgraph.css";
 import { notify } from "@/shared/ui/notify";
-import { backupConnectionsToVault, listVaultConnections } from "@/services/connections/vault";
+import { listVaultConnections } from "@/services/connections/vault";
 import { loadCanvasSettings } from "@/services/canvas/settings";
 import { loadExternalConnectionSettings } from "@/services/connections/settings";
 import { loadProfile, saveProfile, loadMemories, saveMemory, deleteMemory, type MemoryEntry } from "@/services/memory";
@@ -216,30 +215,25 @@ export function Onboarding() {
   );
 }
 
-/** Inline DeepSeek key entry + test, mirroring Settings → Connections. */
+/** Subscription-backed AI access check. */
 function AIStep({ decision, onDecision }: { decision?: SetupDecision; onDecision: (value: SetupDecision) => void }) {
-  const [key, setKey] = useState(() => loadSettings().apiKey);
-  const [show, setShow] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [ok, setOk] = useState<boolean | null>(null);
+  const [accountLabel, setAccountLabel] = useState<string | null>(null);
 
   async function saveAndTest() {
     setTesting(true);
-    saveSettings({ ...loadSettings(), apiKey: key.trim() });
     try {
-      const models = await deepseek.listModels();
-      if (models.length) {
-        setOk(true);
+      const account = await loadAccountStatus();
+      const label = accountTypeLabel(account);
+      setAccountLabel(label);
+      if (canAccessPaidFeatures(account)) {
         onDecision("connected");
-        if (isSignedIn()) await backupConnectionsToVault();
-        notify.success(`Key works — ${models.length} models available`);
+        notify.success(`${label} is ready`);
       } else {
-        setOk(false);
-        notify.error("No models returned. Check the key.");
+        notify.error(account.access === "logged_out" ? "You are logged out." : "This account does not have active paid access.");
       }
     } catch (e) {
-      setOk(false);
-      notify.error((e as Error).message || "Key test failed");
+      notify.error((e as Error).message || "Plan check failed");
     } finally {
       setTesting(false);
     }
@@ -248,31 +242,16 @@ function AIStep({ decision, onDecision }: { decision?: SetupDecision; onDecision
   return (
     <div className="space-y-2.5 text-[var(--text-dim)]">
       <p>
-        The assistant chats over your notes, rewrites text inline, and writes your daily brief. Paste
-        a <span className="text-[var(--text)]">DeepSeek API key</span> — get one at{" "}
-        <span className="text-[var(--accent)]">platform.deepseek.com</span>. Stored locally.
+        The assistant chats over your notes, rewrites text inline, and writes your daily brief.
+        Basic includes DeepSeek; Plus adds larger limits and future Anthropic access.
       </p>
-      <div className="flex gap-2">
-        <input
-          type={show ? "text" : "password"}
-          value={key}
-          onChange={(e) => { setKey(e.target.value); setOk(null); }}
-          placeholder="sk-…"
-          className="zen-input flex-1"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <button className="zen-btn-ghost shrink-0" onClick={() => setShow((s) => !s)}>
-          {show ? "Hide" : "Show"}
-        </button>
-      </div>
       <div className="flex items-center gap-2">
-        {(ok === true || decision === "connected") && <Status ok label="Connected" />}
-        {ok === false && <Status label="Not working" />}
+        {decision === "connected" && <Status ok label={`${accountLabel ?? "Subscription"} connected`} />}
+        {accountLabel && accountLabel !== "Paid access" && accountLabel !== "Trial access" && <Status label={`${accountLabel} · no AI access`} />}
         {decision === "skipped" && <Status label="Not now" />}
         <button className="zen-btn-ghost ml-auto" onClick={() => onDecision("skipped")}>Not now</button>
-        <button className="zen-btn" onClick={saveAndTest} disabled={testing || !key.trim()}>
-          {testing ? "Testing…" : "Save & test"}
+        <button className="zen-btn" onClick={saveAndTest} disabled={testing || !isSignedIn()}>
+          {testing ? "Checking…" : "Check my plan"}
         </button>
       </div>
     </div>
@@ -538,7 +517,7 @@ const AI_CANNED_RESULT = "The nature of the roots is determined by the discrimin
 function AiCardPreview() {
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const hasKey = !!loadSettings().apiKey.trim();
+  const hasKey = isSignedIn();
 
   async function rewrite() {
     setBusy(true);

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { loadSettings, saveSettings } from "@/services/ai/settings";
-import { deepseek } from "@/services/ai/deepseek";
 import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/services/google/auth";
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
 import { clearCanvasSettings, loadCanvasSettings, saveCanvasSettings } from "@/services/canvas/settings";
@@ -19,8 +18,6 @@ import { Field, SettingsSection, SaveBar } from "../ui";
 /** API keys, endpoints, and Google connection. */
 export function Connections() {
   const [ai, setAi] = useState(() => loadSettings());
-  const [showKey, setShowKey] = useState(false);
-  const [testing, setTesting] = useState(false);
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
   const [sync, setSync] = useState(() => loadSyncSettings());
   const [syncing, setSyncing] = useState(false);
@@ -45,21 +42,7 @@ export function Connections() {
 
   function saveAi() {
     saveSettings(ai);
-    notify.success("DeepSeek settings saved");
-    if (signedIn) void refreshVaultQuietly().catch(() => {});
-  }
-  async function testKey() {
-    setTesting(true);
-    saveSettings(ai); // test against what the user typed
-    try {
-      const models = await deepseek.listModels();
-      if (models.length) notify.success(`Key works — ${models.length} models available`);
-      else notify.error("No models returned. Check the key and base URL.");
-    } catch (e) {
-      notify.error((e as Error).message || "Key test failed");
-    } finally {
-      setTesting(false);
-    }
+    notify.success("AI model preference saved");
   }
 
   async function connectGoogle() {
@@ -218,31 +201,7 @@ export function Connections() {
         {vaultConnections.length > 0 && <div className="flex flex-wrap gap-1.5">{vaultConnections.map((connection) => <button key={connection.provider} className="zen-btn-ghost capitalize" onClick={() => void revokeVault(connection.provider)} title="Remove from account vault">{connection.provider} · remove</button>)}</div>}
       </SettingsSection>
 
-      <SettingsSection title="DeepSeek" hint="Powers the AI assistant. The key is stored locally in your browser.">
-        <Field label="API key">
-          <div className="flex gap-2">
-            <input
-              type={showKey ? "text" : "password"}
-              value={ai.apiKey}
-              onChange={(e) => setAi({ ...ai, apiKey: e.target.value })}
-              placeholder="sk-…"
-              className="zen-input flex-1"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button className="zen-btn-ghost shrink-0" onClick={() => setShowKey((s) => !s)}>
-              {showKey ? "Hide" : "Show"}
-            </button>
-          </div>
-        </Field>
-        <Field label="Base URL" hint="In dev this is the Vite proxy prefix (/deepseek).">
-          <input
-            value={ai.baseUrl}
-            onChange={(e) => setAi({ ...ai, baseUrl: e.target.value })}
-            className="zen-input w-full"
-            spellCheck={false}
-          />
-        </Field>
+      <SettingsSection title="AI model" hint="AI access and monthly limits come from your Zen subscription. Provider keys stay on Zen's server.">
         <Field label="Default model">
           <input
             value={ai.model}
@@ -251,11 +210,7 @@ export function Connections() {
             spellCheck={false}
           />
         </Field>
-        <SaveBar onSave={saveAi}>
-          <button className="zen-btn-ghost" onClick={testKey} disabled={testing}>
-            {testing ? "Testing…" : "Test key"}
-          </button>
-        </SaveBar>
+        <SaveBar onSave={saveAi} />
       </SettingsSection>
 
       <SettingsSection title="Google Drive" hint="Read-only indexing across every non-trashed file and folder this Google account can access, including shared-drive items.">

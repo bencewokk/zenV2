@@ -3,11 +3,13 @@ import { Connections } from "./sections/Connections";
 import { AiBehavior } from "./sections/AiBehavior";
 import { Appearance } from "./sections/Appearance";
 import { Data } from "./sections/Data";
+import { Billing } from "./sections/Billing";
 
-type SectionId = "connections" | "ai" | "appearance" | "data";
+type SectionId = "connections" | "billing" | "ai" | "appearance" | "data";
 
 const SECTIONS: Array<{ id: SectionId; label: string; render: () => JSX.Element }> = [
   { id: "connections", label: "Connections & keys", render: () => <Connections /> },
+  { id: "billing", label: "Plan & usage", render: () => <Billing /> },
   { id: "ai", label: "AI behavior", render: () => <AiBehavior /> },
   { id: "appearance", label: "Appearance", render: () => <Appearance /> },
   { id: "data", label: "Data", render: () => <Data /> },
