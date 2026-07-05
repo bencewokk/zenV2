@@ -7,69 +7,82 @@ export function Billing() {
   const [account, setAccount] = useState<AccountStatus | null>(null);
   const [usage, setUsage] = useState<AIUsageStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
-    setLoading(true);
+    setLoading(true); setError(null);
     try {
       const nextAccount = await loadAccountStatus();
       setAccount(nextAccount);
-      if (canAccessPaidFeatures(nextAccount)) {
-        setUsage(await loadAIUsageStatus());
-      } else {
-        setUsage(null);
-      }
-    } catch {
-      // Subscription/usage status is informative; it must never take down
-      // Settings if the network or backend returns an unexpected payload.
+      setUsage(canAccessPaidFeatures(nextAccount) ? await loadAIUsageStatus() : null);
+    } catch (reason) {
       setUsage(null);
-    } finally {
-      setLoading(false);
-    }
+      setError((reason as Error).message || "Usage is temporarily unavailable");
+    } finally { setLoading(false); }
   }
 
   useEffect(() => { void refresh(); }, []);
   const subscription = account?.user?.subscription;
-  const accessLabel = accountTypeLabel(account);
-  const accessTone = account?.access === "active" || account?.access === "trialing" ? "text-[var(--ok)]" : account?.access === "past_due" || account?.access === "unpaid" || account?.access === "canceled" || account?.access === "expired" ? "text-[var(--danger)]" : "text-[var(--text-dim)]";
-  const periodEnd = subscription?.currentPeriodEnd ? new Date(subscription.currentPeriodEnd).toLocaleString() : "—";
+  const paid = canAccessPaidFeatures(account);
+  const spent = finite(usage?.spentUsd);
+  const budget = finite(usage?.budgetUsd);
+  const remaining = Math.max(0, budget - spent);
+  const percent = budget ? Math.min(100, (spent / budget) * 100) : 0;
+  const requests = (usage?.usage ?? []).reduce((sum, row) => sum + finite(row.requests), 0);
+  const periodEnd = safeDate(subscription?.currentPeriodEnd);
 
   return <div className="space-y-6">
-    <SettingsSection title="Subscription" hint="Your tier is managed by your Zen account and refreshed from the server.">
-      <div className="flex items-center gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--bg-elev)] p-4">
-        <div>
-          <div className="text-xs uppercase tracking-[0.2em] text-[var(--text-dim)]">User type</div>
-          <div className={`mt-1 text-xl font-semibold ${accessTone}`}>{loading && !account ? "Loading…" : accessLabel}</div>
+    <SettingsSection title="Plan & usage" hint="Live account access and server-metered DeepSeek spend.">
+      <div className="rounded-[14px] border border-[var(--border)] bg-[var(--bg-elev)] p-5">
+        <div className="flex items-start gap-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-dim)]">Current plan</div>
+            <div className="mt-1 text-2xl font-semibold capitalize text-[var(--text)]">{loading && !account ? "Loading…" : subscription?.plan ?? "Free"}</div>
+            <div className={`mt-1 text-xs ${paid ? "text-[var(--ok)]" : "text-[var(--text-dim)]"}`}>{accountTypeLabel(account)}</div>
+          </div>
+          <button className="zen-btn-ghost ml-auto" disabled={loading} onClick={() => void refresh()}>{loading ? "Refreshing…" : "Refresh"}</button>
         </div>
-        <button className="zen-btn-ghost ml-auto" disabled={loading} onClick={() => void refresh()}>{loading ? "Refreshing…" : "Refresh"}</button>
+        <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+          <Detail label="Model" value={usage?.model ?? "No AI"} />
+          <Detail label="Billing status" value={subscription?.status ?? "None"} />
+          <Detail label="Renews" value={periodEnd} />
+        </div>
       </div>
-      <div className="grid gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--bg-elev)] p-4 text-sm sm:grid-cols-2">
-        <Detail label="Authenticated" value={account?.authenticated ? "Yes" : "No"} />
-        <Detail label="Subscription status" value={subscription?.status ?? "—"} />
-        <Detail label="Plan" value={subscription?.plan ?? "—"} />
-        <Detail label="Current period end" value={periodEnd} />
-        <Detail label="Stripe customer" value={subscription?.stripeCustomerId ?? "—"} mono />
-        <Detail label="Stripe subscription" value={subscription?.stripeSubscriptionId ?? "—"} mono />
+      {error && <div className="rounded-[9px] border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">{error}</div>}
+    </SettingsSection>
+
+    <SettingsSection title="This month" hint={`UTC calendar month${usage ? ` · ${usage.period}` : ""}`}>
+      <div className="grid grid-cols-3 gap-2">
+        <Metric label="Spent" value={budget ? money(spent, 4) : "—"} />
+        <Metric label="Remaining" value={budget ? money(remaining, 2) : "—"} />
+        <Metric label="Requests" value={String(requests)} />
+      </div>
+      <div className="mt-3 rounded-[12px] border border-[var(--border)] bg-[var(--bg)] p-4">
+        <div className="flex items-center text-xs"><span className="font-medium text-[var(--text)]">Monthly AI budget</span><span className="ml-auto tabular-nums text-[var(--text-dim)]">{budget ? `${money(spent, 4)} of ${money(budget, 2)}` : "AI not included"}</span></div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--border)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width]" style={{ width: `${percent}%` }} /></div>
+        <div className="mt-1.5 text-right text-[11px] tabular-nums text-[var(--text-dim)]">{budget ? `${percent.toFixed(1)}% used` : "Free plan"}</div>
       </div>
     </SettingsSection>
 
-    <SettingsSection title="Monthly AI usage" hint={`Spend resets automatically at the start of each UTC month${usage ? ` · ${usage.period}` : ""}.`}>
-      <UsageRow label={usage?.model ?? "DeepSeek"} spent={usage?.spentUsd ?? 0} budget={usage?.budgetUsd ?? 0} />
-      <p className="text-[11px] text-[var(--text-dim)]">Free blocks AI. DeepSeek plans use V4 Flash with a $5 monthly budget. The legacy Claude plan name now means V4 Pro with a $25 monthly budget—Anthropic is not used.</p>
+    <SettingsSection title="Model breakdown" hint="Settled provider usage for the current month.">
+      {(usage?.usage.length ?? 0) > 0 ? <div className="overflow-hidden rounded-[10px] border border-[var(--border)]">
+        {usage!.usage.map((row) => <div key={row.model} className="grid grid-cols-[1fr_auto_auto] gap-4 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2.5 text-xs last:border-0"><span className="font-medium text-[var(--text)]">{row.model}</span><span className="tabular-nums text-[var(--text-dim)]">{finite(row.requests)} calls</span><span className="w-20 text-right tabular-nums text-[var(--text)]">{money(finite(row.costUsd), 4)}</span></div>)}
+      </div> : <div className="rounded-[10px] border border-dashed border-[var(--border)] p-4 text-center text-xs text-[var(--text-dim)]">{paid ? "No settled AI requests this month." : "Subscribe to use Zen AI."}</div>}
+      <p className="text-[11px] text-[var(--text-dim)]">Spend uses DeepSeek-reported cache-hit, cache-miss, and output tokens. Accepted calls without a final usage record retain their conservative pre-flight hold.</p>
     </SettingsSection>
   </div>;
 }
 
-function Detail({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return <div className="space-y-0.5">
-    <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-dim)]">{label}</div>
-    <div className={`${mono ? "font-mono text-[11px]" : "text-sm"} text-[var(--text)]`}>{value}</div>
-  </div>;
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-[10px] border border-[var(--border)] bg-[var(--bg-elev)] p-3"><div className="text-[10px] uppercase tracking-[0.18em] text-[var(--text-dim)]">{label}</div><div className="mt-1 text-lg font-semibold tabular-nums text-[var(--text)]">{value}</div></div>;
 }
-
-function UsageRow({ label, spent, budget }: { label: string; spent: number; budget: number }) {
-  const percent = budget ? Math.min(100, (spent / budget) * 100) : 0;
-  return <div className="space-y-1.5">
-    <div className="flex text-xs"><span className="font-medium text-[var(--text)]">{label}</span><span className="ml-auto text-[var(--text-dim)]">{budget ? `$${spent.toFixed(4)} / $${budget.toFixed(2)}` : "Not included"}</span></div>
-    <div className="h-1.5 overflow-hidden rounded-full bg-[var(--border)]"><div className="h-full rounded-full bg-[var(--accent)] transition-all" style={{ width: `${percent}%` }} /></div>
-  </div>;
+function Detail({ label, value }: { label: string; value: string }) {
+  return <div><div className="text-[10px] uppercase tracking-[0.16em] text-[var(--text-dim)]">{label}</div><div className="mt-0.5 truncate text-[var(--text)]" title={value}>{value}</div></div>;
+}
+function finite(value: unknown): number { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : 0; }
+function money(value: number, digits: number): string { return `$${finite(value).toFixed(digits)}`; }
+function safeDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }

@@ -3,14 +3,14 @@ import { applyCors } from "../_lib/cors.js";
 import { userIdFromRequest } from "../_lib/auth.js";
 import { subscriptionFor } from "../_lib/billing.js";
 
-function subscriptionPayload(tier: string) {
-  if (tier === "free") return null;
+function subscriptionPayload(subscription: Awaited<ReturnType<typeof subscriptionFor>>) {
+  if (subscription.tier === "free") return null;
   return {
-    status: "active",
-    plan: tier,
-    currentPeriodEnd: null,
-    stripeCustomerId: null,
-    stripeSubscriptionId: null,
+    status: subscription.status ?? "active",
+    plan: subscription.tier,
+    currentPeriodEnd: subscription.currentPeriodEnd?.toISOString() ?? null,
+    stripeCustomerId: subscription.stripeCustomerId ?? null,
+    stripeSubscriptionId: subscription.stripeSubscriptionId ?? null,
   };
 }
 
@@ -24,7 +24,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const userId = await userIdFromRequest(req.headers.authorization);
     const subscription = await subscriptionFor(userId);
-    res.status(200).json({ authenticated: true, user: { subscription: subscriptionPayload(subscription.tier) } });
+    res.status(200).json({ authenticated: true, user: { subscription: subscriptionPayload(subscription) } });
   } catch {
     res.status(200).json({ authenticated: false, user: null });
   }

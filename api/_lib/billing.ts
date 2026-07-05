@@ -4,8 +4,14 @@ import { getDb } from "./db.js";
 export type SubscriptionTier = "free" | "basic" | "plus";
 export type DeepSeekModel = "deepseek-v4-flash" | "deepseek-v4-pro";
 
-export interface SubscriptionRecord { userId: string; tier: SubscriptionTier; updatedAt: number; source?: string }
-interface ExternalUserRecord { googleSub: string; activePlan?: string; subscriptionStatus?: string; subscriptionUpdatedAt?: Date }
+export interface SubscriptionRecord {
+  userId: string; tier: SubscriptionTier; updatedAt: number; source?: string;
+  status?: string; currentPeriodEnd?: Date; stripeCustomerId?: string; stripeSubscriptionId?: string;
+}
+interface ExternalUserRecord {
+  googleSub: string; activePlan?: string; subscriptionStatus?: string; subscriptionUpdatedAt?: Date;
+  currentPeriodEnd?: Date; stripeCustomerId?: string; stripeSubscriptionId?: string;
+}
 interface BudgetRecord { userId: string; period: string; amountPicoUsd: number; updatedAt: number }
 export interface UsageReservation {
   id: string; userId: string; period: string; model: DeepSeekModel; reservedPicoUsd: number;
@@ -34,7 +40,13 @@ export async function subscriptionFor(userId: string): Promise<SubscriptionRecor
     const tier: SubscriptionTier = !active ? "free"
       : ["plus", "claude", "anthropic"].includes(plan) ? "plus"
       : ["basic", "deepseek"].includes(plan) ? "basic" : "free";
-    return { userId, tier, updatedAt: external.subscriptionUpdatedAt?.getTime() ?? 0, source: "users" };
+    return {
+      userId, tier, updatedAt: external.subscriptionUpdatedAt?.getTime() ?? 0, source: "users",
+      status: external.subscriptionStatus,
+      currentPeriodEnd: external.currentPeriodEnd,
+      stripeCustomerId: external.stripeCustomerId,
+      stripeSubscriptionId: external.stripeSubscriptionId,
+    };
   }
   return await db.collection<SubscriptionRecord>("subscriptions").findOne({ userId }) ?? { userId, tier: "free", updatedAt: 0 };
 }
