@@ -313,7 +313,7 @@ function SourceConnectionsStep({ onOpenSettings }: { onOpenSettings: () => void 
     { id: "drive", name: "Google Drive", ready: signedIn, detail: "All accessible files · read-only" },
     { id: "canvas", name: "Canvas", ready: !!canvas.accessToken || vault.includes("canvas"), detail: "Courses, assignments, and files" },
     { id: "zotero", name: "Zotero", ready: !!external.zoteroApiKey || vault.includes("zotero"), detail: "Papers, annotations, and citations" },
-    { id: "github", name: "GitHub", ready: !!external.githubRepositories.length, detail: "Selected repositories and issues" },
+    { id: "github", name: "GitHub", ready: !!external.githubToken || vault.includes("github"), detail: "All token-accessible repositories" },
   ];
 
   async function secureOrRestore() {

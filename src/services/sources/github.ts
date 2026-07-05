@@ -26,27 +26,37 @@ function decodeBase64(value: string): string {
   return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
 }
 
+async function allRepositories(): Promise<Repo[]> {
+  const out: Repo[] = [];
+  for (let page = 1; ; page++) {
+    const repos = await github<Repo[]>(`/user/repos?affiliation=owner,collaborator,organization_member&visibility=all&sort=updated&per_page=100&page=${page}`);
+    out.push(...repos);
+    if (repos.length < 100) return out;
+  }
+}
+
 export async function testGitHubConnection(): Promise<string> {
   const settings = loadExternalConnectionSettings();
-  const first = settings.githubRepositories[0];
-  if (first) return (await github<Repo>(`/repos/${first}`)).full_name;
-  if (!settings.githubToken.trim()) throw new Error("Add a repository or GitHub token first.");
-  return (await github<{ login: string }>("/user")).login;
+  if (!settings.githubToken.trim()) throw new Error("Add a GitHub token first.");
+  const user = await github<{ login: string }>("/user");
+  const repos = await allRepositories();
+  return `${user.login} · ${repos.length} repositories`;
 }
 
 export async function refreshGitHubSources(): Promise<SourceRefreshResult> {
   const settings = loadExternalConnectionSettings();
-  const repositories = settings.githubRepositories;
-  if (!repositories.length) return { provider: "github", imported: 0, message: "No GitHub repositories selected." };
+  if (!settings.githubToken.trim()) return { provider: "github", imported: 0, message: "GitHub is not connected." };
+  const repositories = await allRepositories();
   const records: ConnectedSource[] = [];
   const now = Date.now();
-  for (const fullName of repositories) {
-    if (!/^[^/]+\/[^/]+$/.test(fullName)) continue;
-    const repo = await github<Repo>(`/repos/${fullName}`);
+  for (const repo of repositories) {
+    const fullName = repo.full_name;
     const repoId = `github:repo:${repo.full_name.toLowerCase()}`;
     records.push({ id: repoId, provider: "github", kind: "repository", externalId: repo.full_name, title: repo.full_name, text: repo.description ?? "", url: repo.html_url, sourceUpdatedAt: new Date(repo.updated_at).getTime(), syncedAt: now });
     const tree = await github<{ tree: TreeItem[]; truncated?: boolean }>(`/repos/${fullName}/git/trees/${encodeURIComponent(repo.default_branch)}?recursive=1`);
-    const files = tree.tree.filter((item) => item.type === "blob" && (item.size ?? 0) <= 500_000 && TEXT_EXT.test(item.path) && !settings.githubExcludePatterns.some((pattern) => item.path.toLowerCase().includes(pattern.toLowerCase()))).slice(0, 150);
+    // Every repository is represented, but bound per-repo file hydration so a
+    // large account cannot exhaust GitHub's API quota in a single refresh.
+    const files = tree.tree.filter((item) => item.type === "blob" && (item.size ?? 0) <= 500_000 && TEXT_EXT.test(item.path) && !settings.githubExcludePatterns.some((pattern) => item.path.toLowerCase().includes(pattern.toLowerCase()))).slice(0, 50);
     for (const file of files) {
       let text = "";
       try {

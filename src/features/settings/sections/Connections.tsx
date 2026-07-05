@@ -300,17 +300,14 @@ export function Connections() {
         <SaveBar onSave={saveExternal}><button className="zen-btn-ghost" onClick={() => void testZotero()} disabled={testingExternal === "zotero" || !external.zoteroApiKey || !external.zoteroLibraryId}>{testingExternal === "zotero" ? "Testing…" : "Test connection"}</button></SaveBar>
       </SettingsSection>
 
-      <SettingsSection title="GitHub" hint="Index selected repositories, text/code files, issues, and pull requests. Public repositories work without a token.">
-        <Field label="Repositories" hint="Use owner/repository, separated by commas or spaces.">
-          <textarea className="zen-input min-h-20 w-full" value={external.githubRepositories.join("\n")} onChange={(e) => setExternal({ ...external, githubRepositories: splitConnectionList(e.target.value).map((value) => value.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/$/, "")) })} placeholder="owner/repository" spellCheck={false} />
-        </Field>
-        <Field label="Personal token" hint="Optional for public repositories; required for private repositories and higher rate limits.">
+      <SettingsSection title="GitHub" hint="Index every repository visible to the connected GitHub account, including owned, collaborated, and permitted organization repositories.">
+        <Field label="Personal token" hint="Use a fine-grained token with All repositories, or restrict it at GitHub to control what Zen can read.">
           <div className="flex gap-2"><input type={showGitHubToken ? "text" : "password"} className="zen-input flex-1" value={external.githubToken} onChange={(e) => setExternal({ ...external, githubToken: e.target.value })} autoComplete="off" /><button className="zen-btn-ghost" onClick={() => setShowGitHubToken((value) => !value)}>{showGitHubToken ? "Hide" : "Show"}</button></div>
         </Field>
         <Field label="Excluded paths" hint="Files containing any of these path fragments are not indexed.">
           <input className="zen-input w-full" value={external.githubExcludePatterns.join(", ")} onChange={(e) => setExternal({ ...external, githubExcludePatterns: splitConnectionList(e.target.value) })} />
         </Field>
-        <SaveBar onSave={saveExternal}><button className="zen-btn-ghost" onClick={() => void testGitHub()} disabled={testingExternal === "github" || (!external.githubToken && !external.githubRepositories.length)}>{testingExternal === "github" ? "Testing…" : "Test connection"}</button></SaveBar>
+        <SaveBar onSave={saveExternal}><button className="zen-btn-ghost" onClick={() => void testGitHub()} disabled={testingExternal === "github" || !external.githubToken}>{testingExternal === "github" ? "Testing…" : "Test connection"}</button></SaveBar>
       </SettingsSection>
 
       <SettingsSection

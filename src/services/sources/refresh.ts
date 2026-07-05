@@ -14,18 +14,18 @@ export async function refreshAllSources(): Promise<SourceRefreshResult[]> {
   if (canvas.baseUrl && canvas.accessToken) jobs.push(refreshCanvasSources());
   if (isSignedIn()) jobs.push(refreshDriveSources());
   if (external.zoteroLibraryId && external.zoteroApiKey) jobs.push(refreshZoteroSources());
-  if (external.githubRepositories.length) jobs.push(refreshGitHubSources());
+  if (external.githubToken) jobs.push(refreshGitHubSources());
   return Promise.all(jobs);
 }
 
 let refreshTimer: number | null = null;
 
-/** Refresh configured sources shortly after launch and every fifteen minutes. */
+/** Refresh configured sources shortly after launch and hourly. */
 export function startSourceRefresh(): () => void {
   if (refreshTimer !== null) return () => undefined;
   const run = () => void refreshAllSources().catch(() => { /* connections can be offline; manual refresh surfaces errors */ });
   const first = window.setTimeout(run, 10_000);
-  refreshTimer = window.setInterval(run, 15 * 60_000);
+  refreshTimer = window.setInterval(run, 60 * 60_000);
   return () => {
     window.clearTimeout(first);
     if (refreshTimer !== null) window.clearInterval(refreshTimer);

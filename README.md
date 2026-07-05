@@ -64,7 +64,7 @@ Everything below is **off by default** and configured inside the app at
 | Canvas | Your institution URL and a personal access token | Canvas Account settings, when enabled by your institution |
 | Google Drive | The existing Google connection | Read-only access to the signed-in account's accessible files |
 | Zotero | Library ID and API key | <https://www.zotero.org/settings/keys> |
-| GitHub | Repository names; token optional for public repositories | <https://github.com/settings/tokens> |
+| GitHub | A token granting the repositories Zen may read | <https://github.com/settings/personal-access-tokens/new> |
 
 The AI assistant needs a DeepSeek key. Calendar & Mail work out of the box with a bundled
 Google client — just connect your account. If you skip these, the rest of the app works
