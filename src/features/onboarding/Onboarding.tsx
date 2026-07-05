@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import JXG from "jsxgraph";
 import { loadSettings, saveSettings } from "@/services/ai/settings";
-import { loadGoogleSettings, saveGoogleSettings, isUsingBundledCredentials } from "@/services/google/settings";
 import { deepseek } from "@/services/ai/deepseek";
 import { isSignedIn, isConfigured, onAuthChange, signIn } from "@/services/google/auth";
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
@@ -16,7 +15,7 @@ import { type Construction } from "@/features/geometry/model";
 import { buildConstruction } from "@/features/geometry/build";
 import "@/features/geometry/jsxgraph.css";
 import { notify } from "@/shared/ui/notify";
-import { backupConnectionsToVault, listVaultConnections, restoreConnectionsFromVault } from "@/services/connections/vault";
+import { backupConnectionsToVault, listVaultConnections } from "@/services/connections/vault";
 import { loadCanvasSettings } from "@/services/canvas/settings";
 import { loadExternalConnectionSettings } from "@/services/connections/settings";
 import { loadProfile, saveProfile, loadMemories, saveMemory, deleteMemory, type MemoryEntry } from "@/services/memory";
@@ -28,7 +27,7 @@ function localDayKey(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+type SetupDecision = "connected" | "skipped";
 
 /**
  * First-run walkthrough. A focused, dismissable overlay that (1) helps the user
@@ -39,43 +38,53 @@ export function Onboarding() {
   const open = useOnboarding((s) => s.open);
   const finish = useOnboarding((s) => s.finish);
   const [step, setStep] = useState(0);
+  const [decisions, setDecisions] = useState<Record<string, SetupDecision>>({});
 
   // Always restart at the first step when (re)opened.
   useEffect(() => {
-    if (open) setStep(0);
+    if (open) { setStep(0); setDecisions({}); }
   }, [open]);
 
   if (!open) return null;
 
-  const steps: { title: string; art: ReactNode; body: ReactNode }[] = [
+  const decide = (key: string, value: SetupDecision) => setDecisions((current) => ({ ...current, [key]: value }));
+  const steps: { title: string; art: ReactNode; body: ReactNode; required?: string }[] = [
     {
       title: "Welcome to Zen",
       art: <ArtWelcome />,
       body: (
         <div className="space-y-3">
           <p className="text-[var(--text-dim)]">
-            A calm, math-first notebook for studying and deep work. This 60-second tour connects the
-            optional extras and shows what Zen can do. Your content remains local-first; encrypted
-            sync and external connections are optional, and you can skip anything.
+            A calm, math-first notebook for studying and deep work. First, Zen will help you make a
+            clear choice about your account, sync, and every optional connection. Nothing is enabled
+            silently, and nothing is left ambiguous.
           </p>
-          <QuickGoogleSync />
         </div>
       ),
     },
     {
+      title: "Your Zen account",
+      art: <ArtGoogle />,
+      body: <GoogleStep decision={decisions.google} onDecision={(value) => decide("google", value)} />,
+      required: "google",
+    },
+    {
+      title: "Sync across devices",
+      art: <ArtGoogle />,
+      body: <SyncStep googleConnected={decisions.google === "connected"} decision={decisions.sync} onDecision={(value) => decide("sync", value)} />,
+      required: "sync",
+    },
+    {
       title: "Bring in your world",
       art: <ArtGoogle />,
-      body: <SourceConnectionsStep onOpenSettings={() => { finish(); useWorkspace.getState().set({ surface: "settings" }); }} />,
+      body: <SourceConnectionsStep decisions={decisions} onDecision={decide} />,
+      required: "sources",
     },
     {
       title: "Connect the AI assistant",
       art: <ArtAI />,
-      body: <AIStep />,
-    },
-    {
-      title: "Connect Calendar & Mail",
-      art: <ArtGoogle />,
-      body: <GoogleStep />,
+      body: <AIStep decision={decisions.ai} onDecision={(value) => decide("ai", value)} />,
+      required: "ai",
     },
     {
       title: "Help Zen remember you",
@@ -125,6 +134,7 @@ export function Onboarding() {
 
   const last = step === steps.length - 1;
   const current = steps[step];
+  const canContinue = !current.required || !!decisions[current.required];
 
   /** Close the tour and drop the user into the seeded sample math note. */
   function openSampleNote() {
@@ -181,9 +191,7 @@ export function Onboarding() {
           </div>
 
           <div className="mt-2 flex items-center gap-2">
-            <button className="zen-btn-ghost" onClick={finish}>
-              {last ? "Close" : "Skip tour"}
-            </button>
+            {last && <button className="zen-btn-ghost" onClick={finish}>Close</button>}
             <div className="ml-auto flex gap-2">
               {step > 0 && (
                 <button className="zen-btn-ghost" onClick={() => setStep((s) => s - 1)}>
@@ -195,12 +203,13 @@ export function Onboarding() {
                   Try Deep Work
                 </button>
               ) : (
-                <button className="zen-btn zen-shine" onClick={() => setStep((s) => s + 1)}>
+                <button className="zen-btn zen-shine" disabled={!canContinue} onClick={() => setStep((s) => s + 1)}>
                   Next
                 </button>
               )}
             </div>
           </div>
+          {!canContinue && <p className="text-center text-[11px] text-[var(--text-dim)]">Connect it or choose “Not now” to continue.</p>}
         </div>
       </div>
     </div>
@@ -208,7 +217,7 @@ export function Onboarding() {
 }
 
 /** Inline DeepSeek key entry + test, mirroring Settings → Connections. */
-function AIStep() {
+function AIStep({ decision, onDecision }: { decision?: SetupDecision; onDecision: (value: SetupDecision) => void }) {
   const [key, setKey] = useState(() => loadSettings().apiKey);
   const [show, setShow] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -221,6 +230,7 @@ function AIStep() {
       const models = await deepseek.listModels();
       if (models.length) {
         setOk(true);
+        onDecision("connected");
         if (isSignedIn()) await backupConnectionsToVault();
         notify.success(`Key works — ${models.length} models available`);
       } else {
@@ -257,9 +267,11 @@ function AIStep() {
         </button>
       </div>
       <div className="flex items-center gap-2">
-        {ok === true && <Status ok label="Connected" />}
+        {(ok === true || decision === "connected") && <Status ok label="Connected" />}
         {ok === false && <Status label="Not working" />}
-        <button className="zen-btn ml-auto" onClick={saveAndTest} disabled={testing || !key.trim()}>
+        {decision === "skipped" && <Status label="Not now" />}
+        <button className="zen-btn-ghost ml-auto" onClick={() => onDecision("skipped")}>Not now</button>
+        <button className="zen-btn" onClick={saveAndTest} disabled={testing || !key.trim()}>
           {testing ? "Testing…" : "Save & test"}
         </button>
       </div>
@@ -267,95 +279,48 @@ function AIStep() {
   );
 }
 
-/**
- * One-click path for people who just want to sign in with Google and have
- * everything sync — skips the rest of the tour once done. Separate from
- * `GoogleStep` below, which is for the AI-first walkthrough.
- */
-function QuickGoogleSync() {
-  const [signedIn, setSignedIn] = useState(() => isSignedIn());
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => onAuthChange(setSignedIn), []);
-
-  async function run() {
-    setBusy(true);
-    try {
-      if (!signedIn) await signIn();
-      const sync = loadSyncSettings();
-      if (!sync.enabled) saveSyncSettings({ ...sync, enabled: true });
-      await syncOnce();
-      notify.success("Signed in and synced");
-    } catch (e) {
-      notify.error((e as Error).message || "Sign-in / sync failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <button className="zen-btn zen-shine w-full" onClick={run} disabled={busy}>
-      {busy ? "Signing in & syncing…" : signedIn ? "Google account connected" : "Sign in with Google"}
-    </button>
-  );
-}
-
-function SourceConnectionsStep({ onOpenSettings }: { onOpenSettings: () => void }) {
+function SourceConnectionsStep({ decisions, onDecision }: { decisions: Record<string, SetupDecision>; onDecision: (key: string, value: SetupDecision) => void }) {
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
   const [vault, setVault] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
   useEffect(() => onAuthChange(setSignedIn), []);
   useEffect(() => { if (signedIn) void listVaultConnections().then((items) => setVault(items.map((item) => item.provider))).catch(() => {}); }, [signedIn]);
   const canvas = loadCanvasSettings();
   const external = loadExternalConnectionSettings();
   const cards = [
-    { id: "ai", name: "AI provider", ready: !!loadSettings().apiKey || vault.includes("ai"), detail: "Assistant model credentials" },
     { id: "drive", name: "Google Drive", ready: signedIn, detail: "All accessible files · read-only" },
     { id: "canvas", name: "Canvas", ready: !!canvas.accessToken || vault.includes("canvas"), detail: "Courses, assignments, and files" },
     { id: "zotero", name: "Zotero", ready: !!external.zoteroApiKey || vault.includes("zotero"), detail: "Papers, annotations, and citations" },
     { id: "github", name: "GitHub", ready: !!external.githubToken || vault.includes("github"), detail: "All token-accessible repositories" },
   ];
 
-  async function secureOrRestore() {
-    if (!signedIn) { notify.error("Sign in with Google on the first step."); return; }
-    setBusy(true);
-    try {
-      if (vault.length) await restoreConnectionsFromVault(); else await backupConnectionsToVault();
-      const next = await listVaultConnections();
-      setVault(next.map((item) => item.provider));
-      notify.success(vault.length ? "Connections restored" : "Existing connections secured");
-    } catch (e) { notify.error((e as Error).message || "Connection vault failed"); }
-    finally { setBusy(false); }
-  }
+  const resolved = cards.every((card) => card.ready || !!decisions[`source:${card.id}`]);
+  useEffect(() => { if (resolved && !decisions.sources) onDecision("sources", "connected"); }, [resolved, decisions.sources]);
 
   return <div className="space-y-3 text-[var(--text-dim)]">
-    <p>Connect only the places you want Zen to read. Each connection is optional and can be revoked later.</p>
-    <div className="grid grid-cols-2 gap-2">
+    <p>Make a clear choice for every source. Existing connections are detected automatically.</p>
+    <div className="space-y-2">
       {cards.map((card) => <div key={card.id} className="rounded-[9px] border border-[var(--border)] bg-[var(--bg)] p-2.5">
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text)]"><span className="h-2 w-2 rounded-full" style={{ background: card.ready ? "var(--ok)" : "var(--text-dim)" }} />{card.name}</div>
-        <div className="mt-1 text-[11px] leading-snug">{card.detail}</div>
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text)]"><span className="h-2 w-2 rounded-full" style={{ background: card.ready ? "var(--ok)" : "var(--text-dim)" }} />{card.name}<span className="ml-auto font-normal text-[var(--text-dim)]">{card.ready ? "Connected" : decisions[`source:${card.id}`] === "skipped" ? "Not now" : "Choose"}</span></div>
+        <div className="mt-1 flex items-center gap-2 text-[11px] leading-snug"><span className="flex-1">{card.detail}</span>{!card.ready && <button className="zen-btn-ghost" onClick={() => onDecision(`source:${card.id}`, "skipped")}>Not now</button>}</div>
       </div>)}
     </div>
-    <div className="flex gap-2"><button className="zen-btn-ghost flex-1" onClick={onOpenSettings}>Choose connections…</button><button className="zen-btn flex-1" disabled={!signedIn || busy} onClick={() => void secureOrRestore()}>{busy ? "Working…" : vault.length ? "Restore saved" : "Secure existing"}</button></div>
+    <p className="text-[11px]">Add credentials for skipped sources later in Settings. Zen secures them under your Google account.</p>
   </div>;
 }
 
-/** Inline Google connect, mirroring Settings → Connections. */
-function GoogleStep() {
-  const [clientId, setClientId] = useState(() => loadGoogleSettings().clientId);
-  const [clientSecret, setClientSecret] = useState(() => loadGoogleSettings().clientSecret);
-  const [show, setShow] = useState(false);
+/** Product-level Google identity using Zen's bundled OAuth client. */
+function GoogleStep({ decision, onDecision }: { decision?: SetupDecision; onDecision: (value: SetupDecision) => void }) {
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
   const [connecting, setConnecting] = useState(false);
-  const usingBundled = isUsingBundledCredentials({ clientId, clientSecret });
 
   useEffect(() => onAuthChange(setSignedIn), []);
+  useEffect(() => { if (signedIn && decision !== "connected") onDecision("connected"); }, [signedIn, decision]);
 
   async function connect() {
     setConnecting(true);
-    saveGoogleSettings({ clientId: clientId.trim(), clientSecret: clientSecret.trim() });
     try {
       await signIn();
+      onDecision("connected");
       notify.success("Connected to Google");
     } catch (e) {
       notify.error((e as Error).message || "Google sign-in failed");
@@ -367,52 +332,17 @@ function GoogleStep() {
   return (
     <div className="space-y-2.5 text-[var(--text-dim)]">
       <p>
-        Pull Google Calendar events and Gmail threads into your daily focus. A default client
-        is bundled — just <span className="text-[var(--text)]">Connect</span> and sign in.
+        Your Google account becomes your Zen identity. It unlocks Drive, Calendar, Gmail,
+        encrypted connection storage, and optional cross-device sync through Zen's built-in connection.
       </p>
-      <details className="text-xs">
-        <summary className="cursor-pointer text-[var(--text-dim)] hover:text-[var(--text)]">
-          Use my own OAuth client (optional)
-        </summary>
-        <div className="mt-2 space-y-2">
-          <input
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            placeholder="…apps.googleusercontent.com"
-            className="zen-input w-full"
-            spellCheck={false}
-          />
-          {IS_TAURI && (
-            <div className="flex gap-2">
-              <input
-                type={show ? "text" : "password"}
-                value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
-                placeholder="GOCSPX-…"
-                className="zen-input flex-1"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <button className="zen-btn-ghost shrink-0" onClick={() => setShow((s) => !s)}>
-                {show ? "Hide" : "Show"}
-              </button>
-            </div>
-          )}
-        </div>
-      </details>
       <div className="flex items-center gap-2">
-        <Status
-          ok={signedIn}
-          label={
-            (signedIn ? "Connected" : isConfigured() ? "Not connected" : "No Client ID set") +
-            (usingBundled && isConfigured() ? " · built-in client" : "")
-          }
-        />
+        <Status ok={signedIn} label={signedIn ? "Connected · built-in client" : decision === "skipped" ? "Continuing without Google" : "Not connected · built-in client"} />
+        {!signedIn && <button className="zen-btn-ghost ml-auto" onClick={() => onDecision("skipped")}>Continue without Google</button>}
         {!signedIn && (
           <button
-            className="zen-btn ml-auto"
+            className="zen-btn"
             onClick={connect}
-            disabled={connecting || (!IS_TAURI && !clientId.trim())}
+            disabled={connecting || !isConfigured()}
           >
             {connecting ? "Connecting…" : "Connect"}
           </button>
@@ -420,6 +350,34 @@ function GoogleStep() {
       </div>
     </div>
   );
+}
+
+function SyncStep({ googleConnected, decision, onDecision }: { googleConnected: boolean; decision?: SetupDecision; onDecision: (value: SetupDecision) => void }) {
+  const [busy, setBusy] = useState(false);
+  const enabled = loadSyncSettings().enabled;
+  useEffect(() => { if (enabled && decision !== "connected") onDecision("connected"); }, [enabled, decision]);
+
+  async function enable() {
+    if (!googleConnected || !isSignedIn()) return;
+    setBusy(true);
+    try {
+      const current = loadSyncSettings();
+      saveSyncSettings({ ...current, enabled: true });
+      await syncOnce();
+      onDecision("connected");
+      notify.success("Cloud sync is on");
+    } catch (e) { notify.error((e as Error).message || "Sync failed"); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="space-y-3 text-[var(--text-dim)]">
+    <p>Sync notes, settings, and encrypted connection credentials across devices. Zen remains fully usable on this device without cloud sync.</p>
+    <Status ok={decision === "connected" || enabled} label={decision === "connected" || enabled ? "Cloud sync enabled" : decision === "skipped" ? "Local-only selected" : googleConnected ? "Choose how Zen stores your work" : "Google was not connected"} />
+    <div className="flex gap-2">
+      <button className="zen-btn-ghost flex-1" onClick={() => { const current = loadSyncSettings(); saveSyncSettings({ ...current, enabled: false }); onDecision("skipped"); }}>Keep this device local</button>
+      <button className="zen-btn flex-1" disabled={!googleConnected || busy} onClick={() => void enable()}>{busy ? "Syncing…" : "Enable cloud sync"}</button>
+    </div>
+  </div>;
 }
 
 type FeatureKey = "math" | "graph" | "pdf" | "ai" | "link" | "dash";

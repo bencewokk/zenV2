@@ -17,7 +17,6 @@ pub fn run() {
             auth::google_id_token,
             auth::google_logout,
             auth::google_is_signed_in,
-            auth::google_set_credentials,
             auth::google_has_credentials,
         ])
         .run(tauri::generate_context!())

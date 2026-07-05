@@ -26,15 +26,10 @@ https://www.googleapis.com/auth/drive.readonly";
 
 const KEYRING_SERVICE: &str = "zen-google";
 const KEYRING_USER: &str = "refresh_token";
-const KEYRING_CREDS_USER: &str = "oauth_credentials";
 
 /// In-memory cache of the current access token (never persisted; the refresh
 /// token in the keyring is the durable credential).
 static ACCESS: Mutex<Option<CachedToken>> = Mutex::new(None);
-
-/// OAuth client id + secret, set from the in-app Settings and mirrored to the
-/// OS keyring so they survive restarts.
-static CREDS: Mutex<Option<OAuthCredentials>> = Mutex::new(None);
 
 #[derive(Clone)]
 struct CachedToken {
@@ -73,53 +68,8 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn creds_keyring_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_CREDS_USER).map_err(|e| e.to_string())
-}
-
-fn valid(c: &OAuthCredentials) -> bool {
-    !c.client_id.is_empty() && !c.client_secret.is_empty()
-}
-
-/// Persist credentials supplied from the in-app Settings, both in memory and in
-/// the OS keyring, so the desktop OAuth flow no longer needs env vars or a JSON file.
-#[tauri::command]
-pub fn google_set_credentials(client_id: String, client_secret: String) -> Result<(), String> {
-    let creds = OAuthCredentials {
-        client_id: client_id.trim().to_string(),
-        client_secret: client_secret.trim().to_string(),
-    };
-    if let Ok(entry) = creds_keyring_entry() {
-        let _ = entry.set_password(&serde_json::to_string(&creds).unwrap_or_default());
-    }
-    if let Ok(mut guard) = CREDS.lock() {
-        *guard = Some(creds);
-    }
-    Ok(())
-}
-
-/// Load the OAuth client id + secret. Order: credentials set from in-app Settings
-/// (memory, then keyring), then env vars, then a `google_oauth.json` file.
+/// Load Zen's OAuth client id + secret from the build/runtime environment.
 fn load_credentials() -> Result<OAuthCredentials, String> {
-    if let Ok(guard) = CREDS.lock() {
-        if let Some(c) = guard.as_ref() {
-            if valid(c) {
-                return Ok(c.clone());
-            }
-        }
-    }
-    if let Ok(entry) = creds_keyring_entry() {
-        if let Ok(raw) = entry.get_password() {
-            if let Ok(c) = serde_json::from_str::<OAuthCredentials>(&raw) {
-                if valid(&c) {
-                    if let Ok(mut guard) = CREDS.lock() {
-                        *guard = Some(c.clone());
-                    }
-                    return Ok(c);
-                }
-            }
-        }
-    }
     if let (Ok(client_id), Ok(client_secret)) = (
         std::env::var("ZEN_GOOGLE_CLIENT_ID"),
         std::env::var("ZEN_GOOGLE_CLIENT_SECRET"),
@@ -136,7 +86,7 @@ fn load_credentials() -> Result<OAuthCredentials, String> {
     }
     // Bundled default desktop client, baked in at build time from CI secrets
     // (ZEN_GOOGLE_CLIENT_ID / ZEN_GOOGLE_CLIENT_SECRET). Lets released installers work
-    // with zero setup; absent in plain source builds, where the user supplies their own.
+    // with zero setup.
     if let (Some(id), Some(secret)) = (
         option_env!("ZEN_GOOGLE_CLIENT_ID"),
         option_env!("ZEN_GOOGLE_CLIENT_SECRET"),
@@ -148,8 +98,8 @@ fn load_credentials() -> Result<OAuthCredentials, String> {
             });
         }
     }
-    Err("No Google OAuth credentials. Add them in Settings → Connections, set \
-ZEN_GOOGLE_CLIENT_ID / ZEN_GOOGLE_CLIENT_SECRET, or create google_oauth.json."
+    Err("Zen's built-in Google connection is unavailable in this build. Set \
+ZEN_GOOGLE_CLIENT_ID / ZEN_GOOGLE_CLIENT_SECRET or create google_oauth.json."
         .into())
 }
 

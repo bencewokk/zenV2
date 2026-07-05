@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { loadSettings, saveSettings } from "@/services/ai/settings";
-import { loadGoogleSettings, saveGoogleSettings, isUsingBundledCredentials } from "@/services/google/settings";
 import { deepseek } from "@/services/ai/deepseek";
 import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/services/google/auth";
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
@@ -17,18 +16,12 @@ import { useOnboarding } from "@/features/onboarding/store";
 import { useStatus } from "@/shared/stores/status";
 import { Field, SettingsSection, SaveBar } from "../ui";
 
-const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
 /** API keys, endpoints, and Google connection. */
 export function Connections() {
   const [ai, setAi] = useState(() => loadSettings());
-  const [clientId, setClientId] = useState(() => loadGoogleSettings().clientId);
-  const [clientSecret, setClientSecret] = useState(() => loadGoogleSettings().clientSecret);
   const [showKey, setShowKey] = useState(false);
-  const [showSecret, setShowSecret] = useState(false);
   const [testing, setTesting] = useState(false);
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
-  const usingBundled = isUsingBundledCredentials({ clientId, clientSecret });
   const [sync, setSync] = useState(() => loadSyncSettings());
   const [syncing, setSyncing] = useState(false);
   const syncStatus = useStatus((s) => s.sync);
@@ -55,11 +48,6 @@ export function Connections() {
     notify.success("DeepSeek settings saved");
     if (signedIn) void refreshVaultQuietly().catch(() => {});
   }
-  function saveGoogle() {
-    saveGoogleSettings({ clientId: clientId.trim(), clientSecret: clientSecret.trim() });
-    notify.success("Google settings saved");
-  }
-
   async function testKey() {
     setTesting(true);
     saveSettings(ai); // test against what the user typed
@@ -75,7 +63,6 @@ export function Connections() {
   }
 
   async function connectGoogle() {
-    saveGoogleSettings({ clientId: clientId.trim(), clientSecret: clientSecret.trim() });
     try {
       await signIn();
       notify.success("Connected to Google");
@@ -364,57 +351,18 @@ export function Connections() {
 
       <SettingsSection
         title="Google"
-        hint={
-          IS_TAURI
-            ? "Calendar + Gmail access. Use a Google \"Desktop app\" OAuth client (Client ID + Secret)."
-            : "Calendar + Gmail access. The Client ID is a public OAuth web client id."
-        }
+        hint="Your Google account is Zen's identity for Drive, Calendar, Gmail, encrypted connection storage, and cloud sync."
       >
-        <Field label="Client ID">
-          <input
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            placeholder="…apps.googleusercontent.com"
-            className="zen-input w-full"
-            spellCheck={false}
-          />
-        </Field>
-        {IS_TAURI && (
-          <Field label="Client secret" hint="From your Google Desktop OAuth client. Stored in your OS keyring.">
-            <div className="flex gap-2">
-              <input
-                type={showSecret ? "text" : "password"}
-                value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
-                placeholder="GOCSPX-…"
-                className="zen-input flex-1"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <button className="zen-btn-ghost shrink-0" onClick={() => setShowSecret((s) => !s)}>
-                {showSecret ? "Hide" : "Show"}
-              </button>
-            </div>
-          </Field>
-        )}
-        {usingBundled && isConfigured() && (
-          <p className="text-xs text-[var(--text-dim)]">
-            Using <span className="text-[var(--text)]">Zen's built-in Google connection</span> — you
-            haven't set your own Client ID{IS_TAURI ? " + secret" : ""} above. Fine for personal use;
-            while unverified, Google caps shared clients at 100 users and shows a warning screen.
-          </p>
-        )}
+        <p className="text-xs text-[var(--text-dim)]">Zen uses its built-in Google connection. No OAuth client setup is required.</p>
         <div className="flex items-center gap-2">
           <span
             className="inline-block h-2 w-2 rounded-full"
             style={{ background: signedIn ? "var(--ok)" : "var(--text-dim)" }}
           />
           <span className="text-xs text-[var(--text-dim)]">
-            {signedIn ? "Connected" : isConfigured() ? "Not connected" : "No Client ID set"}
-            {usingBundled && isConfigured() ? " · built-in client" : ""}
+            {signedIn ? "Connected · built-in client" : isConfigured() ? "Not connected · built-in client" : "Google connection unavailable"}
           </span>
           <div className="ml-auto flex gap-2">
-            <button className="zen-btn-ghost" onClick={saveGoogle}>Save</button>
             {signedIn ? (
               <button className="zen-btn-ghost" onClick={() => { signOut(); notify.success("Disconnected"); }}>
                 Disconnect

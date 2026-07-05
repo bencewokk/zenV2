@@ -1,15 +1,11 @@
-import { markBlobDirty } from "@/services/sync/cursor";
-
 /**
- * Google integration config. The OAuth Client ID is not a secret (it's a public
- * web client id), but we keep it overridable at runtime like the AI key.
+ * Google integration config. Released builds always use Zen's bundled OAuth
+ * client. The shape remains stable because auth and sync snapshots consume it.
  */
 // Default Web OAuth client id, baked in at build time from VITE_GOOGLE_CLIENT_ID
 // (set via CI secrets for released builds). Empty in plain source builds, where the
 // user supplies their own in Settings → Connections. The client id is public, not a secret.
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
-
-const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export interface GoogleSettings {
   clientId: string;
@@ -29,18 +25,14 @@ const DEFAULTS: GoogleSettings = {
 };
 
 export function loadGoogleSettings(): GoogleSettings {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {
-    /* ignore */
-  }
+  // Remove legacy user-supplied OAuth credentials. Google identity is now a
+  // product-level connection, so every user follows the same trusted flow.
+  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
   return { ...DEFAULTS };
 }
 
-export function saveGoogleSettings(s: GoogleSettings): void {
-  localStorage.setItem(KEY, JSON.stringify(s));
-  markBlobDirty("googleSettings");
+export function saveGoogleSettings(_s: GoogleSettings): void {
+  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
 }
 
 /** No live store subscribes to this blob — callers re-read via `loadGoogleSettings()`
@@ -56,9 +48,8 @@ export function hydrateGoogleSettings(): void {
  * otherwise it falls through env/file to the build-time bundled default. Browser:
  * bundled whenever the client id still matches the build-time default.
  */
-export function isUsingBundledCredentials(s: GoogleSettings): boolean {
-  if (IS_TAURI) return !s.clientId.trim() || !s.clientSecret.trim();
-  return s.clientId.trim() === GOOGLE_CLIENT_ID;
+export function isUsingBundledCredentials(_s: GoogleSettings): boolean {
+  return true;
 }
 
 // Scopes requested. Read + write so the AI-tooling phase can act on them later.

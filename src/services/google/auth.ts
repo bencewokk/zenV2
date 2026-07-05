@@ -69,19 +69,6 @@ let expiresAt = 0;
 let tokenClient: TokenClient | null = null;
 let refreshTimer: number | null = null;
 
-/** Desktop only: push the OAuth credentials from in-app Settings into Rust before
- *  any login/refresh, so the code flow uses what the user entered. */
-async function applyCredentials(): Promise<void> {
-  if (!IS_TAURI) return;
-  const { clientId, clientSecret } = loadGoogleSettings();
-  if (!clientId || !clientSecret) return;
-  try {
-    await invoke("google_set_credentials", { clientId: clientId.trim(), clientSecret: clientSecret.trim() });
-  } catch {
-    /* Rust will surface a clearer error on the actual login attempt */
-  }
-}
-
 // Persist the short-lived token so reloads within its ~1h life stay connected.
 const TOKEN_KEY = "zen.google.token.v1";
 (function restore() {
@@ -89,7 +76,6 @@ const TOKEN_KEY = "zen.google.token.v1";
     // Desktop: ask Rust whether a session is stored, and prime an access token.
     void (async () => {
       try {
-        await applyCredentials();
         if (await invoke<boolean>("google_is_signed_in")) {
           const t = await invoke<TauriToken>("google_access_token");
           accessToken = t.access_token;
@@ -216,7 +202,6 @@ async function ensureClient(): Promise<TokenClient> {
 /** Interactive sign-in (opens Google consent popup). */
 export async function signIn(): Promise<void> {
   if (IS_TAURI) {
-    await applyCredentials();
     const t = await invoke<TauriToken>("google_login");
     accessToken = t.access_token;
     expiresAt = Date.now() + t.expires_in * 1000;
