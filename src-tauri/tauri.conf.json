@@ -40,7 +40,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/bencewokk/zenV2/releases/latest/download/latest.json"
+        "https://zen-v2-plum.vercel.app/api/updates/latest"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU5NEM1RUUyQTM3MDhCMTYKUldRV2kzQ2o0bDVNV1llVHlVRFNXWUUvUG5yQ2RVb0hFTzlVUjZ2SlZwSitLdllxZmFPaDMvTVAK"
     }

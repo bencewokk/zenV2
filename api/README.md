@@ -20,6 +20,8 @@ scoped to the token's Google account (`sub`).
 | `GET`  | `/api/account` | Return the authenticated account snapshot and subscription access status. |
 | `GET` | `/api/ai-usage` | Return the current tier, UTC month, per-model usage, and caps. |
 | `POST` | `/api/ai/chat` | Authenticated, budget-enforced DeepSeek streaming gateway. |
+| `GET` | `/api/updates/latest` | Public Tauri update manifest backed by the private GitHub release. |
+| `GET` | `/api/updates/asset?id=...` | Redirect to a short-lived authenticated release-asset download. |
 | `PUT`  | `/api/pdfs/:id?uploadId=&part=&parts=` | Upload one PDF part; the final part atomically assembles it in GridFS. |
 | `GET`  | `/api/pdfs/:id?meta=1` | Read the stored PDF byte length. |
 | `GET`  | `/api/pdfs/:id?start=&end=` | Download an end-exclusive byte range. |
@@ -43,6 +45,8 @@ never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
 3. `npm install`
 4. `npm run dev` (`vercel dev`) to run locally, or `vercel deploy` to ship. Set the same
    env vars in the host dashboard for production. AI also requires `DEEPSEEK_API_KEY`.
+   Private-repository updates require `GITHUB_RELEASES_TOKEN` with read-only Contents
+   access scoped only to this repository.
 
 ## Subscription and AI quotas
 

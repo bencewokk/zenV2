@@ -83,6 +83,6 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Zen ${{ github.ref_name }}"
           releaseBody: "See the assets below to download and install Zen."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.target }}
