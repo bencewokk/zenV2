@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "smoke:production": "node scripts/smoke-production.mjs",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
     "version:sync": "node scripts/sync-version.mjs",
@@ -38,7 +40,7 @@
     "@tiptap/starter-kit": "^2.27.2",
     "@tiptap/suggestion": "^2.27.2",
     "@xenova/transformers": "^2.0.1",
-    "dompurify": "^3.4.10",
+    "dompurify": "^3.4.11",
     "jsxgraph": "^1.12.2",
     "katex": "^0.16.47",
     "marked": "^14.1.4",
@@ -57,8 +59,10 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^6.0.2",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.3",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^3.2.6"
   }
 }

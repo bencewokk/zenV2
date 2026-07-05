@@ -18,9 +18,10 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://api.deepseek.com/*" },
         { "url": "https://zen-v2-plum.vercel.app/*" },
-        { "url": "https://*/*" }
+        { "url": "https://api.github.com/*" },
+        { "url": "https://api.zotero.org/*" },
+        { "url": "https://*.instructure.com/*" }
       ]
     }
   ]

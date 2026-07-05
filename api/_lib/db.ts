@@ -1,4 +1,4 @@
-import { MongoClient, type Db, type Collection } from "mongodb";
+import { MongoClient, type ClientSession, type Collection, type Db } from "mongodb";
 
 /**
  * Module-scope cached Mongo client. Serverless platforms keep the module warm
@@ -55,9 +55,31 @@ export async function getDb(): Promise<Db> {
       db.collection("ai_usage_events").createIndex({ userId: 1, period: 1, settledAt: -1 }).catch(() => {}),
       db.collection("ai_rate_limits").createIndex({ userId: 1, minute: 1 }, { unique: true }).catch(() => {}),
       db.collection("ai_rate_limits").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).catch(() => {}),
+      db.collection("request_rate_limits").createIndex({ userId: 1, scope: 1, window: 1 }, { unique: true }).catch(() => {}),
+      db.collection("request_rate_limits").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).catch(() => {}),
     ]);
   }
   return db;
+}
+
+/** Run a short multi-document transaction against the Atlas replica set. */
+export async function withMongoTransaction<T>(fn: (db: Db, session: ClientSession) => Promise<T>): Promise<T> {
+  const mongo = await client();
+  const session = mongo.startSession();
+  try {
+    let value: T | undefined;
+    await session.withTransaction(async () => {
+      value = await fn(mongo.db(dbName()), session);
+    }, {
+      readConcern: { level: "snapshot" },
+      writeConcern: { w: "majority" },
+      readPreference: "primary",
+    });
+    if (value === undefined) throw new Error("MongoDB transaction completed without a result");
+    return value;
+  } finally {
+    await session.endSession();
+  }
 }
 
 /** The per-collection sync store. One Mongo collection per logical collection name. */

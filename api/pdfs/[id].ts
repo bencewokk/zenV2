@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { applyCors } from "../_lib/cors.js";
 import { userIdFromRequest } from "../_lib/auth.js";
 import { getDb } from "../_lib/db.js";
+import { enforceRequestRateLimit, positiveEnvInt } from "../_lib/limits.js";
 
 /**
  * PDF binaries live in a GridFS bucket, keyed by `<userId>/<id>` so a user can only
@@ -29,6 +30,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(401).json({ error: "unauthorized" });
     return;
   }
+  try { await enforceRequestRateLimit(userId, "pdf", 90); }
+  catch (error) { const typed = error as Error & { status?: number; code?: string }; res.status(typed.status ?? 429).json({ error: typed.message, code: typed.code }); return; }
 
   const id = String(req.query.id || "");
   if (!id) {
@@ -44,14 +47,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const uploadId = queryString(req.query.uploadId);
     const part = queryInt(req.query.part);
     const parts = queryInt(req.query.parts);
-    if (!uploadId || !/^[\w-]{8,80}$/.test(uploadId) || part < 0 || parts < 1 || part >= parts) {
+    const maxParts = positiveEnvInt("PDF_MAX_UPLOAD_PARTS", 40);
+    if (!uploadId || !/^[\w-]{8,80}$/.test(uploadId) || part < 0 || parts < 1 || parts > maxParts || part >= parts) {
       res.status(400).json({ error: "invalid upload part" });
       return;
     }
 
     const partName = uploadPartName(filename, uploadId, part);
     await deleteByFilename(bucket, partName);
-    await storeRequest(bucket, partName, req, { userId, id, uploadId, part });
+    try {
+      await storeRequest(bucket, partName, req, { userId, id, uploadId, part }, positiveEnvInt("PDF_MAX_PART_BYTES", 3_500_000));
+    } catch (error) {
+      await deleteByFilename(bucket, partName);
+      res.status(413).json({ error: (error as Error).message || "upload part is too large" });
+      return;
+    }
 
     // The client sends parts sequentially, so the final request can atomically
     // assemble a complete replacement while the previous PDF remains readable.
@@ -131,9 +141,15 @@ async function storeRequest(
   filename: string,
   req: VercelRequest,
   metadata: Record<string, unknown>,
+  maxBytes: number,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const upload = bucket.openUploadStream(filename, { metadata: { ...metadata, temporary: true } });
+    let bytes = 0;
+    req.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) upload.destroy(new Error("upload part exceeds the size limit"));
+    });
     req.pipe(upload);
     upload.on("finish", () => resolve());
     upload.on("error", reject);
@@ -163,12 +179,25 @@ async function assembleParts(
   await deleteByFilename(bucket, assembledName);
   const upload = bucket.openUploadStream(assembledName, { metadata: { ...metadata, temporary: true } });
   try {
+    let assembledBytes = 0;
+    const maxPdfBytes = positiveEnvInt("PDF_MAX_FILE_BYTES", 100 * 1024 * 1024);
     for (let part = 0; part < parts; part++) {
       const bytes = await readFile(bucket, uploadPartName(filename, uploadId, part));
+      assembledBytes += bytes.length;
+      if (assembledBytes > maxPdfBytes) throw new Error("PDF exceeds the file size limit");
       if (!upload.write(bytes)) await once(upload, "drain");
     }
     upload.end();
     await once(upload, "finish");
+
+    const existing = await db.collection("pdfs.files").findOne({ filename, "metadata.userId": metadata.userId });
+    const totals = await db.collection("pdfs.files").aggregate<{ bytes: number }>([
+      { $match: { "metadata.userId": metadata.userId, "metadata.temporary": { $ne: true } } },
+      { $group: { _id: null, bytes: { $sum: "$length" } } },
+    ]).toArray();
+    const usedBytes = Number(totals[0]?.bytes ?? 0) - Number(existing?.length ?? 0);
+    const quotaBytes = positiveEnvInt("PDF_USER_QUOTA_BYTES", 1024 * 1024 * 1024);
+    if (usedBytes + assembledBytes > quotaBytes) throw new Error("PDF storage quota reached");
 
     await deleteByFilename(bucket, filename);
     await db.collection("pdfs.files").updateOne(
@@ -185,4 +214,16 @@ async function assembleParts(
     await deleteByFilename(bucket, assembledName);
     throw error;
   }
+}
+
+/** Remove abandoned multipart uploads without leaving GridFS chunks orphaned. */
+export async function cleanupTemporaryPdfUploads(olderThanMs = 24 * 60 * 60_000, limit = 200): Promise<number> {
+  const db = await getDb();
+  const bucket = new GridFSBucket(db, { bucketName: "pdfs" });
+  const stale = await db.collection("pdfs.files").find({
+    "metadata.temporary": true,
+    uploadDate: { $lt: new Date(Date.now() - olderThanMs) },
+  }).sort({ uploadDate: 1 }).limit(limit).toArray();
+  await Promise.all(stale.map((file) => bucket.delete(file._id).catch(() => {})));
+  return stale.length;
 }

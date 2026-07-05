@@ -5,16 +5,18 @@
   "type": "module",
   "description": "Serverless sync API for Zen V2 — Google ID-token auth + MongoDB Atlas (last-write-wins).",
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "dev": "vercel dev"
   },
   "dependencies": {
-    "google-auth-library": "^9.15.0",
+    "google-auth-library": "^10.9.0",
     "mongodb": "^6.12.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@vercel/node": "^5.0.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.6"
   }
 }

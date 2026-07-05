@@ -3,6 +3,7 @@ dist/
 *.local
 .env
 .env.*
+!/.env.example
 src-tauri/target/
 
 # local secrets — never commit

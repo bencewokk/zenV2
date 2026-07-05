@@ -1,3 +1,5 @@
+import DOMPurify from "dompurify";
+
 /**
  * Sanitize authored SVG before rendering it inline: keep only the <svg>…</svg>,
  * and strip scripts, event handlers, javascript: URLs, and foreignObject (which
@@ -7,12 +9,10 @@
  * apply the exact same allow-list.
  */
 export function sanitizeSvg(svg: string): string {
-  const m = svg.match(/<svg[\s\S]*<\/svg>/i);
-  let out = m ? m[0] : "";
-  out = out.replace(/<script[\s\S]*?<\/script>/gi, "");
-  out = out.replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "");
-  out = out.replace(/\son\w+\s*=\s*"[^"]*"/gi, "");
-  out = out.replace(/\son\w+\s*=\s*'[^']*'/gi, "");
-  out = out.replace(/javascript:/gi, "");
-  return out;
+  const match = svg.match(/<svg[\s\S]*<\/svg>/i);
+  if (!match) return "";
+  return DOMPurify.sanitize(match[0], {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: ["foreignObject", "script", "style"],
+  });
 }

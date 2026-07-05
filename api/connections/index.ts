@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { applyCors } from "../_lib/cors.js";
 import { userIdFromRequest } from "../_lib/auth.js";
 import { assertVaultConfigured, deleteVaultConnection, listVaultConnections, readVaultConnections, writeVaultConnection, type VaultPayload, type VaultProvider } from "../_lib/vault.js";
+import { enforceRequestRateLimit } from "../_lib/limits.js";
 
 const PROVIDERS = new Set<VaultProvider>(["ai", "canvas", "zotero", "github"]);
 const ALLOWED_CREDENTIALS: Record<VaultProvider, Set<string>> = {
@@ -36,6 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   catch { res.status(401).json({ error: "unauthorized" }); return; }
 
   try {
+    await enforceRequestRateLimit(userId, "connections", 60);
     assertVaultConfigured();
     if (req.method === "GET") {
       if (req.query.restore === "1") res.status(200).json({ connections: await readVaultConnections(userId) });
@@ -55,6 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     res.status(405).json({ error: "method not allowed" });
   } catch (error) {
-    res.status(400).json({ error: (error as Error).message || "vault request failed" });
+    const typed = error as Error & { status?: number; code?: string };
+    res.status(typed.status ?? 400).json({ error: typed.message || "vault request failed", code: typed.code });
   }
 }

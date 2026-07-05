@@ -2,6 +2,7 @@ import { marked } from "marked";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { sanitizeSvg } from "@/shared/lib/sanitizeSvg";
+import { sanitizeHtml } from "@/shared/lib/sanitizeHtml";
 
 /**
  * Render markdown to HTML with LaTeX math support, for read-only display (AI
@@ -39,8 +40,11 @@ export function renderMarkdown(src: string): string {
   s = s.replace(/\$([^$\n]+?)\$/g, (_m, tex) => stash(renderMath(tex, false)));
 
   let html = marked.parse(s) as string;
-  // Belt-and-suspenders: strip any <script> the model emitted as raw HTML.
-  html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
   html = html.replace(/@@ZENMATH(\d+)@@/g, (_m, i) => slots[Number(i)] ?? "");
-  return html;
+  return sanitizeHtml(html);
+}
+
+/** Inline variant used inside compact labels and list rows. */
+export function renderMarkdownInline(src: string): string {
+  return sanitizeHtml(marked.parseInline(src ?? "") as string);
 }

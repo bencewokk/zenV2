@@ -1,0 +1,29 @@
+import { describe, expect, it } from "vitest";
+import { costPicoUsd, currentPeriod, estimatePicoUsd, modelFor, periodFor } from "./billing.js";
+
+describe("AI billing rules", () => {
+  it("keeps tier model access deterministic", () => {
+    expect(modelFor("basic")).toBe("deepseek-v4-flash");
+    expect(modelFor("plus")).toBe("deepseek-v4-pro");
+  });
+
+  it("uses subscription-cycle keys when a future period end exists", () => {
+    const now = new Date("2026-07-05T00:00:00Z");
+    expect(periodFor({ userId: "u", tier: "basic", updatedAt: 0, currentPeriodEnd: new Date("2026-08-05T00:00:00Z") }, now))
+      .toBe("subscription:2026-08-05T00:00:00.000Z");
+    expect(currentPeriod(now)).toBe("2026-07");
+  });
+
+  it("prices cache hits, misses, and output tokens separately", () => {
+    expect(costPicoUsd("deepseek-v4-flash", {
+      prompt_tokens: 100,
+      prompt_cache_hit_tokens: 40,
+      prompt_cache_miss_tokens: 60,
+      completion_tokens: 20,
+    })).toBe(40 * 2_800 + 60 * 140_000 + 20 * 280_000);
+  });
+
+  it("creates a positive conservative reservation", () => {
+    expect(estimatePicoUsd("deepseek-v4-pro", { messages: [{ role: "user", content: "hello" }], max_tokens: 100 })).toBeGreaterThan(0);
+  });
+});

@@ -49,11 +49,11 @@ export const notesAdapter: SyncAdapter = {
       const localTs = localUpdatedAt.get(doc.id) ?? tombs[doc.id] ?? -Infinity;
       if (doc.updatedAt < localTs) continue; // local is newer — keep it
       if (doc.deleted) {
-        applyRemoteDelete(doc.id, doc.updatedAt);
+        await applyRemoteDelete(doc.id, doc.updatedAt);
         deletes.push(doc.id);
       } else if (doc.data) {
         const note = doc.data as Note;
-        applyRemoteNote(note);
+        await applyRemoteNote(note);
         upserts.push(note);
       }
     }

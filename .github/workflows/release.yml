@@ -18,6 +18,8 @@ concurrency:
 
 jobs:
   release:
+    env:
+      WINDOWS_CODE_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +64,20 @@ jobs:
           shared-key: desktop-release
           add-job-id-key: false
 
+      - name: Import Windows code-signing certificate
+        if: matrix.platform == 'windows-latest' && env.WINDOWS_CODE_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "zen-code-signing.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "ZEN_WINDOWS_CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Remove-Item -LiteralPath $path -Force
+
       - run: npm ci
 
       # tauri-action reads tauri.conf.json before it runs beforeBuildCommand, so
@@ -70,6 +86,10 @@ jobs:
         run: node scripts/sync-version.mjs
         env:
           ZEN_RELEASE_VERSION: ${{ github.ref_name }}
+
+      - name: Configure Windows Authenticode signing
+        if: matrix.platform == 'windows-latest' && env.ZEN_WINDOWS_CERT_THUMBPRINT != ''
+        run: node scripts/configure-windows-signing.mjs
 
       - name: Build and publish
         uses: tauri-apps/tauri-action@v1
@@ -89,6 +109,13 @@ jobs:
           # Auto-updater signing — produces signed artifacts + latest.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Native platform trust. These are separate from Tauri updater signatures.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Zen ${{ github.ref_name }}"
@@ -103,7 +130,15 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ vars.RELEASE_GITHUB_TOKEN || secrets.RELEASE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
+      - name: Verify production updater
+        env:
+          EXPECTED_VERSION: ${{ github.ref_name }}
+        run: node scripts/smoke-production.mjs

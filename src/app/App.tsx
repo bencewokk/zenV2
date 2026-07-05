@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Toaster } from "sonner";
 import { Sidebar } from "@/features/notes/Sidebar";
 import { NoteSurface } from "@/features/notes/NoteSurface";
@@ -6,21 +6,15 @@ import { FilterBar } from "@/features/filtering/FilterBar";
 import { StatusBar } from "@/shared/ui/StatusBar";
 import { AuroraOverlay } from "@/shared/ui/AuroraOverlay";
 import { WindowControls, WindowResizeHandles, IS_TAURI } from "@/shared/ui/WindowChrome";
-import { ChatPanel } from "@/features/ai/ChatPanel";
 import { Home } from "@/features/home/Home";
 import { useHome } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { FocusTimerButton } from "@/features/home/deepwork/FocusTimerButton";
 import { StudyPanel } from "@/features/home/deepwork/StudyPanel";
-import { QuizView } from "@/features/home/deepwork/QuizView";
-import { LessonMode } from "@/features/home/deepwork/LessonMode";
 import { useLesson } from "@/features/home/deepwork/lessonStore";
+import { useQuiz } from "@/features/home/deepwork/quizStore";
 import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
 import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
-import { CalendarPanel } from "@/features/google/CalendarPanel";
-import { MailPanel } from "@/features/google/MailPanel";
-import { SettingsView } from "@/features/settings/SettingsView";
-import { SourcesPanel } from "@/features/sources/SourcesPanel";
 import { Onboarding } from "@/features/onboarding/Onboarding";
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { useOnboarding } from "@/features/onboarding/store";
@@ -37,6 +31,14 @@ import { ensureSourcesLoaded } from "@/services/sources/store";
 import { startSourceRefresh } from "@/services/sources/refresh";
 import { isSignedIn, onAuthChange } from "@/services/google/auth";
 import { clearLocalConnectionSecrets, reconcileConnectionVault } from "@/services/connections/vault";
+
+const ChatPanel = lazy(() => import("@/features/ai/ChatPanel").then((module) => ({ default: module.ChatPanel })));
+const CalendarPanel = lazy(() => import("@/features/google/CalendarPanel").then((module) => ({ default: module.CalendarPanel })));
+const MailPanel = lazy(() => import("@/features/google/MailPanel").then((module) => ({ default: module.MailPanel })));
+const SettingsView = lazy(() => import("@/features/settings/SettingsView").then((module) => ({ default: module.SettingsView })));
+const SourcesPanel = lazy(() => import("@/features/sources/SourcesPanel").then((module) => ({ default: module.SourcesPanel })));
+const QuizView = lazy(() => import("@/features/home/deepwork/QuizView").then((module) => ({ default: module.QuizView })));
+const LessonMode = lazy(() => import("@/features/home/deepwork/LessonMode").then((module) => ({ default: module.LessonMode })));
 
 /**
  * Phase 1 shell — a thin composer of feature modules (the anti-ui.py).
@@ -64,6 +66,7 @@ export function App() {
   const setZenMode = useDeepWork((s) => s.setZenMode);
   const threads = useHome((s) => s.threads);
   const aiStatus = useStatus((s) => s.ai);
+  const aiOpen = useAI((s) => s.open);
   const surface = useWorkspace((s) => s.surface);
   const adminFocus = useWorkspace((s) => s.adminFocus);
   const adminMailId = useWorkspace((s) => s.adminMailId);
@@ -73,6 +76,7 @@ export function App() {
   const shellRef = useRef<HTMLDivElement>(null);
   const [showStudy, setShowStudy] = useState(false);
   const lessonActive = useLesson((s) => s.active);
+  const quizActive = useQuiz((s) => s.activeId !== null);
 
   // Selecting a note returns to the editor and resets any shell-only state.
   useEffect(() => {
@@ -372,9 +376,9 @@ export function App() {
             ) : showAdmin ? (
               <AdminPanel focus={adminFocus} mailId={adminMailId} />
             ) : showSources ? (
-              <SourcesPanel />
+              <Suspense fallback={<LoadingSurface />}><SourcesPanel /></Suspense>
             ) : showSettings ? (
-              <SettingsView />
+              <Suspense fallback={<LoadingSurface />}><SettingsView /></Suspense>
             ) : (
               <Home
                 deepWork={deepWork}
@@ -391,7 +395,7 @@ export function App() {
         {deepWork && showStudy && <StudyPanel onClose={() => setShowStudy(false)} />}
 
         {/* During a lesson the ChatPanel is rendered inside LessonMode instead (one instance). */}
-        {!lessonActive && <ChatPanel />}
+        {!lessonActive && aiOpen && <Suspense fallback={null}><ChatPanel /></Suspense>}
       </div>
 
       {!zen && !lessonActive && (
@@ -400,13 +404,17 @@ export function App() {
         </div>
       )}
       <AddToSessionPicker />
-      <QuizView />
-      <LessonMode />
+      {quizActive && <Suspense fallback={null}><QuizView /></Suspense>}
+      {lessonActive && <Suspense fallback={null}><LessonMode /></Suspense>}
       <Onboarding />
       <ReleaseNotesModal />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>
   );
+}
+
+function LoadingSurface() {
+  return <div className="grid h-full place-items-center text-sm text-[var(--text-dim)]">Loadingâ€¦</div>;
 }
 
 function AdminPanel({
@@ -442,7 +450,7 @@ function AdminPanel({
       <div ref={containerRef} className="hidden min-h-0 flex-1 lg:flex lg:gap-0">
         <div style={{ width: `${calendarFraction * 100}%` }} className="min-w-0 min-h-0">
           <AdminSurface title="Agenda" active={focus === "calendar"}>
-            <CalendarPanel embedded />
+            <Suspense fallback={<LoadingSurface />}><CalendarPanel embedded /></Suspense>
           </AdminSurface>
         </div>
 
@@ -453,7 +461,7 @@ function AdminPanel({
 
         <div style={{ width: `${(1 - calendarFraction) * 100}%` }} className="min-w-0 min-h-0">
           <AdminSurface title="Inbox" active={focus === "mail"}>
-            <MailPanel embedded initialOpenId={mailId} />
+            <Suspense fallback={<LoadingSurface />}><MailPanel embedded initialOpenId={mailId} /></Suspense>
           </AdminSurface>
         </div>
       </div>
@@ -462,11 +470,11 @@ function AdminPanel({
       <div className="min-h-0 flex-1 lg:hidden">
         {focus === "calendar" ? (
           <AdminSurface title="Agenda" active>
-            <CalendarPanel embedded />
+            <Suspense fallback={<LoadingSurface />}><CalendarPanel embedded /></Suspense>
           </AdminSurface>
         ) : (
           <AdminSurface title="Inbox" active>
-            <MailPanel embedded initialOpenId={mailId} />
+            <Suspense fallback={<LoadingSurface />}><MailPanel embedded initialOpenId={mailId} /></Suspense>
           </AdminSurface>
         )}
       </div>

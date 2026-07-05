@@ -44,7 +44,7 @@ export function Data() {
     signOut();
     try { localStorage.clear(); } catch { /* ignore */ }
     try { sessionStorage.clear(); } catch { /* ignore */ }
-    await Promise.all(["zen-pdfs", "zen-vectors", "zen-sources"].map(clearIndexedDb));
+    await Promise.all(["zen-notes", "zen-pdfs", "zen-vectors", "zen-sources"].map(clearIndexedDb));
     if ("caches" in window) {
       try { await Promise.all((await caches.keys()).map((key) => caches.delete(key))); } catch { /* ignore */ }
     }

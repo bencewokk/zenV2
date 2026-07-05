@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { marked } from "marked";
 import type { JSONContent } from "@tiptap/react";
 import {
   buildActionGroups,
@@ -20,6 +19,7 @@ import { useQuote } from "@/features/home/quote";
 import { WhatsNew } from "@/features/home/ReleaseNotes";
 import { useNotes } from "@/features/notes/store";
 import { docToText } from "@/shared/lib/docText";
+import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
 import { notify } from "@/shared/ui/notify";
 import type { CalEvent } from "@/services/google/calendar";
 
@@ -362,7 +362,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                                   )}
                                 </button>
                                 <span className={`zen-primary-copy min-w-0 flex-1 ${done ? "text-[var(--text-dim)] line-through" : ""}`}>
-                                  <span dangerouslySetInnerHTML={{ __html: marked.parseInline(item.text) as string }} />
+                                  <span dangerouslySetInnerHTML={{ __html: renderMarkdownInline(item.text) }} />
                                   {item.source && (
                                     <button
                                       type="button"

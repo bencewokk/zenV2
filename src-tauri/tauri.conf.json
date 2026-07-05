@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' customprotocol: asset:; base-uri 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data: https:; connect-src ipc: http://ipc.localhost https://zen-v2-plum.vercel.app https://www.googleapis.com https://gmail.googleapis.com https://api.open-meteo.com https://huggingface.co https://cdn-lfs.huggingface.co; worker-src 'self' blob:"
     }
   },
   "bundle": {

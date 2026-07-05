@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "./db.js";
+import { getDb, withMongoTransaction } from "./db.js";
 
 export type SubscriptionTier = "free" | "basic" | "plus";
 export type DeepSeekModel = "deepseek-v4-flash" | "deepseek-v4-pro";
@@ -119,28 +119,30 @@ export async function reserveAIRequest(userId: string, payload: Record<string, u
   const period = periodFor(subscription);
   const id = randomUUID();
   const now = Date.now();
-  const db = await getDb();
   await recoverStaleReservations(userId);
   await enforceRateLimit(userId);
-  const budgets = db.collection<BudgetRecord>("ai_usage_budgets");
-  const reservations = db.collection<UsageReservation>("ai_usage_reservations");
-  await reservations.insertOne({ id, userId, period, model, reservedPicoUsd, status: "denied", createdAt: now, updatedAt: now });
   const maxBeforeReserve = budgetPicoUsd - reservedPicoUsd;
   if (maxBeforeReserve < 0) throw Object.assign(new Error(`This request is larger than the remaining $${budgetUsd} monthly AI budget.`), { code: "quota_exceeded", status: 429 });
-  const result = await budgets.findOneAndUpdate(
-    { userId, period, amountPicoUsd: { $lte: maxBeforeReserve } },
-    { $inc: { amountPicoUsd: reservedPicoUsd }, $set: { updatedAt: now }, $setOnInsert: { userId, period } },
-    { upsert: true, returnDocument: "after" },
-  ).catch((error: unknown) => {
-    if ((error as { code?: number }).code === 11000) return budgets.findOneAndUpdate(
+  const reserved = await withMongoTransaction(async (db, session) => {
+    const budgets = db.collection<BudgetRecord>("ai_usage_budgets");
+    await budgets.updateOne(
+      { userId, period },
+      { $setOnInsert: { userId, period, amountPicoUsd: 0, updatedAt: now } },
+      { upsert: true, session },
+    );
+    const result = await budgets.findOneAndUpdate(
       { userId, period, amountPicoUsd: { $lte: maxBeforeReserve } },
       { $inc: { amountPicoUsd: reservedPicoUsd }, $set: { updatedAt: now } },
-      { returnDocument: "after" },
+      { returnDocument: "after", session },
     );
-    throw error;
+    if (!result) return false;
+    await db.collection<UsageReservation>("ai_usage_reservations").insertOne(
+      { id, userId, period, model, reservedPicoUsd, status: "active", createdAt: now, updatedAt: now },
+      { session },
+    );
+    return true;
   });
-  if (!result) throw Object.assign(new Error(`Monthly AI budget reached ($${budgetUsd}).`), { code: "quota_exceeded", status: 429 });
-  await reservations.updateOne({ id, status: "denied" }, { $set: { status: "active", updatedAt: Date.now() } });
+  if (!reserved) throw Object.assign(new Error(`Monthly AI budget reached ($${budgetUsd}).`), { code: "quota_exceeded", status: 429 });
   return { reservationId: id, tier: subscription.tier, model, period, budgetUsd, heldPicoUsd: reservedPicoUsd };
 }
 
@@ -152,38 +154,45 @@ export async function markReservationAccepted(userId: string, id: string): Promi
 }
 
 export async function settleReservation(userId: string, id: string, settlement: { costPicoUsd: number; usage?: DeepSeekUsage; estimated?: boolean } | null): Promise<void> {
-  const db = await getDb();
-  const reservations = db.collection<UsageReservation>("ai_usage_reservations");
   const status = settlement === null ? "released" : "committed";
-  const reservation = await reservations.findOneAndUpdate(
-    { id, userId, status: { $in: ["active", "accepted"] } }, { $set: { status, updatedAt: Date.now() } }, { returnDocument: "before" },
-  );
-  if (!reservation) return;
-  const actual = settlement === null ? 0 : Math.max(0, Math.round(settlement.costPicoUsd));
-  await db.collection("ai_usage_budgets").updateOne(
-    { userId, period: reservation.period },
-    { $inc: { amountPicoUsd: actual - reservation.reservedPicoUsd }, $set: { updatedAt: Date.now() } },
-  );
-  if (settlement !== null) await db.collection("ai_usage").updateOne(
-    { userId, period: reservation.period, model: reservation.model },
-    { $inc: { requests: 1, costPicoUsd: actual }, $set: { updatedAt: Date.now() }, $setOnInsert: { userId, period: reservation.period, model: reservation.model } },
-    { upsert: true },
-  );
-  if (settlement !== null) {
-    const usage = settlement.usage ?? {};
-    await db.collection("ai_usage_events").updateOne(
-      { reservationId: id },
-      { $setOnInsert: {
+  const settled = await withMongoTransaction(async (db, session) => {
+    const reservations = db.collection<UsageReservation>("ai_usage_reservations");
+    const reservation = await reservations.findOne(
+      { id, userId, status: { $in: ["active", "accepted"] } },
+      { session },
+    );
+    if (!reservation) return null;
+    const actual = settlement === null ? 0 : Math.max(0, Math.round(settlement.costPicoUsd));
+    const now = Date.now();
+    await reservations.updateOne(
+      { id, userId, status: reservation.status },
+      { $set: { status, updatedAt: now } },
+      { session },
+    );
+    await db.collection("ai_usage_budgets").updateOne(
+      { userId, period: reservation.period },
+      { $inc: { amountPicoUsd: actual - reservation.reservedPicoUsd }, $set: { updatedAt: now } },
+      { session },
+    );
+    if (settlement !== null) {
+      await db.collection("ai_usage").updateOne(
+        { userId, period: reservation.period, model: reservation.model },
+        { $inc: { requests: 1, costPicoUsd: actual }, $set: { updatedAt: now }, $setOnInsert: { userId, period: reservation.period, model: reservation.model } },
+        { upsert: true, session },
+      );
+      const usage = settlement.usage ?? {};
+      await db.collection("ai_usage_events").insertOne({
         reservationId: id, userId, period: reservation.period, model: reservation.model,
         costPicoUsd: actual, estimated: settlement.estimated === true,
         promptTokens: Number(usage.prompt_tokens ?? 0), completionTokens: Number(usage.completion_tokens ?? 0),
         cacheHitTokens: Number(usage.prompt_cache_hit_tokens ?? 0), cacheMissTokens: Number(usage.prompt_cache_miss_tokens ?? 0),
-        createdAt: reservation.createdAt, settledAt: Date.now(),
-      } },
-      { upsert: true },
-    );
-  }
-  console.info(JSON.stringify({ event: "ai_usage_settled", userId: userId.slice(-8), reservationId: id, status, model: reservation.model, costPicoUsd: actual }));
+        createdAt: reservation.createdAt, settledAt: now,
+      }, { session });
+    }
+    return { actual, model: reservation.model };
+  });
+  if (!settled) return;
+  console.info(JSON.stringify({ event: "ai_usage_settled", userId: userId.slice(-8), reservationId: id, status, model: settled.model, costPicoUsd: settled.actual }));
 }
 
 async function enforceRateLimit(userId: string): Promise<void> {
@@ -206,6 +215,21 @@ async function recoverStaleReservations(userId: string): Promise<void> {
     if (reservation.status === "accepted") await settleReservation(userId, reservation.id, { costPicoUsd: reservation.reservedPicoUsd, estimated: true });
     else await settleReservation(userId, reservation.id, null);
   }
+}
+
+/** Reconcile interrupted requests globally; safe to call repeatedly from cron. */
+export async function reconcileStaleReservations(limit = 200): Promise<number> {
+  const db = await getDb();
+  const stale = await db.collection<UsageReservation>("ai_usage_reservations")
+    .find({ status: { $in: ["active", "accepted"] }, updatedAt: { $lt: Date.now() - 15 * 60_000 } })
+    .sort({ updatedAt: 1 })
+    .limit(Math.max(1, Math.min(1000, limit)))
+    .toArray();
+  for (const reservation of stale) {
+    if (reservation.status === "accepted") await settleReservation(reservation.userId, reservation.id, { costPicoUsd: reservation.reservedPicoUsd, estimated: true });
+    else await settleReservation(reservation.userId, reservation.id, null);
+  }
+  return stale.length;
 }
 
 export async function usageStatus(userId: string) {

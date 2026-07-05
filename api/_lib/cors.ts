@@ -5,7 +5,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
  * Returns true if the request was a preflight that has been fully handled.
  */
 export function applyCors(req: VercelRequest, res: VercelResponse): boolean {
-  const allowed = (process.env.CORS_ALLOWED_ORIGINS || "*")
+  const allowed = (process.env.CORS_ALLOWED_ORIGINS || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
@@ -19,6 +19,8 @@ export function applyCors(req: VercelRequest, res: VercelResponse): boolean {
   }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
 
   if (req.method === "OPTIONS") {
     res.status(204).end();

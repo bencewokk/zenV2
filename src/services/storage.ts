@@ -22,17 +22,59 @@ const KEY = "zen.notes.v1";
 const TOMB_KEY = "zen.notes.tombstones.v1";
 const COLLECTION = "notes";
 
-function readAll(): Note[] {
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Note[]) : [];
-  } catch {
-    return [];
-  }
+const DB_NAME = "zen-notes";
+const STORE = "notes";
+let dbPromise: Promise<IDBDatabase> | null = null;
+let migrationPromise: Promise<void> | null = null;
+
+function openDb(): Promise<IDBDatabase> {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE, { keyPath: "id" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return dbPromise;
 }
 
-function writeAll(notes: Note[]): void {
-  localStorage.setItem(KEY, JSON.stringify(notes));
+async function migrateLegacyNotes(db: IDBDatabase): Promise<void> {
+  const count = await new Promise<number>((resolve, reject) => {
+    const request = db.transaction(STORE, "readonly").objectStore(STORE).count();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  if (count > 0) return;
+  let legacy: Note[] = [];
+  try { legacy = JSON.parse(localStorage.getItem(KEY) || "[]") as Note[]; } catch { /* ignore corrupt legacy data */ }
+  if (!legacy.length) return;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    for (const note of legacy) store.put(note);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  localStorage.removeItem(KEY);
+}
+
+async function database(): Promise<IDBDatabase> {
+  const db = await openDb();
+  migrationPromise ??= migrateLegacyNotes(db);
+  await migrationPromise;
+  return db;
+}
+
+async function readAll(): Promise<Note[]> {
+  const db = await database();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE, "readonly").objectStore(STORE).getAll();
+    request.onsuccess = () => resolve(request.result as Note[]);
+    request.onerror = () => reject(request.error);
+  });
 }
 
 export function readTombstones(): Record<string, number> {
@@ -67,19 +109,30 @@ export const localStore: NoteStore = {
     return readAll();
   },
   async get(id) {
-    return readAll().find((n) => n.id === id) ?? null;
+    const db = await database();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction(STORE, "readonly").objectStore(STORE).get(id);
+      request.onsuccess = () => resolve((request.result as Note | undefined) ?? null);
+      request.onerror = () => reject(request.error);
+    });
   },
   async put(note) {
-    const notes = readAll();
-    const i = notes.findIndex((n) => n.id === note.id);
-    if (i >= 0) notes[i] = note;
-    else notes.push(note);
-    writeAll(notes);
+    const db = await database();
+    await new Promise<void>((resolve, reject) => {
+      const request = db.transaction(STORE, "readwrite").objectStore(STORE).put(note);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
     clearTombstone(note.id); // a re-created/edited note is no longer deleted
     markDirty(COLLECTION, note.id);
   },
   async remove(id) {
-    writeAll(readAll().filter((n) => n.id !== id));
+    const db = await database();
+    await new Promise<void>((resolve, reject) => {
+      const request = db.transaction(STORE, "readwrite").objectStore(STORE).delete(id);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
     setTombstone(id, Date.now());
     markDirty(COLLECTION, id);
   },
@@ -89,17 +142,23 @@ export const localStore: NoteStore = {
  * Apply a note that won a last-write-wins comparison against the server. Does not
  * mark dirty (the server already has it) and clears any local tombstone.
  */
-export function applyRemoteNote(note: Note): void {
-  const notes = readAll();
-  const i = notes.findIndex((n) => n.id === note.id);
-  if (i >= 0) notes[i] = note;
-  else notes.push(note);
-  writeAll(notes);
+export async function applyRemoteNote(note: Note): Promise<void> {
+  const db = await database();
+  await new Promise<void>((resolve, reject) => {
+    const request = db.transaction(STORE, "readwrite").objectStore(STORE).put(note);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
   clearTombstone(note.id);
 }
 
 /** Apply a remote delete (tombstone) without marking dirty. */
-export function applyRemoteDelete(id: string, at: number): void {
-  writeAll(readAll().filter((n) => n.id !== id));
+export async function applyRemoteDelete(id: string, at: number): Promise<void> {
+  const db = await database();
+  await new Promise<void>((resolve, reject) => {
+    const request = db.transaction(STORE, "readwrite").objectStore(STORE).delete(id);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
   setTombstone(id, at);
 }

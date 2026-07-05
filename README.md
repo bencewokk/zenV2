@@ -42,7 +42,7 @@ Google setup needed to start.
 
 - **Block editor** with slash (`/`) commands — headings, lists, tables, and more.
 - **Math-first** — editable equations (MathLive) rendered with KaTeX, plus geometry/graph blocks.
-- **AI assistant** — chat over your notes, inline rewrites, and an auto-generated daily brief (bring your own DeepSeek key).
+- **AI assistant** — subscription-backed chat over your notes, inline rewrites, and an auto-generated daily brief.
 - **Deep Work sessions** — timed focus blocks, a study backbone, quizzes, and spaced-repetition scheduling.
 - **Calendar & Mail** — pull Google Calendar events and Gmail threads into your daily focus (optional).
 - **Canvas** — let the assistant read connected courses, assignments, modules, announcements, and files (optional).
@@ -59,20 +59,16 @@ Everything below is **off by default** and configured inside the app at
 
 | Feature | What you need | Where to get it |
 |---|---|---|
-| AI assistant | A DeepSeek API key | <https://platform.deepseek.com/> |
+| AI assistant | A Zen Basic or Plus subscription | Sign in with the Google account linked to your plan |
 | Calendar & Mail | Just sign in — a default Google client is bundled¹ | See [desktop setup](src-tauri/SETUP.md) to use your own |
 | Canvas | Your institution URL and a personal access token | Canvas Account settings, when enabled by your institution |
 | Google Drive | The existing Google connection | Read-only access to the signed-in account's accessible files |
 | Zotero | Library ID and API key | <https://www.zotero.org/settings/keys> |
 | GitHub | A token granting the repositories Zen may read | <https://github.com/settings/personal-access-tokens/new> |
 
-The AI assistant needs a DeepSeek key. Calendar & Mail work out of the box with a bundled
-Google client — just connect your account. If you skip these, the rest of the app works
-exactly as before; you just won't see the AI or Google panels light up.
-
-> ¹ The bundled Google client is **unverified**, so Google limits it to 100 users and shows
-> an "unverified app" notice during sign-in. Bring your own client (Settings → Connections)
-> to avoid that. See [src-tauri/SETUP.md](src-tauri/SETUP.md).
+AI traffic is metered by the Zen account service; provider keys are never distributed to
+desktop clients. Calendar, Mail, Drive, sync, and saved connections use the same Google
+identity. If you skip Google or sync, local note-taking remains available.
 
 ---
 
