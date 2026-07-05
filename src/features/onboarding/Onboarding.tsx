@@ -310,7 +310,7 @@ function SourceConnectionsStep({ onOpenSettings }: { onOpenSettings: () => void 
   const external = loadExternalConnectionSettings();
   const cards = [
     { id: "ai", name: "AI provider", ready: !!loadSettings().apiKey || vault.includes("ai"), detail: "Assistant model credentials" },
-    { id: "drive", name: "Google Drive", ready: signedIn && external.driveFolderIds.length > 0, detail: "Selected folders only · read-only" },
+    { id: "drive", name: "Google Drive", ready: signedIn, detail: "All accessible files · read-only" },
     { id: "canvas", name: "Canvas", ready: !!canvas.accessToken || vault.includes("canvas"), detail: "Courses, assignments, and files" },
     { id: "zotero", name: "Zotero", ready: !!external.zoteroApiKey || vault.includes("zotero"), detail: "Papers, annotations, and citations" },
     { id: "github", name: "GitHub", ready: !!external.githubRepositories.length, detail: "Selected repositories and issues" },

@@ -12,7 +12,7 @@ export async function refreshAllSources(): Promise<SourceRefreshResult[]> {
   const jobs: Array<Promise<SourceRefreshResult>> = [];
   const canvas = loadCanvasSettings();
   if (canvas.baseUrl && canvas.accessToken) jobs.push(refreshCanvasSources());
-  if (isSignedIn() && external.driveFolderIds.length) jobs.push(refreshDriveSources());
+  if (isSignedIn()) jobs.push(refreshDriveSources());
   if (external.zoteroLibraryId && external.zoteroApiKey) jobs.push(refreshZoteroSources());
   if (external.githubRepositories.length) jobs.push(refreshGitHubSources());
   return Promise.all(jobs);

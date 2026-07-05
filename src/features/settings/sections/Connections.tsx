@@ -6,7 +6,7 @@ import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/servi
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
 import { clearCanvasSettings, loadCanvasSettings, saveCanvasSettings } from "@/services/canvas/settings";
 import { getCanvasProfile, listCanvasCourses } from "@/services/canvas/client";
-import { driveFolderId, loadExternalConnectionSettings, saveExternalConnectionSettings, splitConnectionList } from "@/services/connections/settings";
+import { loadExternalConnectionSettings, saveExternalConnectionSettings, splitConnectionList } from "@/services/connections/settings";
 import { refreshDriveSources } from "@/services/sources/drive";
 import { testZoteroConnection } from "@/services/sources/zotero";
 import { testGitHubConnection } from "@/services/sources/github";
@@ -271,18 +271,10 @@ export function Connections() {
         </SaveBar>
       </SettingsSection>
 
-      <SettingsSection title="Google Drive" hint="Index only the folders you choose. Requires reconnecting Google once to grant read-only Drive access.">
-        <Field label="Folder URLs or IDs" hint="Separate multiple folders with commas or spaces.">
-          <textarea
-            value={external.driveFolderIds.join("\n")}
-            onChange={(e) => setExternal({ ...external, driveFolderIds: splitConnectionList(e.target.value).map(driveFolderId) })}
-            placeholder="https://drive.google.com/drive/folders/…"
-            className="zen-input min-h-20 w-full"
-            spellCheck={false}
-          />
-        </Field>
+      <SettingsSection title="Google Drive" hint="Read-only indexing across every non-trashed file and folder this Google account can access, including shared-drive items.">
+        <p className="text-xs text-[var(--text-dim)]">Zen extracts supported Google documents and text files, and keeps metadata plus original links for other file types.</p>
         <SaveBar onSave={saveExternal}>
-          <button className="zen-btn-ghost" onClick={() => void testDrive()} disabled={testingExternal === "drive" || !signedIn || !external.driveFolderIds.length}>
+          <button className="zen-btn-ghost" onClick={() => void testDrive()} disabled={testingExternal === "drive" || !signedIn}>
             {testingExternal === "drive" ? "Importing…" : "Test & import"}
           </button>
         </SaveBar>
