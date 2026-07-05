@@ -140,5 +140,25 @@ export async function usageStatus(userId: string) {
   const db = await getDb();
   const budget = await db.collection<BudgetRecord>("ai_usage_budgets").findOne({ userId, period });
   const rows = await db.collection("ai_usage").find({ userId, period }).project({ _id: 0, model: 1, requests: 1, costPicoUsd: 1 }).toArray();
-  return { tier: subscription.tier, period, model: subscription.tier === "free" ? null : modelFor(subscription.tier), budgetUsd: budgetUsdFor(subscription.tier), spentUsd: (budget?.amountPicoUsd ?? 0) / 1_000_000_000_000, usage: rows.map((row) => ({ ...row, costUsd: Number(row.costPicoUsd ?? 0) / 1_000_000_000_000 })) };
+  const budgetUsd = budgetUsdFor(subscription.tier);
+  const spentUsd = (budget?.amountPicoUsd ?? 0) / 1_000_000_000_000;
+  const usage = rows.map((row) => ({
+    ...row,
+    provider: "deepseek" as const,
+    // Compatibility for v3.0.7/v3.0.8 clients, which called this field `count`.
+    count: Number(row.costPicoUsd ?? 0) / 1_000_000_000_000,
+    costUsd: Number(row.costPicoUsd ?? 0) / 1_000_000_000_000,
+  }));
+  return {
+    tier: subscription.tier,
+    period,
+    model: subscription.tier === "free" ? null : modelFor(subscription.tier),
+    budgetUsd,
+    spentUsd,
+    usage,
+    // Transitional response fields prevent already-installed clients from
+    // crashing while the request-count UI is replaced by dollar budgets.
+    anthropicEnabled: false,
+    caps: { deepseek: budgetUsd, anthropic: 0 },
+  };
 }

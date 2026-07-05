@@ -35,7 +35,17 @@ async function parseError(response: Response): Promise<never> {
 export async function loadAIUsageStatus(): Promise<AIUsageStatus> {
   const response = await httpFetch(`${base()}/api/ai-usage`, { headers: { Authorization: `Bearer ${await token()}` } });
   if (!response.ok) return parseError(response);
-  return response.json() as Promise<AIUsageStatus>;
+  const raw = await response.json().catch(() => ({})) as Partial<AIUsageStatus>;
+  const tier = raw.tier === "basic" || raw.tier === "plus" ? raw.tier : "free";
+  const model = raw.model === "deepseek-v4-flash" || raw.model === "deepseek-v4-pro" ? raw.model : null;
+  return {
+    tier,
+    period: typeof raw.period === "string" ? raw.period : "—",
+    model,
+    budgetUsd: Number.isFinite(Number(raw.budgetUsd)) ? Math.max(0, Number(raw.budgetUsd)) : 0,
+    spentUsd: Number.isFinite(Number(raw.spentUsd)) ? Math.max(0, Number(raw.spentUsd)) : 0,
+    usage: Array.isArray(raw.usage) ? raw.usage : [],
+  };
 }
 
 export async function aiGatewayFetch(

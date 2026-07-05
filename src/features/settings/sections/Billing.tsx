@@ -18,6 +18,10 @@ export function Billing() {
       } else {
         setUsage(null);
       }
+    } catch {
+      // Subscription/usage status is informative; it must never take down
+      // Settings if the network or backend returns an unexpected payload.
+      setUsage(null);
     } finally {
       setLoading(false);
     }
