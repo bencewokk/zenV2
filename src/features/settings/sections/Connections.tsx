@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { loadSettings, saveSettings } from "@/services/ai/settings";
 import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/services/google/auth";
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
 import { clearCanvasSettings, loadCanvasSettings, saveCanvasSettings } from "@/services/canvas/settings";
@@ -17,7 +16,6 @@ import { Field, SettingsSection, SaveBar } from "../ui";
 
 /** API keys, endpoints, and Google connection. */
 export function Connections() {
-  const [ai, setAi] = useState(() => loadSettings());
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
   const [sync, setSync] = useState(() => loadSyncSettings());
   const [syncing, setSyncing] = useState(false);
@@ -40,10 +38,6 @@ export function Connections() {
     void listVaultConnections().then((items) => { setVaultConnections(items); setVaultError(null); }).catch((error) => setVaultError((error as Error).message || "Vault unavailable"));
   }, [signedIn]);
 
-  function saveAi() {
-    saveSettings(ai);
-    notify.success("AI model preference saved");
-  }
 
   async function connectGoogle() {
     try {
@@ -199,18 +193,6 @@ export function Connections() {
         <p className="text-xs text-[var(--text-dim)]">Provider credentials are encrypted at rest and only accessible after authenticating as the same Google account.</p>
         {vaultError && <p className="text-xs text-[var(--danger)]">Vault unavailable: {vaultError}</p>}
         {vaultConnections.length > 0 && <div className="flex flex-wrap gap-1.5">{vaultConnections.map((connection) => <button key={connection.provider} className="zen-btn-ghost capitalize" onClick={() => void revokeVault(connection.provider)} title="Remove from account vault">{connection.provider} · remove</button>)}</div>}
-      </SettingsSection>
-
-      <SettingsSection title="AI model" hint="AI access and monthly limits come from your Zen subscription. Provider keys stay on Zen's server.">
-        <Field label="Default model">
-          <input
-            value={ai.model}
-            onChange={(e) => setAi({ ...ai, model: e.target.value })}
-            className="zen-input w-full"
-            spellCheck={false}
-          />
-        </Field>
-        <SaveBar onSave={saveAi} />
       </SettingsSection>
 
       <SettingsSection title="Google Drive" hint="Read-only indexing across every non-trashed file and folder this Google account can access, including shared-drive items.">

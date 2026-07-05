@@ -24,7 +24,6 @@ export function Billing() {
   }
 
   useEffect(() => { void refresh(); }, []);
-  const used = (provider: "deepseek" | "anthropic") => usage?.usage.filter((row) => row.provider === provider).reduce((sum, row) => sum + row.count, 0) ?? 0;
   const subscription = account?.user?.subscription;
   const accessLabel = accountTypeLabel(account);
   const accessTone = account?.access === "active" || account?.access === "trialing" ? "text-[var(--ok)]" : account?.access === "past_due" || account?.access === "unpaid" || account?.access === "canceled" || account?.access === "expired" ? "text-[var(--danger)]" : "text-[var(--text-dim)]";
@@ -49,10 +48,9 @@ export function Billing() {
       </div>
     </SettingsSection>
 
-    <SettingsSection title="Monthly AI usage" hint={`Request counts reset automatically at the start of each UTC month${usage ? ` · ${usage.period}` : ""}.`}>
-      <UsageRow label="DeepSeek" used={used("deepseek")} cap={usage?.caps.deepseek ?? 0} available={(usage?.caps.deepseek ?? 0) > 0} />
-      <UsageRow label="Anthropic" used={used("anthropic")} cap={usage?.caps.anthropic ?? 0} available={!!usage?.anthropicEnabled && (usage?.caps.anthropic ?? 0) > 0} note={usage?.tier === "plus" && !usage.anthropicEnabled ? "Coming later" : undefined} />
-      <p className="text-[11px] text-[var(--text-dim)]">Free blocks AI entirely. Basic includes DeepSeek. Plus includes larger DeepSeek limits and Anthropic when its rollout flag is enabled.</p>
+    <SettingsSection title="Monthly AI usage" hint={`Spend resets automatically at the start of each UTC month${usage ? ` · ${usage.period}` : ""}.`}>
+      <UsageRow label={usage?.model ?? "DeepSeek"} spent={usage?.spentUsd ?? 0} budget={usage?.budgetUsd ?? 0} />
+      <p className="text-[11px] text-[var(--text-dim)]">Free blocks AI. DeepSeek plans use V4 Flash with a $5 monthly budget. The legacy Claude plan name now means V4 Pro with a $25 monthly budget—Anthropic is not used.</p>
     </SettingsSection>
   </div>;
 }
@@ -64,10 +62,10 @@ function Detail({ label, value, mono = false }: { label: string; value: string; 
   </div>;
 }
 
-function UsageRow({ label, used, cap, available, note }: { label: string; used: number; cap: number; available: boolean; note?: string }) {
-  const percent = cap ? Math.min(100, (used / cap) * 100) : 0;
+function UsageRow({ label, spent, budget }: { label: string; spent: number; budget: number }) {
+  const percent = budget ? Math.min(100, (spent / budget) * 100) : 0;
   return <div className="space-y-1.5">
-    <div className="flex text-xs"><span className="font-medium text-[var(--text)]">{label}</span><span className="ml-auto text-[var(--text-dim)]">{note ?? (available ? `${used} / ${cap} requests` : "Not included")}</span></div>
+    <div className="flex text-xs"><span className="font-medium text-[var(--text)]">{label}</span><span className="ml-auto text-[var(--text-dim)]">{budget ? `$${spent.toFixed(4)} / $${budget.toFixed(2)}` : "Not included"}</span></div>
     <div className="h-1.5 overflow-hidden rounded-full bg-[var(--border)]"><div className="h-full rounded-full bg-[var(--accent)] transition-all" style={{ width: `${percent}%` }} /></div>
   </div>;
 }

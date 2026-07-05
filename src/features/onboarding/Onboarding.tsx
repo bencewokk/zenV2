@@ -243,7 +243,8 @@ function AIStep({ decision, onDecision }: { decision?: SetupDecision; onDecision
     <div className="space-y-2.5 text-[var(--text-dim)]">
       <p>
         The assistant chats over your notes, rewrites text inline, and writes your daily brief.
-        Basic includes DeepSeek; Plus adds larger limits and future Anthropic access.
+        The DeepSeek plan includes V4 Flash with a $5 monthly AI budget. The legacy Claude plan
+        uses DeepSeek V4 Pro with a $25 monthly budget; no Anthropic service is involved.
       </p>
       <div className="flex items-center gap-2">
         {decision === "connected" && <Status ok label={`${accountLabel ?? "Subscription"} connected`} />}

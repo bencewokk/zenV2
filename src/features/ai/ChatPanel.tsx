@@ -11,7 +11,6 @@ import { ToolSettings } from "@/features/ai/ToolSettings";
 import { useMemoryStatus } from "@/features/memory/useMemoryStatus";
 import { usePresence } from "@/shared/ui/usePresence";
 import { Dropdown } from "@/shared/ui/Dropdown";
-import { loadSettings } from "@/services/ai/settings";
 import { useSources } from "@/services/sources/store";
 import { useWorkspace } from "@/shared/stores/workspace";
 
@@ -28,19 +27,17 @@ function toneColor(tone?: ToolTone): string {
   return tone ? TONE_DOT[tone] : "var(--text-dim)";
 }
 
-/** Compact "12.3k tok · ~$0.004" readout for a conversation's cumulative usage. */
+/** Compact token readout; authoritative spend lives in Settings → Plan & usage. */
 function UsageBadge({ promptTokens, completionTokens }: { promptTokens?: number; completionTokens?: number }) {
   const total = (promptTokens ?? 0) + (completionTokens ?? 0);
   if (!total) return null;
-  const { priceInputPerM, priceOutputPerM } = loadSettings();
-  const cost = ((promptTokens ?? 0) * priceInputPerM + (completionTokens ?? 0) * priceOutputPerM) / 1_000_000;
   const tok = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
   return (
     <span
       className="shrink-0 tabular-nums"
-      title={`${promptTokens ?? 0} prompt + ${completionTokens ?? 0} completion tokens (estimated cost, edit rates in Settings → AI Behavior)`}
+      title={`${promptTokens ?? 0} prompt + ${completionTokens ?? 0} completion tokens. See Plan & usage for authoritative spend.`}
     >
-      {tok} tok · ~${cost.toFixed(3)}
+      {tok} tok
     </span>
   );
 }
@@ -49,10 +46,6 @@ export function ChatPanel() {
   const open = useAI((s) => s.open);
   const turns = useAI((s) => s.turns);
   const streaming = useAI((s) => s.streaming);
-  const models = useAI((s) => s.models);
-  const model = useAI((s) => s.model);
-  const setModel = useAI((s) => s.setModel);
-  const refreshModels = useAI((s) => s.refreshModels);
   const send = useAI((s) => s.send);
   const stop = useAI((s) => s.stop);
   const toggle = useAI((s) => s.toggle);
@@ -79,10 +72,6 @@ export function ChatPanel() {
   // it would be redundant noise rather than useful signal.
   const lastTurn = turns[turns.length - 1];
   const hasLiveContent = !!lastTurn && lastTurn.role === "assistant" && !!lastTurn.content;
-
-  useEffect(() => {
-    if (open && models.length === 0) void refreshModels();
-  }, [open, models.length, refreshModels]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -183,13 +172,7 @@ export function ChatPanel() {
 
       {/* Secondary row: model + memory · profile / delete (all muted) */}
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-1 text-[11px] text-[var(--text-dim)]">
-        <Dropdown
-          value={model}
-          onChange={setModel}
-          title="Model"
-          className="min-w-0 max-w-[40%] text-[11px]"
-          options={(models.length ? models : [model]).map((m) => ({ value: m, label: m }))}
-        />
+        <span title="Your subscription selects DeepSeek V4 Flash or V4 Pro">Plan-selected DeepSeek</span>
         <UsageBadge
           promptTokens={conversations.find((c) => c.id === activeId)?.promptTokens}
           completionTokens={conversations.find((c) => c.id === activeId)?.completionTokens}

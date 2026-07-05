@@ -19,7 +19,7 @@ scoped to the token's Google account (`sub`).
 | `POST` | `/api/sync/:collection` | Push `{ docs: [...] }`; LWW upsert; returns `{ accepted, rejected, cursor }`. |
 | `GET`  | `/api/account` | Return the authenticated account snapshot and subscription access status. |
 | `GET` | `/api/ai-usage` | Return the current tier, UTC month, per-model usage, and caps. |
-| `POST` | `/api/ai/chat` | Authenticated, quota-enforced DeepSeek/Anthropic streaming gateway. |
+| `POST` | `/api/ai/chat` | Authenticated, budget-enforced DeepSeek streaming gateway. |
 | `PUT`  | `/api/pdfs/:id?uploadId=&part=&parts=` | Upload one PDF part; the final part atomically assembles it in GridFS. |
 | `GET`  | `/api/pdfs/:id?meta=1` | Read the stored PDF byte length. |
 | `GET`  | `/api/pdfs/:id?start=&end=` | Download an end-exclusive byte range. |
@@ -42,8 +42,7 @@ never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
    `CONNECTION_VAULT_KEY`, and `CORS_ALLOWED_ORIGINS`.
 3. `npm install`
 4. `npm run dev` (`vercel dev`) to run locally, or `vercel deploy` to ship. Set the same
-   env vars in the host dashboard for production. AI also requires `DEEPSEEK_API_KEY`;
-   later enable Plus Anthropic with `ANTHROPIC_API_KEY` and `ANTHROPIC_ENABLED=true`.
+   env vars in the host dashboard for production. AI also requires `DEEPSEEK_API_KEY`.
 
 ## Subscription and AI quotas
 
@@ -51,12 +50,13 @@ The existing `users` collection is authoritative. The API matches Google identit
 `googleSub`, accepts `active` or `trialing` subscriptions, and maps plans as follows:
 
 - `deepseek` or `basic` → Basic
-- `claude`, `anthropic`, or `plus` → Plus
+- `claude`, `anthropic`, or `plus` → Plus (legacy plan names; still powered by DeepSeek)
 - missing/inactive/unknown → Free (AI hard stop)
 
-Counters live in `ai_usage`, keyed by `{ userId, period, provider, model }`, where period
-is UTC `YYYY-MM`. Defaults are 50 DeepSeek calls per model for Basic, 500 DeepSeek calls
-per model for Plus, and 100 Anthropic calls per model for Plus. Override with
-`AI_CAP_BASIC_DEEPSEEK`, `AI_CAP_PLUS_DEEPSEEK`, and `AI_CAP_PLUS_ANTHROPIC`.
+Budgets live in `ai_usage_budgets`, keyed by `{ userId, period }`, where period is UTC
+`YYYY-MM`. DeepSeek/Basic uses `deepseek-v4-flash` with a $5 monthly budget; the legacy
+Claude/Plus plan uses `deepseek-v4-pro` with a $25 monthly budget. Override with
+`AI_BUDGET_BASIC_USD` and `AI_BUDGET_PLUS_USD`. Actual spend is calculated from provider
+token usage using the current V4 cache-hit, cache-miss, and output prices.
 
 `npm run typecheck` validates the handlers without emitting.
