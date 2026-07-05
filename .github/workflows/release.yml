@@ -56,6 +56,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Tag-scoped caches cannot be reused by the next release tag. Use the
+          # same stable key as windows-release-cache.yml, whose cache is saved
+          # on the default branch and is therefore visible to tag workflows.
+          shared-key: desktop-release
+          add-job-id-key: false
 
       - run: npm ci
 

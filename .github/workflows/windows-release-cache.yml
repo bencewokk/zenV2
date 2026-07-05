@@ -1,0 +1,55 @@
+name: Warm Windows release cache
+
+# GitHub Actions caches are scoped by ref. Release-tag caches therefore cannot
+# warm the next tag. Build once on the default branch whenever Rust dependencies
+# change so tag-driven releases can restore the compiled dependency artifacts.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
+      - ".github/workflows/windows-release-cache.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-cache
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: desktop-release
+          add-job-id-key: false
+          cache-on-failure: true
+
+      - run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Sync current version
+        run: node scripts/sync-version.mjs
+
+      - name: Compile Windows release dependencies
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
