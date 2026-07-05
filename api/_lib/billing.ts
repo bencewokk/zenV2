@@ -11,6 +11,13 @@ export interface SubscriptionRecord {
   source?: string;
 }
 
+interface ExternalUserRecord {
+  googleSub: string;
+  activePlan?: string;
+  subscriptionStatus?: string;
+  subscriptionUpdatedAt?: Date;
+}
+
 export interface UsageReservation {
   id: string;
   userId: string;
@@ -28,6 +35,20 @@ export function currentPeriod(date = new Date()): string {
 
 export async function subscriptionFor(userId: string): Promise<SubscriptionRecord> {
   const db = await getDb();
+  const external = await db.collection<ExternalUserRecord>("users").findOne({ googleSub: userId });
+  if (external) {
+    const active = ["active", "trialing"].includes(String(external.subscriptionStatus ?? "").toLowerCase());
+    const plan = String(external.activePlan ?? "").toLowerCase();
+    const tier: SubscriptionTier = !active
+      ? "free"
+      : ["plus", "claude", "anthropic"].includes(plan)
+        ? "plus"
+        : ["basic", "deepseek"].includes(plan)
+          ? "basic"
+          : "free";
+    return { userId, tier, updatedAt: external.subscriptionUpdatedAt?.getTime() ?? 0, source: "users" };
+  }
+  // Optional override/fallback for development and future billing integrations.
   return await db.collection<SubscriptionRecord>("subscriptions").findOne({ userId })
     ?? { userId, tier: "free", updatedAt: 0 };
 }

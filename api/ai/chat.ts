@@ -3,7 +3,7 @@ import { applyCors } from "../_lib/cors.js";
 import { userIdFromRequest } from "../_lib/auth.js";
 import { reserveAIRequest, settleReservation, type AIProviderId } from "../_lib/billing.js";
 
-function providerConfig(provider: AIProviderId) {
+function providerConfig(provider: AIProviderId): { url: string; headers: Record<string, string> } {
   if (provider === "deepseek") {
     const key = process.env.DEEPSEEK_API_KEY;
     if (!key) throw Object.assign(new Error("DeepSeek is not configured."), { status: 503, code: "provider_unavailable" });

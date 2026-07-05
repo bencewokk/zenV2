@@ -18,6 +18,8 @@ scoped to the token's Google account (`sub`).
 | `GET`  | `/api/sync/:collection?since=<seq>` | Pull docs changed after cursor `<seq>` (incl. tombstones). |
 | `POST` | `/api/sync/:collection` | Push `{ docs: [...] }`; LWW upsert; returns `{ accepted, rejected, cursor }`. |
 | `GET`  | `/api/account` | Return the authenticated account snapshot and subscription access status. |
+| `GET` | `/api/ai-usage` | Return the current tier, UTC month, per-model usage, and caps. |
+| `POST` | `/api/ai/chat` | Authenticated, quota-enforced DeepSeek/Anthropic streaming gateway. |
 | `PUT`  | `/api/pdfs/:id?uploadId=&part=&parts=` | Upload one PDF part; the final part atomically assembles it in GridFS. |
 | `GET`  | `/api/pdfs/:id?meta=1` | Read the stored PDF byte length. |
 | `GET`  | `/api/pdfs/:id?start=&end=` | Download an end-exclusive byte range. |
@@ -40,6 +42,21 @@ never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
    `CONNECTION_VAULT_KEY`, and `CORS_ALLOWED_ORIGINS`.
 3. `npm install`
 4. `npm run dev` (`vercel dev`) to run locally, or `vercel deploy` to ship. Set the same
-   env vars in the host dashboard for production.
+   env vars in the host dashboard for production. AI also requires `DEEPSEEK_API_KEY`;
+   later enable Plus Anthropic with `ANTHROPIC_API_KEY` and `ANTHROPIC_ENABLED=true`.
+
+## Subscription and AI quotas
+
+The existing `users` collection is authoritative. The API matches Google identity using
+`googleSub`, accepts `active` or `trialing` subscriptions, and maps plans as follows:
+
+- `deepseek` or `basic` → Basic
+- `claude`, `anthropic`, or `plus` → Plus
+- missing/inactive/unknown → Free (AI hard stop)
+
+Counters live in `ai_usage`, keyed by `{ userId, period, provider, model }`, where period
+is UTC `YYYY-MM`. Defaults are 50 DeepSeek calls per model for Basic, 500 DeepSeek calls
+per model for Plus, and 100 Anthropic calls per model for Plus. Override with
+`AI_CAP_BASIC_DEEPSEEK`, `AI_CAP_PLUS_DEEPSEEK`, and `AI_CAP_PLUS_ANTHROPIC`.
 
 `npm run typecheck` validates the handlers without emitting.
