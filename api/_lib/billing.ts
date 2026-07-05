@@ -15,20 +15,36 @@ interface ExternalUserRecord {
 interface BudgetRecord { userId: string; period: string; amountPicoUsd: number; updatedAt: number }
 export interface UsageReservation {
   id: string; userId: string; period: string; model: DeepSeekModel; reservedPicoUsd: number;
-  status: "active" | "committed" | "released" | "denied"; createdAt: number; updatedAt: number;
+  status: "active" | "accepted" | "committed" | "released" | "denied"; createdAt: number; updatedAt: number;
 }
 export interface DeepSeekUsage {
   prompt_tokens?: number; completion_tokens?: number;
   prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number;
 }
 
-const PRICE_PICO_PER_TOKEN: Record<DeepSeekModel, { hit: number; miss: number; output: number }> = {
-  "deepseek-v4-flash": { hit: 2_800, miss: 140_000, output: 280_000 },
-  "deepseek-v4-pro": { hit: 3_625, miss: 435_000, output: 870_000 },
-};
+function pricePicoPerToken(name: string, fallbackUsdPerMillion: number): number {
+  return positiveNumber(name, fallbackUsdPerMillion) * 1_000_000;
+}
+function prices(model: DeepSeekModel) {
+  return model === "deepseek-v4-pro"
+    ? { hit: pricePicoPerToken("AI_PRICE_PRO_CACHE_HIT", 0.003625), miss: pricePicoPerToken("AI_PRICE_PRO_CACHE_MISS", 0.435), output: pricePicoPerToken("AI_PRICE_PRO_OUTPUT", 0.87) }
+    : { hit: pricePicoPerToken("AI_PRICE_FLASH_CACHE_HIT", 0.0028), miss: pricePicoPerToken("AI_PRICE_FLASH_CACHE_MISS", 0.14), output: pricePicoPerToken("AI_PRICE_FLASH_OUTPUT", 0.28) };
+}
 
 export function currentPeriod(date = new Date()): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+export function periodFor(subscription: SubscriptionRecord, date = new Date()): string {
+  const end = subscription.currentPeriodEnd;
+  if (end && !Number.isNaN(end.getTime()) && end.getTime() > date.getTime()) return `subscription:${end.toISOString()}`;
+  return `calendar:${currentPeriod(date)}`;
+}
+
+function periodLabel(subscription: SubscriptionRecord, date = new Date()): string {
+  const end = subscription.currentPeriodEnd;
+  if (end && !Number.isNaN(end.getTime()) && end.getTime() > date.getTime()) return `Through ${end.toISOString().slice(0, 10)}`;
+  return currentPeriod(date);
 }
 
 export async function subscriptionFor(userId: string): Promise<SubscriptionRecord> {
@@ -75,7 +91,7 @@ export function modelFor(tier: SubscriptionTier): DeepSeekModel {
 }
 
 export function costPicoUsd(model: DeepSeekModel, usage: DeepSeekUsage): number {
-  const price = PRICE_PICO_PER_TOKEN[model];
+  const price = prices(model);
   const prompt = Math.max(0, Number(usage.prompt_tokens ?? 0));
   const hit = Math.min(prompt, Math.max(0, Number(usage.prompt_cache_hit_tokens ?? 0)));
   const missReported = Math.max(0, Number(usage.prompt_cache_miss_tokens ?? 0));
@@ -86,7 +102,7 @@ export function costPicoUsd(model: DeepSeekModel, usage: DeepSeekUsage): number 
 
 /** Conservative pre-flight hold: cache-miss input bytes + bounded maximum output. */
 export function estimatePicoUsd(model: DeepSeekModel, payload: Record<string, unknown>): number {
-  const price = PRICE_PICO_PER_TOKEN[model];
+  const price = prices(model);
   const inputUpperBound = Buffer.byteLength(JSON.stringify(payload), "utf8");
   const maxOutput = Math.min(8192, Math.max(1, Number(payload.max_tokens ?? 8192)));
   return Math.ceil(inputUpperBound * price.miss + maxOutput * price.output);
@@ -100,10 +116,12 @@ export async function reserveAIRequest(userId: string, payload: Record<string, u
   const budgetUsd = budgetUsdFor(subscription.tier);
   const budgetPicoUsd = budgetUsd * 1_000_000_000_000;
   const reservedPicoUsd = estimatePicoUsd(model, payload);
-  const period = currentPeriod();
+  const period = periodFor(subscription);
   const id = randomUUID();
   const now = Date.now();
   const db = await getDb();
+  await recoverStaleReservations(userId);
+  await enforceRateLimit(userId);
   const budgets = db.collection<BudgetRecord>("ai_usage_budgets");
   const reservations = db.collection<UsageReservation>("ai_usage_reservations");
   await reservations.insertOne({ id, userId, period, model, reservedPicoUsd, status: "denied", createdAt: now, updatedAt: now });
@@ -126,29 +144,73 @@ export async function reserveAIRequest(userId: string, payload: Record<string, u
   return { reservationId: id, tier: subscription.tier, model, period, budgetUsd, heldPicoUsd: reservedPicoUsd };
 }
 
-export async function settleReservation(userId: string, id: string, actualPicoUsd: number | null): Promise<void> {
+export async function markReservationAccepted(userId: string, id: string): Promise<void> {
+  const db = await getDb();
+  await db.collection<UsageReservation>("ai_usage_reservations").updateOne(
+    { id, userId, status: "active" }, { $set: { status: "accepted", updatedAt: Date.now() } },
+  );
+}
+
+export async function settleReservation(userId: string, id: string, settlement: { costPicoUsd: number; usage?: DeepSeekUsage; estimated?: boolean } | null): Promise<void> {
   const db = await getDb();
   const reservations = db.collection<UsageReservation>("ai_usage_reservations");
-  const status = actualPicoUsd === null ? "released" : "committed";
+  const status = settlement === null ? "released" : "committed";
   const reservation = await reservations.findOneAndUpdate(
-    { id, userId, status: "active" }, { $set: { status, updatedAt: Date.now() } }, { returnDocument: "before" },
+    { id, userId, status: { $in: ["active", "accepted"] } }, { $set: { status, updatedAt: Date.now() } }, { returnDocument: "before" },
   );
   if (!reservation) return;
-  const actual = actualPicoUsd === null ? 0 : Math.max(0, Math.round(actualPicoUsd));
+  const actual = settlement === null ? 0 : Math.max(0, Math.round(settlement.costPicoUsd));
   await db.collection("ai_usage_budgets").updateOne(
     { userId, period: reservation.period },
     { $inc: { amountPicoUsd: actual - reservation.reservedPicoUsd }, $set: { updatedAt: Date.now() } },
   );
-  if (actualPicoUsd !== null) await db.collection("ai_usage").updateOne(
+  if (settlement !== null) await db.collection("ai_usage").updateOne(
     { userId, period: reservation.period, model: reservation.model },
     { $inc: { requests: 1, costPicoUsd: actual }, $set: { updatedAt: Date.now() }, $setOnInsert: { userId, period: reservation.period, model: reservation.model } },
     { upsert: true },
   );
+  if (settlement !== null) {
+    const usage = settlement.usage ?? {};
+    await db.collection("ai_usage_events").updateOne(
+      { reservationId: id },
+      { $setOnInsert: {
+        reservationId: id, userId, period: reservation.period, model: reservation.model,
+        costPicoUsd: actual, estimated: settlement.estimated === true,
+        promptTokens: Number(usage.prompt_tokens ?? 0), completionTokens: Number(usage.completion_tokens ?? 0),
+        cacheHitTokens: Number(usage.prompt_cache_hit_tokens ?? 0), cacheMissTokens: Number(usage.prompt_cache_miss_tokens ?? 0),
+        createdAt: reservation.createdAt, settledAt: Date.now(),
+      } },
+      { upsert: true },
+    );
+  }
+  console.info(JSON.stringify({ event: "ai_usage_settled", userId: userId.slice(-8), reservationId: id, status, model: reservation.model, costPicoUsd: actual }));
+}
+
+async function enforceRateLimit(userId: string): Promise<void> {
+  const db = await getDb();
+  const limit = Math.max(1, Math.floor(positiveNumber("AI_RATE_LIMIT_PER_MINUTE", 30)));
+  const minute = Math.floor(Date.now() / 60_000);
+  const collection = db.collection<{ userId: string; minute: number; count: number; expiresAt: Date }>("ai_rate_limits");
+  const update = { $inc: { count: 1 }, $set: { expiresAt: new Date(Date.now() + 120_000) }, $setOnInsert: { userId, minute } };
+  const result = await collection.findOneAndUpdate({ userId, minute, count: { $lt: limit } }, update, { upsert: true, returnDocument: "after" }).catch((error: unknown) => {
+    if ((error as { code?: number }).code === 11000) return collection.findOneAndUpdate({ userId, minute, count: { $lt: limit } }, { $inc: { count: 1 }, $set: { expiresAt: new Date(Date.now() + 120_000) } }, { returnDocument: "after" });
+    throw error;
+  });
+  if (!result) throw Object.assign(new Error("Too many AI requests. Try again in a minute."), { code: "rate_limited", status: 429 });
+}
+
+async function recoverStaleReservations(userId: string): Promise<void> {
+  const db = await getDb();
+  const stale = await db.collection<UsageReservation>("ai_usage_reservations").find({ userId, status: { $in: ["active", "accepted"] }, updatedAt: { $lt: Date.now() - 15 * 60_000 } }).limit(20).toArray();
+  for (const reservation of stale) {
+    if (reservation.status === "accepted") await settleReservation(userId, reservation.id, { costPicoUsd: reservation.reservedPicoUsd, estimated: true });
+    else await settleReservation(userId, reservation.id, null);
+  }
 }
 
 export async function usageStatus(userId: string) {
   const subscription = await subscriptionFor(userId);
-  const period = currentPeriod();
+  const period = periodFor(subscription);
   const db = await getDb();
   const budget = await db.collection<BudgetRecord>("ai_usage_budgets").findOne({ userId, period });
   const rows = await db.collection("ai_usage").find({ userId, period }).project({ _id: 0, model: 1, requests: 1, costPicoUsd: 1 }).toArray();
@@ -163,7 +225,7 @@ export async function usageStatus(userId: string) {
   }));
   return {
     tier: subscription.tier,
-    period,
+    period: periodLabel(subscription),
     model: subscription.tier === "free" ? null : modelFor(subscription.tier),
     budgetUsd,
     spentUsd,

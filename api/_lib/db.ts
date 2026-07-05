@@ -51,6 +51,10 @@ export async function getDb(): Promise<Db> {
       db.collection("ai_usage_budgets").createIndex({ userId: 1, period: 1 }, { unique: true }).catch(() => {}),
       db.collection("ai_usage_reservations").createIndex({ id: 1 }, { unique: true }).catch(() => {}),
       db.collection("ai_usage_reservations").createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 }).catch(() => {}),
+      db.collection("ai_usage_events").createIndex({ reservationId: 1 }, { unique: true }).catch(() => {}),
+      db.collection("ai_usage_events").createIndex({ userId: 1, period: 1, settledAt: -1 }).catch(() => {}),
+      db.collection("ai_rate_limits").createIndex({ userId: 1, minute: 1 }, { unique: true }).catch(() => {}),
+      db.collection("ai_rate_limits").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).catch(() => {}),
     ]);
   }
   return db;

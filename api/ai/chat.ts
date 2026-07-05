@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { applyCors } from "../_lib/cors.js";
 import { userIdFromRequest } from "../_lib/auth.js";
-import { costPicoUsd, reserveAIRequest, settleReservation, type DeepSeekUsage } from "../_lib/billing.js";
+import { costPicoUsd, markReservationAccepted, reserveAIRequest, settleReservation, type DeepSeekUsage } from "../_lib/billing.js";
 
 function apiKey(): string {
   const key = process.env.DEEPSEEK_API_KEY;
@@ -51,6 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.status(upstream.status).json({ error: `DeepSeek rejected the request: ${detail.slice(0, 300)}`, code: "provider_error" }); return;
     }
     acceptedHoldPicoUsd = reservation.heldPicoUsd;
+    await markReservationAccepted(userId, reservationId);
 
     res.status(upstream.status);
     res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
@@ -67,11 +68,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     raw += decoder.decode();
     const usage = usageFromBody(raw);
     // Missing usage keeps the conservative pre-flight hold instead of underbilling.
-    await settleReservation(userId, reservationId, usage ? Math.min(reservation.heldPicoUsd, costPicoUsd(reservation.model, usage)) : reservation.heldPicoUsd);
+    await settleReservation(userId, reservationId, usage
+      ? { costPicoUsd: Math.min(reservation.heldPicoUsd, costPicoUsd(reservation.model, usage)), usage }
+      : { costPicoUsd: reservation.heldPicoUsd, estimated: true });
     reservationId = null;
     res.end();
   } catch (error) {
-    if (reservationId) await settleReservation(userId, reservationId, acceptedHoldPicoUsd).catch(() => {});
+    if (reservationId) await settleReservation(userId, reservationId, acceptedHoldPicoUsd === null ? null : { costPicoUsd: acceptedHoldPicoUsd, estimated: true }).catch(() => {});
     const typed = error as Error & { status?: number; code?: string };
     res.status(typed.status ?? 500).json({ error: typed.message || "AI request failed", code: typed.code ?? "ai_error" });
   }
