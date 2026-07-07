@@ -126,6 +126,7 @@ function GoogleIdentityStep({ decision, onDecision }: { decision?: Decision; onD
 
   return <div className="space-y-4 text-[var(--text-dim)]">
     <p>One Google login identifies your Zen account and can unlock cloud sync, Drive, Calendar, Gmail, and encrypted connection storage. Zen uses its built-in OAuth client.</p>
+    <p className="text-xs">Zen can read Drive files, Calendar events, and Gmail; it can change Calendar events and Gmail state or send mail only for features you request. Google access is optional.{' '}<a className="underline" href="https://zen-website-rust.vercel.app/privacy" target="_blank" rel="noreferrer">Privacy and Google data use</a></p>
     <ChoiceCard active={signedIn} title="Connect Google" detail={signedIn ? "Connected to your Zen account" : "Recommended for the complete experience"} action={!signedIn ? <button className="zen-btn" disabled={busy || !isConfigured()} onClick={() => void connect()}>{busy ? "Connecting…" : "Connect"}</button> : undefined} />
     {!signedIn && <ChoiceCard active={decision === "skipped"} title="Use Zen locally" detail="No Google features, account plan, vault, or cloud sync" action={<button className="zen-btn-ghost" onClick={() => onDecision("skipped")}>Use local-only</button>} />}
   </div>;

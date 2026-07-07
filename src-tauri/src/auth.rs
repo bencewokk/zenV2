@@ -18,9 +18,6 @@ const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 // user's account id), which the sync backend uses to identify the user.
 const SCOPES: &str = "openid email \
 https://www.googleapis.com/auth/calendar.events \
-https://www.googleapis.com/auth/calendar.readonly \
-https://www.googleapis.com/auth/gmail.readonly \
-https://www.googleapis.com/auth/gmail.compose \
 https://www.googleapis.com/auth/gmail.modify \
 https://www.googleapis.com/auth/drive.readonly";
 

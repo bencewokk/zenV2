@@ -52,16 +52,15 @@ export function isUsingBundledCredentials(_s: GoogleSettings): boolean {
   return true;
 }
 
-// Scopes requested. Read + write so the AI-tooling phase can act on them later.
+// Minimum scopes required by implemented features. `gmail.modify` covers reading,
+// composing, sending, and label/read/archive changes; `calendar.events` covers
+// reading and editing events, so narrower duplicate scopes are unnecessary.
 // `openid email` make Google issue an ID token used to identify the user to the
 // sync backend.
 export const GOOGLE_SCOPES = [
   "openid",
   "email",
   "https://www.googleapis.com/auth/calendar.events",
-  "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/drive.readonly",
 ].join(" ");

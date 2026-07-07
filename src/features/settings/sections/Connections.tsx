@@ -291,6 +291,10 @@ export function Connections() {
         hint="Your Google account is Zen's identity for Drive, Calendar, Gmail, encrypted connection storage, and cloud sync."
       >
         <p className="text-xs text-[var(--text-dim)]">Zen uses its built-in Google connection. No OAuth client setup is required.</p>
+        <p className="text-xs text-[var(--text-dim)]">
+          Zen can read Drive files, Calendar events, and Gmail; it can change Calendar events and Gmail state or send mail only for features you request. Google access is optional.{' '}
+          <a className="underline" href="https://zen-website-rust.vercel.app/privacy" target="_blank" rel="noreferrer">How Zen uses Google data</a>
+        </p>
         <div className="flex items-center gap-2">
           <span
             className="inline-block h-2 w-2 rounded-full"
