@@ -16,6 +16,7 @@ import { useQuiz } from "@/features/home/deepwork/quizStore";
 import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
 import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
 import { Onboarding } from "@/features/onboarding/Onboarding";
+import { CommandPalette, useCommandPalette } from "@/features/search/CommandPalette";
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { useOnboarding } from "@/features/onboarding/store";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
@@ -236,6 +237,14 @@ export function App() {
           />
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
+            onClick={() => useCommandPalette.getState().setOpen(true)}
+            title="Search everything (Ctrl+K)"
+            aria-label="Search"
+          >
+            ⌕
+          </button>
           {sidebarApplicable && (
             <button
               className={`${HEADER_BTN} ${sidebarVisible ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
@@ -407,6 +416,7 @@ export function App() {
       {quizActive && <Suspense fallback={null}><QuizView /></Suspense>}
       {lessonActive && <Suspense fallback={null}><LessonMode /></Suspense>}
       <Onboarding />
+      <CommandPalette />
       <ReleaseNotesModal />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>
