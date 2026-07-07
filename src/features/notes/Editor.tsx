@@ -125,7 +125,7 @@ export function Editor({ noteId }: { noteId: string }) {
               : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
           }`}
           onClick={() => void saveMeta(noteId, { mathCheck: !mathCheck })}
-          title="Live-check every math block against its expected answer"
+          title="Live-check each line of a multi-line math block against the line above it"
         >
           ✓ Math check{mathCheck ? " · on" : ""}
         </button>

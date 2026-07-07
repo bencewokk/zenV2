@@ -33,11 +33,22 @@ const GLOW_COLOR: Partial<Record<Conn | AiStatus, string>> = {
 // when something is actually happening.
 const LOUD = new Set<Conn | AiStatus>(["on", "busy", "connecting", "error"]);
 
+/** Route a status click to the place it can be fixed: Settings. */
+function openSettings() {
+  useNotes.getState().select(null);
+  useHome.getState().setManualDeepWork(false);
+  useWorkspace.getState().set({ surface: "settings", adminMailId: null });
+}
+
 function Badge({ label, state }: { label: string; state: Conn | AiStatus }) {
   const glow = GLOW_COLOR[state];
   const quiet = !LOUD.has(state);
   return (
-    <span className="flex items-center gap-1" title={`${label}: ${state}`}>
+    <button
+      className="zen-pressable flex items-center gap-1 hover:text-[var(--text)]"
+      title={`${label}: ${state} — open Settings`}
+      onClick={openSettings}
+    >
       <span
         className={`inline-block h-2 w-2 rounded-full transition-colors duration-300 ${glow ? "zen-glow" : ""}`}
         style={{ background: DOT[state], "--zen-glow-color": glow } as React.CSSProperties}
@@ -45,7 +56,7 @@ function Badge({ label, state }: { label: string; state: Conn | AiStatus }) {
       <span className={`transition-opacity duration-300 ${quiet ? "opacity-55" : ""}`}>
         {label}{quiet ? "" : ` · ${state}`}
       </span>
-    </span>
+    </button>
   );
 }
 

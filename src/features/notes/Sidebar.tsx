@@ -15,6 +15,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useNotes } from "@/features/notes/store";
+import { notify } from "@/shared/ui/notify";
 import { type HomeTarget } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { matchesFilter, isFilterActive } from "@/features/filtering/filter";
@@ -35,6 +36,7 @@ export function Sidebar() {
   const select = useNotes((s) => s.select);
   const create = useNotes((s) => s.create);
   const remove = useNotes((s) => s.remove);
+  const restore = useNotes((s) => s.restore);
   const toggleCollapse = useNotes((s) => s.toggleCollapse);
   const move = useNotes((s) => s.move);
   const rename = useNotes((s) => s.rename);
@@ -139,7 +141,17 @@ export function Sidebar() {
                 onSelect={() => select(f.note.id)}
                 onToggle={() => toggleCollapse(f.note.id)}
                 onAddChild={() => create(f.note.id)}
-                onDelete={() => remove(f.note.id)}
+                onDelete={() => {
+                  // Deletion is reversible for a moment: snapshot the note and its
+                  // direct children (remove() detaches them to root), then offer Undo.
+                  const snapshot = notes[f.note.id];
+                  const childIds = Object.values(notes)
+                    .filter((n) => n.parentId === f.note.id)
+                    .map((n) => n.id);
+                  void remove(f.note.id).then(() => {
+                    notify.undo(`Deleted “${snapshot.title || "Untitled"}”`, () => void restore(snapshot, childIds));
+                  });
+                }}
                 onRename={(title) => void rename(f.note.id, title)}
                 onOpenDeepWork={(event) => {
                   event.preventDefault();

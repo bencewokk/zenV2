@@ -532,8 +532,8 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                   <div className="zen-stagger space-y-4">
                     {groups.length === 0 ? (
                       <EmptyState
-                        title="No action pressure yet"
-                        body="Unread mail, recent notes, and upcoming events will converge here automatically."
+                        title="Nothing needs attention yet"
+                        body="Unread mail, recent notes, and upcoming events will show up here automatically."
                       />
                     ) : (
                       groups.map((group) => (
@@ -706,7 +706,7 @@ function FocusWorkspace({
           className="zen-primary-copy rounded-[14px] border border-[var(--border)] bg-[var(--bg-elev)] px-4 py-3 text-sm text-[var(--text)]"
           style={{ borderLeft: `3px solid ${focus.accent}` }}
         >
-          {preview || "This note has no text yet. Use the center canvas to decide if it belongs in focus or back in triage."}
+          {preview || "This note has no text yet. Open it to start writing."}
         </div>
         {focus.note.tags.length > 0 && (
           <div className="zen-meta flex flex-wrap gap-2 text-xs">
@@ -728,7 +728,7 @@ function FocusWorkspace({
       body={
         inboxCount > 0
           ? `You still have ${inboxCount} inbox item${inboxCount === 1 ? "" : "s"} to triage.`
-          : "Use the timeline or triage rail to seed the center workspace."
+          : "Pick an item from the Action Feed, or open a note from the sidebar."
       }
     />
   );

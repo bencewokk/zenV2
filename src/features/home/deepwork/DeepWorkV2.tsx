@@ -348,9 +348,12 @@ export function DeepWorkV2({
             Nothing here yet. Use <span className="mx-1 text-[var(--text)]">＋ Add source</span> (top bar), or right-click a note, email, or event → <span className="mx-1 text-[var(--text)]">Add to Deep Work</span>.
           </div>
         ) : (
-          items.map((item) => {
+          items.map((item, index) => {
             const key = targetKey(item);
-            const geom: WindowGeom = windows[key] ?? { x: 32, y: 32, w: 380, h: 340 };
+            // Cascade windows without a saved geometry so newly added sources don't
+            // pile up in one spot hiding each other.
+            const step = index % 6;
+            const geom: WindowGeom = windows[key] ?? { x: 32 + step * 36, y: 32 + step * 30, w: 380, h: 340 };
             const commit = (g: WindowGeom) => setWindow(key, g);
             const peers = Object.entries(windows)
               .filter(([k]) => k !== key)

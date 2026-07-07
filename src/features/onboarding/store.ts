@@ -22,6 +22,11 @@ function markDone(): void {
   }
 }
 
+/** True until the user completes the first-run walkthrough on this install. */
+export function isFirstRun(): boolean {
+  return !done();
+}
+
 interface OnboardingState {
   open: boolean;
   /** Open the walkthrough manually (e.g. a "Replay" button). */

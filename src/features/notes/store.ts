@@ -74,7 +74,7 @@ function buildWelcomeNote(): Note {
         {
           type: "bulletList",
           content: [
-            bullet("AI assistant — open Settings ⚙ → Connections & keys and paste a DeepSeek API key."),
+            bullet("AI assistant — connect your Google account in Settings ⚙; your Zen plan provides the AI, no API keys to paste."),
             bullet("Calendar & Mail — same screen, connect your Google account to pull events and email into your daily focus."),
           ],
         },
@@ -190,6 +190,7 @@ interface NotesState {
   attachPdf: (id: string, pdfId: string) => Promise<void>;
   detachPdf: (id: string, pdfId: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
+  restore: (note: Note, childIds: string[]) => Promise<void>; // undo a remove()
   toggleCollapse: (id: string) => void;
   move: (id: string, parentId: string | null, order: number) => Promise<void>;
   setFilter: (f: Partial<NoteFilter>) => void;
@@ -302,6 +303,24 @@ export const useNotes = create<NotesState>((set, get) => ({
         selectedId: s.selectedId === id ? null : s.selectedId,
       };
     });
+  },
+
+  /**
+   * Undo a remove(): re-persist the deleted note and re-attach the children that
+   * remove() detached to root. Children that were themselves deleted since are
+   * skipped rather than resurrected.
+   */
+  async restore(note, childIds) {
+    await store.put(note);
+    const reattached: Record<string, Note> = {};
+    for (const cid of childIds) {
+      const child = get().notes[cid];
+      if (!child) continue;
+      const moved = { ...child, parentId: note.id };
+      await store.put(moved);
+      reattached[cid] = moved;
+    }
+    set((s) => ({ notes: { ...s.notes, [note.id]: note, ...reattached } }));
   },
 
   toggleCollapse(id) {

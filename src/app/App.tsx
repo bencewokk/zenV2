@@ -414,7 +414,7 @@ export function App() {
 }
 
 function LoadingSurface() {
-  return <div className="grid h-full place-items-center text-sm text-[var(--text-dim)]">Loadingâ€¦</div>;
+  return <div className="grid h-full place-items-center text-sm text-[var(--text-dim)]">Loading…</div>;
 }
 
 function AdminPanel({

@@ -148,14 +148,14 @@ function PlanStep({ googleConnected, decision, onDecision }: { googleConnected: 
   useEffect(() => { if (googleConnected) void refresh(); }, [googleConnected]);
   const plan = account?.user?.subscription?.plan;
   const paid = canAccessPaidFeatures(account);
-  const planName = plan === "plus" ? "Claude plan · DeepSeek V4 Pro" : plan === "basic" ? "DeepSeek plan · V4 Flash" : accountTypeLabel(account);
+  const planName = plan === "plus" ? "Plus plan · DeepSeek V4 Pro" : plan === "basic" ? "Basic plan · DeepSeek V4 Flash" : accountTypeLabel(account);
 
   return <div className="space-y-3 text-[var(--text-dim)]">
     <p>AI is provided by Zen—there are no API keys to enter. Your website-managed subscription decides the model and monthly budget.</p>
     <div className="grid grid-cols-2 gap-2 text-xs">
       <PlanCard title="Free" model="No AI" budget="$0" />
-      <PlanCard title="DeepSeek" model="V4 Flash" budget="$5 / month" />
-      <PlanCard title="Claude (legacy name)" model="DeepSeek V4 Pro" budget="$25 / month" />
+      <PlanCard title="Basic" model="DeepSeek V4 Flash" budget="$5 / month" />
+      <PlanCard title="Plus" model="DeepSeek V4 Pro" budget="$25 / month" />
     </div>
     <div className="flex items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--bg)] p-3">
       <Status ok={paid} label={!googleConnected ? "Local-only · Free" : loading ? "Checking your plan…" : paid ? planName : "Free · AI unavailable"} />
@@ -206,13 +206,16 @@ function SourcesStep({ decisions, onDecision }: { decisions: Decisions; onDecisi
   const resolved = sources.every((source) => source.ready || decisions[`source:${source.id}`] === "skipped");
   useEffect(() => { if (resolved && !decisions.sources) onDecision("sources", "connected"); }, [resolved, decisions.sources]);
 
+  const unresolved = sources.filter((source) => !source.ready && decisions[`source:${source.id}`] !== "skipped");
+
   return <div className="space-y-2 text-[var(--text-dim)]">
-    <p className="mb-3">Connected sources are detected automatically. Mark every other source “Later” so setup never silently assumes consent.</p>
+    <p className="mb-3">Connected sources are detected automatically. Anything marked “Later” stays off until you connect it in Settings.</p>
     {sources.map((source) => <div key={source.id} className="flex items-center gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--bg)] p-3">
       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: source.ready ? "var(--ok)" : "var(--text-dim)" }} />
       <span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-[var(--text)]">{source.name}</span><span className="block truncate text-[11px]">{source.detail}</span></span>
       {source.ready ? <span className="text-[11px] text-[var(--ok)]">Connected</span> : decisions[`source:${source.id}`] === "skipped" ? <span className="text-[11px]">Later</span> : <button className="zen-btn-ghost" onClick={() => onDecision(`source:${source.id}`, "skipped")}>Later</button>}
     </div>)}
+    {unresolved.length > 1 && <button className="zen-btn-ghost w-full" onClick={() => unresolved.forEach((source) => onDecision(`source:${source.id}`, "skipped"))}>Skip all for now</button>}
     <p className="pt-1 text-[11px]">Canvas, Zotero, and GitHub credentials can be added in Settings and secured to your Google account.</p>
   </div>;
 }

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { RELEASE_NOTES, LATEST_RELEASE, CURRENT_VERSION } from "@/data/releaseNotes";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
+import { isFirstRun } from "@/features/onboarding/store";
 
 const SEEN_KEY = "zen.releaseNotes.seen.v1";
 
@@ -51,7 +52,14 @@ export function ReleaseNotesModal() {
   const close = useReleaseNotes((s) => s.close);
 
   useEffect(() => {
-    if (useReleaseNotes.getState().isNew) useReleaseNotes.getState().openModal();
+    if (!useReleaseNotes.getState().isNew) return;
+    // A brand-new install has no "what changed" to catch up on, and the setup
+    // wizard is about to open — mark the notes seen instead of stacking modals.
+    if (isFirstRun()) {
+      useReleaseNotes.getState().close();
+      return;
+    }
+    useReleaseNotes.getState().openModal();
     // One-time-per-version auto-popup, on app start only.
   }, []);
 
