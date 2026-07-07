@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { linkifyCitations } from "@/features/ai/citations";
 import { useAI, type ToolTone, type ChatTurn } from "@/features/ai/store";
+import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
 import { useNotes } from "@/features/notes/store";
 import { useHome } from "@/features/home/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
@@ -60,6 +61,8 @@ export function ChatPanel() {
   const switchConversation = useAI((s) => s.switchConversation);
   const deleteConversation = useAI((s) => s.deleteConversation);
   const memStatus = useMemoryStatus();
+  const aiAccess = useAiAccess((s) => s.access);
+  const blocked = aiBlocked(aiAccess);
 
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
@@ -204,6 +207,22 @@ export function ChatPanel() {
         </div>
       </div>
 
+      {blocked && (
+        <div className="border-b border-[var(--border)] bg-[rgba(246,104,94,0.06)] px-3 py-2.5 text-xs text-[var(--text-dim)]">
+          <span className="text-[var(--text)]">{aiBlockedMessage(aiAccess)}</span>
+          <button
+            className="zen-pressable mt-1.5 block rounded border border-[var(--border)] px-2 py-1 text-[var(--text-dim)] hover:text-[var(--text)]"
+            onClick={() => {
+              useNotes.getState().select(null);
+              useHome.getState().setManualDeepWork(false);
+              useWorkspace.getState().set({ surface: "settings", adminMailId: null });
+            }}
+          >
+            Open Settings
+          </button>
+        </div>
+      )}
+
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {turns.length === 0 && (
           <div className="text-sm text-[var(--text-dim)]">
@@ -338,9 +357,10 @@ export function ChatPanel() {
               submit();
             }
           }}
-          placeholder="Message… (Enter to send, Shift+Enter for newline)"
+          placeholder={blocked ? "AI is unavailable for this account" : "Message… (Enter to send, Shift+Enter for newline)"}
           rows={3}
-          className="w-full resize-none rounded bg-[var(--bg-elev)] px-2 py-1.5 text-sm outline-none placeholder:text-[var(--text-dim)]"
+          disabled={blocked}
+          className="w-full resize-none rounded bg-[var(--bg-elev)] px-2 py-1.5 text-sm outline-none placeholder:text-[var(--text-dim)] disabled:opacity-60"
         />
         <div className="mt-1 flex justify-end">
           {streaming ? (
@@ -354,7 +374,7 @@ export function ChatPanel() {
             <button
               className="rounded bg-[var(--accent)] px-3 py-1 text-xs text-black disabled:opacity-50"
               onClick={submit}
-              disabled={!input.trim()}
+              disabled={!input.trim() || blocked}
             >
               Send
             </button>

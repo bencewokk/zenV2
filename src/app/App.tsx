@@ -25,6 +25,7 @@ import { startSync } from "@/services/sync/engine";
 import { applyAppearance } from "@/services/appearance";
 import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
+import { startAiAccessWatch } from "@/features/ai/access";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { usePdfs } from "@/features/pdfs/store";
 import { useStatus } from "@/shared/stores/status";
@@ -105,7 +106,8 @@ export function App() {
     });
     if (isSignedIn()) void reconcileConnectionVault().catch(() => {});
     const stopSourceRefresh = startSourceRefresh();
-    return () => { window.clearTimeout(t); stopSourceRefresh(); stopVaultAuth(); };
+    const stopAiAccess = startAiAccessWatch();
+    return () => { window.clearTimeout(t); stopSourceRefresh(); stopVaultAuth(); stopAiAccess(); };
   }, [load]);
   useEffect(() => {
     if (loaded && !restored.current) {

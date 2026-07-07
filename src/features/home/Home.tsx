@@ -16,6 +16,8 @@ import {
   fmtPlanDay, fmtStartMin, verdictColor, KIND_META,
 } from "@/features/home/deepwork/studyPlan";
 import { useQuote } from "@/features/home/quote";
+import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
+import { useWorkspace } from "@/shared/stores/workspace";
 import { WhatsNew } from "@/features/home/ReleaseNotes";
 import { useNotes } from "@/features/notes/store";
 import { docToText } from "@/shared/lib/docText";
@@ -66,6 +68,8 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
   const [hiddenTargets, setHiddenTargets] = useState<HiddenTargets>(() => readHiddenTargets());
   const [quickCapture, setQuickCapture] = useState("");
   const [captureSaving, setCaptureSaving] = useState(false);
+  const aiAccess = useAiAccess((s) => s.access);
+  const aiOff = aiBlocked(aiAccess);
   const { session, sessionRemaining, sessionProgress, startSession, endSession } = useFocusSession();
 
   useEffect(() => {
@@ -379,6 +383,10 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                             );
                           })}
                         </ul>
+                      ) : aiOff ? (
+                        <div className="zen-secondary-copy mt-2 max-w-[54ch] text-[15px]">
+                          {aiBlockedMessage(aiAccess)}
+                        </div>
                       ) : summary ? (
                         <div className="zen-secondary-copy mt-2 max-w-[54ch] text-[15px]">
                           All cleared for today. Regenerate for a fresh brief.
@@ -389,13 +397,25 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                         </div>
                       )}
                     </div>
-                    <button
-                      className="zen-pressable zen-shine shrink-0 self-start rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(96,165,250,0.24)] hover:brightness-105 disabled:opacity-60"
-                      onClick={() => void regenerateSummary()}
-                      disabled={summaryLoading}
-                    >
-                      {summaryLoading ? "Generating..." : "Generate"}
-                    </button>
+                    {aiOff ? (
+                      <button
+                        className="zen-pressable shrink-0 self-start rounded-[12px] border border-[var(--border)] px-4 py-2 text-sm text-[var(--text-dim)] hover:text-[var(--text)]"
+                        onClick={() => {
+                          select(null);
+                          useWorkspace.getState().set({ surface: "settings", adminMailId: null });
+                        }}
+                      >
+                        Open Settings
+                      </button>
+                    ) : (
+                      <button
+                        className="zen-pressable zen-shine shrink-0 self-start rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(96,165,250,0.24)] hover:brightness-105 disabled:opacity-60"
+                        onClick={() => void regenerateSummary()}
+                        disabled={summaryLoading}
+                      >
+                        {summaryLoading ? "Generating..." : "Generate"}
+                      </button>
+                    )}
                   </div>
                 </section>}
 

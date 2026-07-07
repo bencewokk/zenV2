@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useAI } from "@/features/ai/store";
+import { useAiAccess } from "@/features/ai/access";
 
 /**
  * Daily dashboard quote. The AI generates one quote per day, choosing the category that
@@ -133,11 +134,17 @@ export const useQuote = create<QuoteState>((set, get) => {
       const meta = QUOTE_CATEGORIES.find((c) => c.key === category)!;
 
       set({ loading: true });
-      const out = await useAI.getState().complete(
-        `Give me one short, real, attributable quote about ${meta.prompt}. ` +
-          `Return ONLY JSON: {"quote": "...", "author": "..."}. Keep it under 30 words. No markdown.`,
-        meta.label
-      );
+      // The quote is decorative — only spend an AI call when access is confirmed.
+      // Anything else (signed out, free tier, still checking) falls back silently
+      // instead of surfacing an error toast on every app open.
+      const out =
+        useAiAccess.getState().access === "ready"
+          ? await useAI.getState().complete(
+              `Give me one short, real, attributable quote about ${meta.prompt}. ` +
+                `Return ONLY JSON: {"quote": "...", "author": "..."}. Keep it under 30 words. No markdown.`,
+              meta.label
+            )
+          : null;
       const parsed = parseQuote(out ?? "");
       const fallbacks = FALLBACKS[category];
       const pick = parsed ?? fallbacks[(state.counts[category] || 0) % fallbacks.length];
