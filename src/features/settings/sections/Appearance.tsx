@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   loadAppearance, saveAppearance, applyAppearance, deriveAccentDim,
-  ACCENT_PRESETS, UI_FONTS, type AppearanceSettings,
+  ACCENT_PRESETS, UI_FONTS, APP_LOOKS, type AppearanceSettings,
 } from "@/services/appearance";
 import { SettingsSection, Field } from "../ui";
 
@@ -20,6 +20,32 @@ export function Appearance() {
 
   return (
     <div className="space-y-6">
+      <SettingsSection title="Look" hint="Retints the whole app and picks the ambient visual shown while the AI works.">
+        <div className="grid gap-2 sm:grid-cols-3">
+          {APP_LOOKS.map((l) => (
+            <button
+              key={l.id}
+              onClick={() => update({ appLook: l.id })}
+              className={`zen-pressable flex flex-col gap-2 rounded-[10px] border p-2.5 text-left ${
+                s.appLook === l.id
+                  ? "border-[var(--accent)]"
+                  : "border-[var(--border)] hover:border-[var(--text-dim)]"
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className="h-14 w-full rounded-[7px] border border-[rgba(255,255,255,0.06)]"
+                style={{ background: l.swatch }}
+              />
+              <span className={`text-sm font-medium ${s.appLook === l.id ? "text-[var(--accent)]" : "text-[var(--text)]"}`}>
+                {l.label}
+              </span>
+              <span className="text-xs leading-snug text-[var(--text-dim)]">{l.hint}</span>
+            </button>
+          ))}
+        </div>
+      </SettingsSection>
+
       <SettingsSection title="Accent" hint="Used for highlights, active controls, and links.">
         <div className="flex flex-wrap items-center gap-2">
           {ACCENT_PRESETS.map((c) => (

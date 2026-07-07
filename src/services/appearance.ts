@@ -23,12 +23,51 @@ export const UI_FONTS: FontOption[] = [
   { id: "mono", label: "Monospace", stack: "ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace" },
 ];
 
+export type AppLook = "zen" | "veil" | "orb";
+
+export interface AppLookOption {
+  id: AppLook;
+  label: string;
+  hint: string;
+  /** Small CSS gradient used as the preview swatch in Settings. */
+  swatch: string;
+}
+
+/**
+ * Whole-app looks. Each retints the shell/surfaces via `data-look` on <html>
+ * (see tokens.css) and swaps the ambient AI-activity background
+ * (AmbientOverlay): Zen keeps the original aurora, Veil uses DarkVeil, Orb a
+ * plasma orb.
+ */
+export const APP_LOOKS: AppLookOption[] = [
+  {
+    id: "zen",
+    label: "Zen",
+    hint: "The original look — graphite surfaces with an aurora while the AI works.",
+    swatch: "linear-gradient(135deg, #17181b 0%, #1d2b45 55%, #7cff67 130%)",
+  },
+  {
+    id: "veil",
+    label: "Veil",
+    hint: "Near-black violet with an ink-wash veil while the AI works.",
+    swatch: "linear-gradient(135deg, #0b0a10 0%, #241a38 60%, #a78bfa 140%)",
+  },
+  {
+    id: "orb",
+    label: "Orb",
+    hint: "Deep-space blue with a plasma orb while the AI works.",
+    swatch: "linear-gradient(135deg, #0a0f1a 0%, #14304a 60%, #4cc9f0 140%)",
+  },
+];
+
 export interface AppearanceSettings {
   accent: string;
   accentDim: string;
   reduceMotion: boolean;
   /** A font id from UI_FONTS. */
   uiFont: string;
+  /** A look id from APP_LOOKS. */
+  appLook: AppLook;
 }
 
 const KEY = "zen.appearance.v1";
@@ -42,7 +81,17 @@ export const APPEARANCE_DEFAULTS: AppearanceSettings = {
   accentDim: "#3b5b8a",
   reduceMotion: false,
   uiFont: "system",
+  appLook: "zen",
 };
+
+/** Fired on window whenever applyAppearance runs, so live UI (e.g. the
+ *  ambient AI overlay) can react without a store. */
+export const APPEARANCE_EVENT = "zen:appearance-applied";
+
+export function getAppLook(): AppLook {
+  const look = loadAppearance().appLook;
+  return APP_LOOKS.some((l) => l.id === look) ? look : "zen";
+}
 
 export function loadAppearance(): AppearanceSettings {
   try {
@@ -83,4 +132,8 @@ export function applyAppearance(s: AppearanceSettings = loadAppearance()): void 
   const font = UI_FONTS.find((f) => f.id === s.uiFont) ?? UI_FONTS[0];
   root.style.setProperty("--font-ui", font.stack);
   root.toggleAttribute("data-reduce-motion", s.reduceMotion);
+  const look = APP_LOOKS.some((l) => l.id === s.appLook) ? s.appLook : "zen";
+  if (look === "zen") root.removeAttribute("data-look");
+  else root.setAttribute("data-look", look);
+  window.dispatchEvent(new CustomEvent(APPEARANCE_EVENT, { detail: s }));
 }

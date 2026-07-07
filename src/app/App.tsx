@@ -4,7 +4,7 @@ import { Sidebar } from "@/features/notes/Sidebar";
 import { NoteSurface } from "@/features/notes/NoteSurface";
 import { FilterBar } from "@/features/filtering/FilterBar";
 import { StatusBar } from "@/shared/ui/StatusBar";
-import { AuroraOverlay } from "@/shared/ui/AuroraOverlay";
+import { AmbientOverlay } from "@/shared/ui/AmbientOverlay";
 import { WindowControls, WindowResizeHandles, IS_TAURI } from "@/shared/ui/WindowChrome";
 import { Home } from "@/features/home/Home";
 import { useHome } from "@/features/home/store";
@@ -203,7 +203,7 @@ export function App() {
       className={`zen-shell flex h-full flex-col ${showHome ? "is-home" : ""} ${showAdmin ? "is-admin" : ""} ${deepWork ? "is-deep-work" : ""}`}
     >
 
-      <AuroraOverlay />
+      <AmbientOverlay />
 
       <WindowResizeHandles />
 

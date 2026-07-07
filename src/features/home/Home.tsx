@@ -766,7 +766,7 @@ function SurfaceCard({
 }) {
   return (
     <div
-      className={`rounded-[22px] border border-[rgba(255,255,255,0.08)] bg-[rgba(35,36,40,0.78)] shadow-[0_12px_30px_rgba(0,0,0,0.18)] backdrop-blur-[6px] ${className}`}
+      className={`rounded-[22px] border border-[rgba(255,255,255,0.08)] bg-[var(--surface-card)] shadow-[0_12px_30px_rgba(0,0,0,0.18)] backdrop-blur-[6px] ${className}`}
       style={style}
     >
       {children}
