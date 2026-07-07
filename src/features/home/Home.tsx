@@ -10,10 +10,10 @@ import {
 } from "@/features/home/store";
 import { DeepWorkV2 } from "@/features/home/deepwork/DeepWorkV2";
 import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
-import { fmtClock, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { fmtClock, nextToReview, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import {
   reconcilePlan as reconcilePlanPure, nextSession, planHealth,
-  fmtPlanDay, fmtStartMin, verdictColor, KIND_META,
+  fmtPlanDay, fmtStartMin, verdictColor, verdictLabel, mostUrgentExam, KIND_META,
 } from "@/features/home/deepwork/studyPlan";
 import { useQuote } from "@/features/home/quote";
 import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
@@ -258,6 +258,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
 
             <div className={`zen-panel-scroll mt-5 grid flex-1 gap-5 pr-1 ${deepWork ? "min-h-0 grid-cols-1" : "xl:grid-cols-[minmax(0,1.55fr)_minmax(14rem,0.45fr)]"}`}>
               <div className={`min-w-0 ${deepWork ? "flex min-h-0 flex-col justify-center" : "space-y-6"}`}>
+                {!deepWork && <ExamFocusHero now={now.getTime()} />}
                 <section className="border-b border-[rgba(255,255,255,0.07)] pb-5">
                   <div className={`grid gap-4 ${deepWork ? "lg:grid-cols-[minmax(0,1.2fr)_minmax(15rem,0.8fr)]" : "lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]"}`}>
                     <div className="space-y-3">
@@ -811,6 +812,74 @@ function DailyQuote() {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * The dashboard's decisive "next academic action": the most urgent exam across
+ * all Deep Work sessions, with days left, evidence-based readiness, the verdict,
+ * the weakest concept, and a one-click jump into that session. Hidden entirely
+ * when no session has an AI-built plan with an exam date.
+ */
+function ExamFocusHero({ now }: { now: number }) {
+  const sessions = useDeepWork((s) => s.sessions);
+  const order = useDeepWork((s) => s.order);
+  const switchSession = useDeepWork((s) => s.switchSession);
+  const setManualDeepWork = useHome((s) => s.setManualDeepWork);
+  const select = useNotes((s) => s.select);
+
+  const focus = useMemo(
+    () => mostUrgentExam(sessionList({ sessions, order }).filter((s) => !s.archived), now),
+    [sessions, order, now]
+  );
+  if (!focus) return null;
+
+  const weak = nextToReview(sessions[focus.sessionId]?.backbone ?? null, now);
+  const h = focus.health;
+  const color = verdictColor(h);
+  const dayLabel = h.daysLeft === 0 ? "Exam today" : h.daysLeft === 1 ? "Exam tomorrow" : `Exam in ${h.daysLeft} days`;
+
+  function studyNow() {
+    select(null);
+    switchSession(focus!.sessionId);
+    setManualDeepWork(true);
+  }
+
+  return (
+    <section
+      className="rounded-[16px] border p-4"
+      style={{ borderColor: `${color}55`, background: `${color}0f` }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="zen-meta text-[11px] uppercase tracking-[0.24em]">Exam focus</div>
+          <div className="mt-1 truncate text-lg font-semibold text-[var(--text)]">
+            {focus.plan.goal || focus.sessionName}
+          </div>
+        </div>
+        <span
+          className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums"
+          style={{ color, border: `1px solid ${color}` }}
+        >
+          {dayLabel}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--text-dim)]">
+        <span className="font-medium tabular-nums" style={{ color }}>{h.effectiveReadiness}% ready</span>
+        <span>· {verdictLabel(h)}</span>
+        {weak && (
+          <span className="min-w-0">· weakest: <span className="text-[var(--text)]">{weak.title}</span></span>
+        )}
+      </div>
+      <div className="mt-3">
+        <button
+          className="zen-pressable zen-shine rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(96,165,250,0.24)] hover:brightness-105"
+          onClick={studyNow}
+        >
+          Study now
+        </button>
+      </div>
+    </section>
   );
 }
 

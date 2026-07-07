@@ -355,3 +355,54 @@ export function verdictColor(h: PlanHealth): string {
   if (h.verdict === "ahead") return "#4ade80";
   return "#60A5FA";
 }
+
+// ── Cross-session exam focus (drives the Home dashboard hero) ─────────────────
+
+/** Minimal shape of a Deep Work session the exam aggregator needs. */
+export interface ExamCandidate {
+  id: string;
+  name: string;
+  plan?: StudyPlan | null;
+  backbone?: StudyBackbone | null;
+}
+
+export interface UrgentExam {
+  sessionId: string;
+  sessionName: string;
+  plan: StudyPlan;
+  health: PlanHealth;
+}
+
+const VERDICT_RANK: Record<PlanHealth["verdict"], number> = {
+  overcommitted: 0,
+  "at-risk": 1,
+  "on-track": 2,
+  ahead: 3,
+};
+
+/**
+ * The single most urgent upcoming exam across all Deep Work sessions: the nearest
+ * deadline wins, ties broken by the worse verdict, then lower readiness. Only
+ * sessions with a plan that has an exam date and a backbone qualify, and passed
+ * exams are excluded (their next action lives in the session's re-plan flow, not
+ * the dashboard hero). Returns null when nothing qualifies.
+ */
+export function mostUrgentExam(sessions: ExamCandidate[], now: number): UrgentExam | null {
+  const candidates = sessions
+    .filter((s): s is ExamCandidate & { plan: StudyPlan } => !!s.plan?.examDate && !!s.backbone)
+    .map((s) => ({
+      sessionId: s.id,
+      sessionName: s.name,
+      plan: s.plan,
+      health: planHealth(s.plan, s.backbone ?? null, now),
+    }))
+    .filter((c) => c.health.daysLeft >= 0);
+  if (!candidates.length) return null;
+  candidates.sort(
+    (a, b) =>
+      a.health.daysLeft - b.health.daysLeft ||
+      VERDICT_RANK[a.health.verdict] - VERDICT_RANK[b.health.verdict] ||
+      a.health.effectiveReadiness - b.health.effectiveReadiness
+  );
+  return candidates[0];
+}
