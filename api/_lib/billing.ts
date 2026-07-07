@@ -53,6 +53,9 @@ export async function subscriptionFor(userId: string): Promise<SubscriptionRecor
   if (external) {
     const active = ["active", "trialing"].includes(String(external.subscriptionStatus ?? "").toLowerCase());
     const plan = String(external.activePlan ?? "").toLowerCase();
+    // Canonical plan names are "basic" and "plus". The extra keywords are legacy
+    // values that may still exist on older website records — kept only so those
+    // subscribers don't silently lose access; never shown in the UI.
     const tier: SubscriptionTier = !active ? "free"
       : ["plus", "claude", "anthropic"].includes(plan) ? "plus"
       : ["basic", "deepseek"].includes(plan) ? "basic" : "free";
@@ -85,9 +88,41 @@ export function budgetUsdFor(tier: SubscriptionTier): number {
   return 0;
 }
 
+/**
+ * Models each tier may use. The FIRST entry is the tier's default when the
+ * client doesn't request a specific (allowed) model. Basic gets Flash only;
+ * Plus can choose Pro (default) or the cheaper/faster Flash.
+ */
+const TIER_MODELS: Record<SubscriptionTier, DeepSeekModel[]> = {
+  free: [],
+  basic: ["deepseek-v4-flash"],
+  plus: ["deepseek-v4-pro", "deepseek-v4-flash"],
+};
+
+export function modelsFor(tier: SubscriptionTier): DeepSeekModel[] {
+  return TIER_MODELS[tier];
+}
+
+/** The tier's default model (used when no valid model is requested). */
 export function modelFor(tier: SubscriptionTier): DeepSeekModel {
-  if (tier === "plus") return "deepseek-v4-pro";
-  return "deepseek-v4-flash";
+  return TIER_MODELS[tier][0] ?? "deepseek-v4-flash";
+}
+
+/** Normalize a client-requested model, tolerating short aliases. */
+export function normalizeModel(requested: unknown): DeepSeekModel | null {
+  const value = String(requested ?? "").toLowerCase();
+  if (value === "deepseek-v4-pro" || value === "pro") return "deepseek-v4-pro";
+  if (value === "deepseek-v4-flash" || value === "flash") return "deepseek-v4-flash";
+  return null;
+}
+
+/** Enforce the tier's allowed set: an out-of-tier or absent request falls back
+ *  to the tier default, so a modified client can never exceed what it pays for. */
+export function resolveModel(tier: SubscriptionTier, requested?: unknown): DeepSeekModel {
+  const allowed = TIER_MODELS[tier];
+  const normalized = normalizeModel(requested);
+  if (normalized && allowed.includes(normalized)) return normalized;
+  return allowed[0] ?? "deepseek-v4-flash";
 }
 
 export function costPicoUsd(model: DeepSeekModel, usage: DeepSeekUsage): number {
@@ -108,11 +143,11 @@ export function estimatePicoUsd(model: DeepSeekModel, payload: Record<string, un
   return Math.ceil(inputUpperBound * price.miss + maxOutput * price.output);
 }
 
-export async function reserveAIRequest(userId: string, payload: Record<string, unknown>) {
+export async function reserveAIRequest(userId: string, payload: Record<string, unknown>, requestedModel?: unknown) {
   const subscription = await subscriptionFor(userId);
   // Hard stop comes first; free never reaches model, budget, or provider logic.
-  if (subscription.tier === "free") throw Object.assign(new Error("AI features require a DeepSeek or Claude subscription."), { code: "subscription_required", status: 402 });
-  const model = modelFor(subscription.tier);
+  if (subscription.tier === "free") throw Object.assign(new Error("AI features require a Basic or Plus subscription."), { code: "subscription_required", status: 402 });
+  const model = resolveModel(subscription.tier, requestedModel);
   const budgetUsd = budgetUsdFor(subscription.tier);
   const budgetPicoUsd = budgetUsd * 1_000_000_000_000;
   const reservedPicoUsd = estimatePicoUsd(model, payload);

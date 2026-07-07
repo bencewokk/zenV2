@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { linkifyCitations } from "@/features/ai/citations";
 import { useAI, type ToolTone, type ChatTurn } from "@/features/ai/store";
-import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
+import { useAiAccess, aiBlocked, aiBlockedMessage, availableModels, MODEL_LABEL, type AiModel } from "@/features/ai/access";
 import { useNotes } from "@/features/notes/store";
 import { useHome } from "@/features/home/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
@@ -62,7 +62,11 @@ export function ChatPanel() {
   const deleteConversation = useAI((s) => s.deleteConversation);
   const memStatus = useMemoryStatus();
   const aiAccess = useAiAccess((s) => s.access);
+  const tier = useAiAccess((s) => s.tier);
+  const modelPref = useAI((s) => s.modelPref);
+  const setModelPref = useAI((s) => s.setModelPref);
   const blocked = aiBlocked(aiAccess);
+  const models = availableModels(tier);
 
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
@@ -175,7 +179,24 @@ export function ChatPanel() {
 
       {/* Secondary row: model + memory · profile / delete (all muted) */}
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-1 text-[11px] text-[var(--text-dim)]">
-        <span title="Your subscription selects DeepSeek V4 Flash or V4 Pro">Plan-selected DeepSeek</span>
+        {models.length > 1 ? (
+          <span className="inline-flex items-center gap-0.5 rounded-[6px] bg-[var(--bg-elev)] p-0.5" title="Pick your model — Pro is strongest; Flash is faster and cheaper against your monthly budget">
+            {models.map((m: AiModel) => (
+              <button
+                key={m}
+                className={`rounded-[4px] px-1.5 py-0.5 ${modelPref === m ? "bg-[var(--accent-dim)] text-[var(--text)]" : "hover:text-[var(--text)]"}`}
+                onClick={() => setModelPref(m)}
+                title={MODEL_LABEL[m]}
+              >
+                {m === "pro" ? "Pro" : "Flash"}
+              </button>
+            ))}
+          </span>
+        ) : (
+          <span title={models[0] ? MODEL_LABEL[models[0]] : "Your Zen plan selects the AI model"}>
+            {models[0] ? MODEL_LABEL[models[0]] : "DeepSeek"}
+          </span>
+        )}
         <UsageBadge
           promptTokens={conversations.find((c) => c.id === activeId)?.promptTokens}
           completionTokens={conversations.find((c) => c.id === activeId)?.completionTokens}

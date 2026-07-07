@@ -296,8 +296,9 @@ The tone should be honest and useful. Zen should not flatter the user with optim
 
 ## AI Assistant
 
-- Streaming chat with model/provider abstraction.
-- Subscription-backed AI usage and quotas.
+- Streaming chat powered by DeepSeek through Zen's authenticated backend (no client API keys).
+- Subscription-backed AI usage and quotas (see Subscription And AI Access).
+- When AI is unavailable for the account (signed out or Free tier), AI-driven surfaces degrade honestly — the chat composer, Startup Brief, quotes, and Study tutor/quiz/plan actions explain the reason and link to Settings instead of failing on click.
 - Context-aware prompts over notes, PDFs, Deep Work material, memory, calendar, mail, Canvas, and connected sources.
 - Inline note actions.
 - Tool calling with read-only tools, local study auto-tools, and configurable mutation tools.
@@ -314,8 +315,9 @@ The tone should be honest and useful. Zen should not flatter the user with optim
 - User-configurable mutation tools can be disabled, auto-run, or require approval.
 - Tool-call descriptions resolve IDs into human-readable note, event, mail, memory, PDF, and source labels.
 - Tool argument parsing repairs common invalid JSON produced by LaTeX backslashes.
-- AI settings include model/provider behavior and secret-field filtering for sync.
+- AI settings include behavior/tool policy and secret-field filtering for sync.
 - AI usage service reports tier, period, budgets, and metered status.
+- Plus accounts can switch between DeepSeek V4 Pro and Flash from the chat panel; the choice is enforced server-side against the tier.
 
 ## AI Tool Catalog
 
@@ -436,7 +438,7 @@ Zen's assistant can currently use tools for:
 - Serverless sync backend supports notes, AI, Deep Work, study log, workspace, PDFs, quizzes, memory, appearance, tool policy, AI settings, Google settings, Canvas settings, and external connections.
 - Last-write-wins sync over MongoDB-backed collections.
 - PDF binaries use chunked upload and GridFS storage.
-- Subscription tiers determine AI access and budgets.
+- Subscription tiers determine AI access, model, and budgets (see Subscription And AI Access).
 - AI requests are metered and rate-limited.
 - Settings distinguish local-only secrets from syncable non-secret configuration.
 - Sync can start, stop, clear state, track high-water cursors, track dirty records, and sync blob-style stores.
@@ -444,9 +446,30 @@ Zen's assistant can currently use tools for:
 - Sync rejects oversized docs and unknown collections.
 - Sync supports tombstones for deletions.
 - Account service exposes logged-out, no-paid-account, active, trialing, past-due, unpaid, canceled, and expired access states.
-- Subscription tiers include free, basic, and plus.
-- AI model selection can depend on subscription tier.
 - AI usage reservations can be created, accepted, settled, and reconciled.
+
+## Subscription And AI Access
+
+Zen has exactly three subscription tiers. There is no Claude/Anthropic plan — all AI is DeepSeek, routed through Zen's authenticated backend.
+
+| Tier | AI | Model(s) | Monthly budget |
+| --- | --- | --- | --- |
+| Free | None | — | $0 |
+| Basic | Yes | DeepSeek V4 Flash | $5 |
+| Plus | Yes | DeepSeek V4 Pro (default) or Flash | $25 |
+
+- The tier is read from the website-managed account tied to the user's Google identity; Free is a hard stop before any provider or quota check.
+- The tier's allowed model set is enforced server-side on every request. The client may *request* a model, but an out-of-tier request is downgraded to the tier default — a modified desktop client cannot exceed what it pays for.
+- Plus users choose Pro or Flash from the chat panel (Flash is cheaper/faster against the monthly budget). Basic is Flash-only.
+- Budgets are reserved atomically per request and settled against actual DeepSeek token cost (cache-hit, cache-miss, output); interrupted requests are reconciled by the health job.
+- Budget overrides: `AI_BUDGET_BASIC_USD`, `AI_BUDGET_PLUS_USD`.
+
+## Global Search And Navigation
+
+- Command palette (Ctrl/Cmd+K) searches notes (title and body, with snippets), PDFs, connected sources, and Deep Work sessions, plus quick navigation actions.
+- Empty-query palette shows a recent-items jump list.
+- Note deletion is reversible via an Undo toast that restores the note and re-attaches its children.
+- Status-bar connection badges link into Settings to fix an errored or off state.
 
 ## Production And Release
 

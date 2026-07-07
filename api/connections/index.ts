@@ -6,7 +6,7 @@ import { enforceRequestRateLimit } from "../_lib/limits.js";
 
 const PROVIDERS = new Set<VaultProvider>(["ai", "canvas", "zotero", "github"]);
 const ALLOWED_CREDENTIALS: Record<VaultProvider, Set<string>> = {
-  ai: new Set(["apiKey", "anthropicApiKey"]),
+  ai: new Set(["apiKey"]),
   canvas: new Set(["accessToken"]), zotero: new Set(["apiKey"]), github: new Set(["token"]),
 };
 

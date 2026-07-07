@@ -42,8 +42,8 @@ export async function backupConnectionsToVault(): Promise<VaultProvider[]> {
   const ai = loadAiSettings();
   const canvas = loadCanvasSettings();
   const external = loadExternalConnectionSettings();
-  if (ai.apiKey.trim() || ai.anthropicApiKey.trim()) {
-    await put("ai", { ...(ai.apiKey.trim() ? { apiKey: ai.apiKey } : {}), ...(ai.anthropicApiKey.trim() ? { anthropicApiKey: ai.anthropicApiKey } : {}) }, { provider: ai.provider, baseUrl: ai.baseUrl, model: ai.model }); saved.push("ai");
+  if (ai.apiKey.trim()) {
+    await put("ai", { apiKey: ai.apiKey }, { provider: ai.provider, baseUrl: ai.baseUrl, model: ai.model }); saved.push("ai");
   }
   if (canvas.accessToken.trim()) {
     await put("canvas", { accessToken: canvas.accessToken }, { baseUrl: canvas.baseUrl }); saved.push("canvas");
@@ -65,7 +65,7 @@ export async function restoreConnectionsFromVault(): Promise<VaultProvider[]> {
     const meta = connection.payload.metadata ?? {};
     if (connection.provider === "ai") {
       const current = loadAiSettings();
-      saveAiSettings({ ...current, apiKey: connection.payload.credentials.apiKey ?? current.apiKey, anthropicApiKey: connection.payload.credentials.anthropicApiKey ?? current.anthropicApiKey, provider: meta.provider === "anthropic" ? "anthropic" : "deepseek", baseUrl: String(meta.baseUrl ?? current.baseUrl), model: String(meta.model ?? current.model) });
+      saveAiSettings({ ...current, apiKey: connection.payload.credentials.apiKey ?? current.apiKey, provider: "deepseek", baseUrl: String(meta.baseUrl ?? current.baseUrl), model: String(meta.model ?? current.model) });
       restored.push("ai");
     } else if (connection.provider === "canvas" && connection.payload.credentials.accessToken) {
       const current = loadCanvasSettings();
@@ -93,7 +93,7 @@ export async function reconcileConnectionVault(): Promise<VaultProvider[]> {
   const ai = loadAiSettings();
   const canvas = loadCanvasSettings();
   const external = loadExternalConnectionSettings();
-  if (!providers.has("ai") && (ai.apiKey || ai.anthropicApiKey)) await put("ai", { ...(ai.apiKey ? { apiKey: ai.apiKey } : {}), ...(ai.anthropicApiKey ? { anthropicApiKey: ai.anthropicApiKey } : {}) }, { provider: ai.provider, baseUrl: ai.baseUrl, model: ai.model });
+  if (!providers.has("ai") && ai.apiKey) await put("ai", { apiKey: ai.apiKey }, { provider: ai.provider, baseUrl: ai.baseUrl, model: ai.model });
   if (!providers.has("canvas") && canvas.accessToken) await put("canvas", { accessToken: canvas.accessToken }, { baseUrl: canvas.baseUrl });
   if (!providers.has("zotero") && external.zoteroApiKey) await put("zotero", { apiKey: external.zoteroApiKey }, { libraryType: external.zoteroLibraryType, libraryId: external.zoteroLibraryId, collectionKeys: external.zoteroCollectionKeys });
   if (!providers.has("github") && external.githubToken) await put("github", { token: external.githubToken }, { repositories: external.githubRepositories, excludePatterns: external.githubExcludePatterns });
@@ -107,7 +107,7 @@ export async function deleteVaultConnection(provider: VaultProvider): Promise<vo
 /** Remove restored secrets when the Google owner leaves this device. */
 export function clearLocalConnectionSecrets(): void {
   const ai = loadAiSettings();
-  saveAiSettings({ ...ai, apiKey: "", anthropicApiKey: "" });
+  saveAiSettings({ ...ai, apiKey: "" });
   const canvas = loadCanvasSettings();
   saveCanvasSettings({ ...canvas, accessToken: "" });
   const external = loadExternalConnectionSettings();

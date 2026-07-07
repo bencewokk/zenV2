@@ -7,6 +7,7 @@ import { loadSettings } from "@/services/ai/settings";
 import { memoryContext, recordActivity, recall, formatRecall } from "@/services/memory";
 import { useNotes } from "@/features/notes/store";
 import { useStatus } from "@/shared/stores/status";
+import { useAiAccess, availableModels, MODEL_ID, type AiModel } from "@/features/ai/access";
 import { notify } from "@/shared/ui/notify";
 import { markBlobDirty } from "@/services/sync/cursor";
 import { ensureSourcesLoaded, searchConnectedSources } from "@/services/sources/store";
@@ -136,6 +137,21 @@ function readOpen(): boolean {
   try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; }
 }
 
+const MODEL_PREF_KEY = "zen.ai.model-pref.v1";
+function readModelPref(): AiModel {
+  try { return localStorage.getItem(MODEL_PREF_KEY) === "flash" ? "flash" : "pro"; } catch { return "pro"; }
+}
+
+/** The DeepSeek model id to request: the user's preference, clamped to what their
+ *  tier actually allows (the gateway enforces this too, but sending the right id
+ *  keeps the usage breakdown honest). */
+function requestModelId(): string {
+  const pref = useAI.getState().modelPref;
+  const allowed = availableModels(useAiAccess.getState().tier);
+  const model = allowed.includes(pref) ? pref : allowed[0] ?? "flash";
+  return MODEL_ID[model];
+}
+
 // Holds the resolver while we wait for the user to answer an ask_user question.
 let questionResolver: ((choice: string) => void) | null = null;
 
@@ -172,6 +188,9 @@ interface AIState {
   streaming: boolean;
   model: string;
   models: string[];
+  /** Which DeepSeek model to use (Plus only; Basic is Flash-only). */
+  modelPref: AiModel;
+  setModelPref: (m: AiModel) => void;
   controller: AbortController | null;
   proposals: Proposal[];
   pendingQuestion: PendingQuestion | null;
@@ -362,7 +381,7 @@ export const useAI = create<AIState>((set, get) => {
         const turnIndex = get().turns.length - 1;
         let acc = "";
         boundContext(messages);
-        const gen = streamChatWithTools(messages, get().model, activeTools, controller.signal);
+        const gen = streamChatWithTools(messages, requestModelId(), activeTools, controller.signal);
         let reply: AssistantReply;
         for (;;) {
           const next = await gen.next();
@@ -503,6 +522,7 @@ export const useAI = create<AIState>((set, get) => {
   streaming: false,
   model: loadSettings().model,
   models: [],
+  modelPref: readModelPref(),
   controller: null,
   proposals: [],
   pendingQuestion: null,
@@ -522,6 +542,10 @@ export const useAI = create<AIState>((set, get) => {
   },
   setModel(m) {
     set({ model: m });
+  },
+  setModelPref(m) {
+    try { localStorage.setItem(MODEL_PREF_KEY, m); } catch { /* ignore */ }
+    set({ modelPref: m });
   },
 
   async refreshModels() {
@@ -658,7 +682,7 @@ export const useAI = create<AIState>((set, get) => {
     useStatus.getState().set({ ai: "busy" });
     try {
       let out = "";
-      const gen = streamChatWithTools(messages, get().model, [], controller.signal);
+      const gen = streamChatWithTools(messages, requestModelId(), [], controller.signal);
       for (;;) {
         const next = await gen.next();
         if (next.done) break;
@@ -731,7 +755,7 @@ async function nameConversation(id: string): Promise<void> {
         { role: "system", content: "Generate a concise 3-5 word title for this conversation. Reply with ONLY the title — no quotes, no trailing punctuation." },
         { role: "user", content: `User: ${firstUser}\nAssistant: ${firstAsst}`.slice(0, 1500) },
       ],
-      useAI.getState().model,
+      requestModelId(),
       []
     );
     const ai = (reply.content ?? "").trim().replace(/^["']|["']$/g, "").slice(0, 50);

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { isSignedIn, onAuthChange } from "@/services/google/auth";
-import { loadAIUsageStatus, AIUsageError } from "@/services/ai/usage";
+import { loadAIUsageStatus, AIUsageError, type SubscriptionTier } from "@/services/ai/usage";
 
 /**
  * One app-wide answer to "can AI requests work for this account right now?".
@@ -8,6 +8,20 @@ import { loadAIUsageStatus, AIUsageError } from "@/services/ai/usage";
  * degrade honestly (explain + link to the fix) instead of offering live buttons
  * that fail with a toast.
  */
+/** Short model handle used across the client UI. */
+export type AiModel = "pro" | "flash";
+
+/** DeepSeek model id sent to the gateway (which validates it against the tier). */
+export const MODEL_ID: Record<AiModel, string> = {
+  pro: "deepseek-v4-pro",
+  flash: "deepseek-v4-flash",
+};
+
+export const MODEL_LABEL: Record<AiModel, string> = {
+  pro: "DeepSeek V4 Pro",
+  flash: "DeepSeek V4 Flash",
+};
+
 export type AiAccess =
   | "unknown" // not checked yet
   | "checking"
@@ -18,27 +32,37 @@ export type AiAccess =
 
 interface AiAccessState {
   access: AiAccess;
+  /** The account's subscription tier once known — drives model choices. */
+  tier: SubscriptionTier | null;
   refresh: () => Promise<void>;
 }
 
 export const useAiAccess = create<AiAccessState>((set) => ({
   access: "unknown",
+  tier: null,
 
   async refresh() {
     if (!isSignedIn()) {
-      set({ access: "signed-out" });
+      set({ access: "signed-out", tier: null });
       return;
     }
     set({ access: "checking" });
     try {
       const status = await loadAIUsageStatus();
-      set({ access: status.tier === "free" ? "no-plan" : "ready" });
+      set({ access: status.tier === "free" ? "no-plan" : "ready", tier: status.tier });
     } catch (error) {
       const code = error instanceof AIUsageError ? error.code : "";
-      set({ access: code === "subscription_required" ? "signed-out" : "unreachable" });
+      set({ access: code === "subscription_required" ? "signed-out" : "unreachable", tier: null });
     }
   },
 }));
+
+/** Models the account may request. Plus can pick Pro or Flash; Basic is Flash-only. */
+export function availableModels(tier: SubscriptionTier | null): AiModel[] {
+  if (tier === "plus") return ["pro", "flash"];
+  if (tier === "basic") return ["flash"];
+  return [];
+}
 
 let watching = false;
 

@@ -6,12 +6,11 @@ const DEEPSEEK_API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY ?? "";
 
 /** AI configuration persisted locally (DESIGN.md ai_config). */
 export interface AISettings {
-  provider: "deepseek" | "anthropic";
+  provider: "deepseek";
   apiKey: string;
   /** Base path for the DeepSeek API. In dev this is the Vite proxy prefix. */
   baseUrl: string;
   model: string;
-  anthropicApiKey: string;
   /** Max agent-loop iterations per message (tool call rounds). */
   maxToolSteps: number;
   /** How many conversations to keep in history. */
@@ -29,14 +28,13 @@ export interface AISettings {
 const KEY = "zen.ai.settings.v1";
 export const AI_SETTINGS_KEY = KEY;
 /** Fields that must never leave this device — stripped before sync push. */
-export const AI_SETTINGS_SECRET_FIELDS = ["apiKey", "anthropicApiKey"] as const;
+export const AI_SETTINGS_SECRET_FIELDS = ["apiKey"] as const;
 
 const DEFAULTS: AISettings = {
   provider: "deepseek",
   apiKey: DEEPSEEK_API_KEY,
   baseUrl: "/deepseek", // Vite dev proxy → https://api.deepseek.com
   model: "deepseek-chat",
-  anthropicApiKey: "",
   maxToolSteps: 20, // agentic study tasks (locating many topics, building a quiz) need headroom
   maxConversations: 30,
   freeSlotDayStart: 9,

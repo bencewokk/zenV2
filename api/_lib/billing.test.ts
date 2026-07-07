@@ -1,10 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { costPicoUsd, currentPeriod, estimatePicoUsd, modelFor, periodFor } from "./billing.js";
+import { costPicoUsd, currentPeriod, estimatePicoUsd, modelFor, modelsFor, resolveModel, periodFor } from "./billing.js";
 
 describe("AI billing rules", () => {
   it("keeps tier model access deterministic", () => {
     expect(modelFor("basic")).toBe("deepseek-v4-flash");
     expect(modelFor("plus")).toBe("deepseek-v4-pro");
+  });
+
+  it("exposes each tier's allowed model set", () => {
+    expect(modelsFor("free")).toEqual([]);
+    expect(modelsFor("basic")).toEqual(["deepseek-v4-flash"]);
+    expect(modelsFor("plus")).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
+  });
+
+  it("enforces the tier's allowed models against client requests", () => {
+    // Plus may pick either model (accepts short aliases and canonical ids).
+    expect(resolveModel("plus", "flash")).toBe("deepseek-v4-flash");
+    expect(resolveModel("plus", "deepseek-v4-pro")).toBe("deepseek-v4-pro");
+    // Basic cannot escalate to Pro — it is downgraded to its only allowed model.
+    expect(resolveModel("basic", "pro")).toBe("deepseek-v4-flash");
+    // Absent/garbage requests fall back to the tier default.
+    expect(resolveModel("plus")).toBe("deepseek-v4-pro");
+    expect(resolveModel("basic", "nonsense")).toBe("deepseek-v4-flash");
   });
 
   it("uses subscription-cycle keys when a future period end exists", () => {

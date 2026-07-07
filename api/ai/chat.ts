@@ -34,11 +34,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let reservationId: string | null = null;
   let acceptedHoldPicoUsd: number | null = null;
   try {
-    const body = (req.body ?? {}) as { provider?: string; payload?: Record<string, unknown> };
+    const body = (req.body ?? {}) as { provider?: string; model?: unknown; payload?: Record<string, unknown> };
     if (body.provider !== "deepseek") throw Object.assign(new Error("Only DeepSeek is supported."), { status: 400, code: "invalid_provider" });
     if (!body.payload || typeof body.payload !== "object") throw Object.assign(new Error("payload required"), { status: 400, code: "invalid_request" });
     const payload = { ...body.payload, max_tokens: Math.min(8192, Math.max(1, Number(body.payload.max_tokens ?? 8192))), stream_options: body.payload.stream ? { include_usage: true } : undefined };
-    const reservation = await reserveAIRequest(userId, payload);
+    // The requested model is only a preference — reserveAIRequest enforces the
+    // tier's allowed set, so an out-of-tier request is downgraded server-side.
+    const reservation = await reserveAIRequest(userId, payload, body.model);
     reservationId = reservation.reservationId;
     const upstream = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",

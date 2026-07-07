@@ -33,7 +33,7 @@ scoped to the token's Google account (`sub`).
 
 `:collection ∈ { notes, ai, deepwork, studylog, workspace, pdfs, quiz, memoryProfile,
 memoryEntries, appearance, toolPolicy, aiSettings, googleSettings }`. The last two
-are filtered client-side before push — `apiKey`/`anthropicApiKey` and `clientSecret`
+are filtered client-side before push — `apiKey` and `clientSecret`
 never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
 
 ## Setup
@@ -53,14 +53,16 @@ never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
 The existing `users` collection is authoritative. The API matches Google identity using
 `googleSub`, accepts `active` or `trialing` subscriptions, and maps plans as follows:
 
-- `deepseek` or `basic` → Basic
-- `claude`, `anthropic`, or `plus` → Plus (legacy plan names; still powered by DeepSeek)
+- `basic` → Basic (also accepts the legacy `deepseek` keyword)
+- `plus` → Plus (also accepts the legacy `claude`/`anthropic` keywords)
 - missing/inactive/unknown → Free (AI hard stop)
 
 Budgets live in `ai_usage_budgets`, keyed by `{ userId, period }`, where period is UTC
-`YYYY-MM`. DeepSeek/Basic uses `deepseek-v4-flash` with a $5 monthly budget; the legacy
-Claude/Plus plan uses `deepseek-v4-pro` with a $25 monthly budget. Override with
-`AI_BUDGET_BASIC_USD` and `AI_BUDGET_PLUS_USD`. Actual spend is calculated from provider
-token usage using the current V4 cache-hit, cache-miss, and output prices.
+`YYYY-MM`. Basic uses `deepseek-v4-flash` with a $5 monthly budget; Plus defaults to
+`deepseek-v4-pro` and may switch to `deepseek-v4-flash`, with a $25 monthly budget.
+Override budgets with `AI_BUDGET_BASIC_USD` and `AI_BUDGET_PLUS_USD`. The requested model
+is validated against the tier's allowed set server-side, so a modified client can never
+exceed its tier. Actual spend is calculated from provider token usage using the current V4
+cache-hit, cache-miss, and output prices.
 
 `npm run typecheck` validates the handlers without emitting.
