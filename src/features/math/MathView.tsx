@@ -3,93 +3,93 @@ import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import type { MathfieldElement } from "mathlive";
 import "mathlive";
 import "@/features/math/setup";
-import { MathField } from "@/features/math/MathField";
 import { useMathCheck } from "@/features/math/checkStore";
-import { checkAnswer, checkDerivation, type Verdict } from "@/features/math/cas";
-import { renderLatex } from "@/shared/lib/renderMarkdown";
+import { checkDerivation, type DerivationStep } from "@/features/math/cas";
+import { sympyCheckDerivation } from "@/features/math/sympy";
 
-const VERDICT_LABEL: Record<Verdict, string> = {
-  correct: "Correct",
-  equivalent: "Equivalent ✓",
-  wrong: "Not the expected answer",
-  empty: "Type your answer…",
-  unknown: "",
-};
+type DerivationIssue =
+  | { kind: "bad"; line: number; note: string }
+  | { kind: "unknown"; line: number; note: string }
+  | { kind: "ok" };
+
+function firstDerivationIssue(derivation: { lines: string[]; steps: DerivationStep[] } | null): DerivationIssue | null {
+  if (!derivation || derivation.lines.length < 2) return null;
+  for (let i = 1; i < derivation.lines.length; i++) {
+    if (derivation.steps[i]?.verdict === "wrong")
+      return { kind: "bad", line: i + 1, note: derivation.steps[i].note ?? "doesn't follow from the line above." };
+  }
+  for (let i = 1; i < derivation.lines.length; i++) {
+    const step = derivation.steps[i];
+    if (step?.verdict === "unknown" && step.note) return { kind: "unknown", line: i + 1, note: step.note };
+  }
+  return { kind: "ok" };
+}
 
 /**
- * Shared NodeView for math nodes — renders an editable MathLive field.
- * The LaTeX lives in the node's `latex` attribute (persisted with the doc).
+ * Shared NodeView for math nodes. The Math Checker now checks derivation steps
+ * only; answer keys/expected targets are intentionally not exposed in notes.
  */
 export function MathView({ node, updateAttributes, selected, extension, editor, getPos }: NodeViewProps) {
   const ref = useRef<MathfieldElement | null>(null);
   const inline = extension.name === "mathInline";
-
-  // ── Math Checker ──
   const checkOn = useMathCheck((s) => s.enabled);
-  const [editingTarget, setEditingTarget] = useState(false);
-  const target: string = node.attrs.target ?? "";
-  // Live verdict (only when the checker is on and this block has a target).
-  const result = useMemo(
-    () => (checkOn && target.trim() ? checkAnswer(node.attrs.latex ?? "", target) : null),
-    [checkOn, target, node.attrs.latex]
-  );
-  const verdictClass =
-    result && (result.verdict === "correct" || result.verdict === "equivalent")
-      ? "zen-check-ok"
-      : result && result.verdict === "wrong"
-        ? "zen-check-bad"
-        : "";
-  const showPanel = checkOn && (selected || editingTarget);
-  const showVerdict = !!result && result.verdict !== "unknown";
-  const setTarget = (latex: string) => updateAttributes({ target: latex });
-  const clearTarget = () => {
-    updateAttributes({ target: "" });
-    setEditingTarget(false);
-  };
+  const latex: string = node.attrs.latex ?? "";
+  const [sympyDerivation, setSympyDerivation] = useState<{
+    key: string;
+    loading: boolean;
+    value: { lines: string[]; steps: DerivationStep[] } | null;
+    error?: string;
+  } | null>(null);
 
-  // Derivation rail — for a multi-line block equation, check each line follows from
-  // the one above. Independent of `target` (that checks the final answer).
   const derivation = useMemo(
-    () => (checkOn && !inline ? checkDerivation(node.attrs.latex ?? "") : null),
-    [checkOn, inline, node.attrs.latex]
+    () => (checkOn && !inline ? checkDerivation(latex) : null),
+    [checkOn, inline, latex]
   );
-  // Compact status instead of a full mirror: surface only the first step that
-  // breaks (or can't be confirmed); otherwise just "each step follows".
-  const derivIssue = useMemo(() => {
-    if (!derivation || derivation.lines.length < 2) return null;
-    for (let i = 1; i < derivation.lines.length; i++) {
-      if (derivation.steps[i]?.verdict === "wrong")
-        return { kind: "bad" as const, line: i + 1, note: derivation.steps[i].note ?? "doesn’t follow from the line above." };
-    }
-    for (let i = 1; i < derivation.lines.length; i++) {
-      const s = derivation.steps[i];
-      if (s?.verdict === "unknown" && s.note)
-        return { kind: "unknown" as const, line: i + 1, note: s.note };
-    }
-    return { kind: "ok" as const };
-  }, [derivation]);
+  const derivIssue = useMemo(() => firstDerivationIssue(derivation), [derivation]);
+  const derivationKey = latex;
 
-  // The expected-answer row shows while editing or once there's a verdict; the
-  // whole bar appears for that, or to flag a broken step.
-  const showExpected = showPanel || showVerdict;
-  // Only a genuinely broken step forces the bar open — "couldn't verify" stays
-  // silent so a correct-but-unprovable line doesn't look like a problem.
-  const showBar = !inline && checkOn && (showExpected || derivIssue?.kind === "bad");
+  useEffect(() => {
+    if (!checkOn || inline || !latex.trim() || !derivation || derivation.lines.length < 2 || derivIssue?.kind === "ok") {
+      setSympyDerivation(null);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      setSympyDerivation({ key: derivationKey, loading: true, value: null });
+      void sympyCheckDerivation(latex)
+        .then((next) => {
+          if (alive) setSympyDerivation({ key: derivationKey, loading: false, value: next });
+        })
+        .catch((error: Error) => {
+          if (alive) setSympyDerivation({ key: derivationKey, loading: false, value: null, error: error.message });
+        });
+    }, 550);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [checkOn, derivation, derivationKey, derivIssue?.kind, inline, latex]);
+
+  const activeSympyDerivation = sympyDerivation?.key === derivationKey ? sympyDerivation : null;
+  const effectiveDerivIssue = activeSympyDerivation?.value ? firstDerivationIssue(activeSympyDerivation.value) : derivIssue;
+  const sympyLoading = !!activeSympyDerivation?.loading;
+  const sympyError = activeSympyDerivation?.error;
+  const verdictClass = effectiveDerivIssue?.kind === "bad" ? "zen-check-bad" : "";
+  const showPanel = checkOn && selected && !inline;
+  const showBar = !inline && checkOn && (
+    effectiveDerivIssue?.kind === "bad" ||
+    (showPanel && (effectiveDerivIssue?.kind === "ok" || sympyLoading || sympyError))
+  );
 
   useEffect(() => {
     const mf = ref.current;
     if (!mf) return;
-    if (mf.value !== node.attrs.latex) mf.value = node.attrs.latex ?? "";
+    if (mf.value !== latex) mf.value = latex;
 
-    // Inline math: don't pop the virtual keyboard on focus — it's intrusive for a
-    // small in-text field. Show it only on an explicit double-click (below). Block
-    // equations keep the default auto behaviour.
     mf.mathVirtualKeyboardPolicy = inline ? "manual" : "auto";
 
     const onInput = () => updateAttributes({ latex: mf.value });
 
-    // When the caret moves past an edge of the field, hand focus back to the
-    // text editor on the correct side so you can keep typing / add a new line.
     const onMoveOut = (ev: Event) => {
       const dir = (ev as CustomEvent<{ direction: string }>).detail?.direction;
       const pos = typeof getPos === "function" ? getPos() : null;
@@ -97,7 +97,6 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
       ev.preventDefault();
       if (dir === "forward" || dir === "downward") {
         const after = pos + node.nodeSize;
-        // ensure there is somewhere to land after a trailing block math node
         if (after >= editor.state.doc.content.size) {
           editor.chain().insertContentAt(after, { type: "paragraph" }).focus(after + 1).run();
         } else {
@@ -108,17 +107,10 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
       }
     };
 
-    // In a block equation, Enter adds a new line within the SAME block by
-    // adding a row (MathLive wraps the content in \displaylines). Capture
-    // phase + stopImmediatePropagation so MathLive's own Enter doesn't also
-    // fire (that produced an extra line). Inline math stays single-line.
     const onKeyDown = (ev: KeyboardEvent) => {
       if (inline || ev.key !== "Enter" || ev.shiftKey) return;
       const v = mf.value;
       const inEnv = v.includes("\\displaylines") || /\\begin\{/.test(v);
-      // First Enter on a plain equation: MathLive's native Enter does nothing,
-      // so wrap it into \displaylines ourselves. Once it's an environment,
-      // let MathLive's native Enter add each subsequent row (avoids doubling).
       if (!inEnv) {
         ev.preventDefault();
         ev.stopImmediatePropagation();
@@ -134,21 +126,16 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
       mf.removeEventListener("move-out", onMoveOut as EventListener);
       mf.removeEventListener("keydown", onKeyDown, { capture: true });
     };
-  }, [node.attrs.latex, node.nodeSize, updateAttributes, editor, getPos, inline]);
+  }, [latex, node.nodeSize, updateAttributes, editor, getPos, inline]);
 
   return (
     <NodeViewWrapper
       as={inline ? "span" : "div"}
-      className={`zen-math ${inline ? "zen-math-inline" : "zen-math-block"} ${
-        selected ? "is-selected" : ""
-      } ${verdictClass}`}
-      // Focus the field on click instead of letting ProseMirror node-select it.
+      className={`zen-math ${inline ? "zen-math-inline" : "zen-math-block"} ${selected ? "is-selected" : ""} ${verdictClass}`}
       onMouseDown={(e: React.MouseEvent) => {
         e.stopPropagation();
         ref.current?.focus();
       }}
-      // Inline math suppresses the virtual keyboard on focus; a double-click is the
-      // explicit gesture to summon it.
       onDoubleClick={
         inline
           ? (e: React.MouseEvent) => {
@@ -164,62 +151,21 @@ export function MathView({ node, updateAttributes, selected, extension, editor, 
         style: inline ? { display: "inline-block" } : {},
       })}
 
-      {/* Inline math: a small verdict pill, expanding to a popover when selected. */}
-      {inline && checkOn && result && !showPanel && result.verdict !== "unknown" && (
-        <span className="zen-check-badge" contentEditable={false}>
-          {VERDICT_LABEL[result.verdict]}
-        </span>
-      )}
-      {inline && showPanel && (
-        <div className="zen-check-panel" contentEditable={false} onMouseDown={(e) => e.stopPropagation()}>
-          <div className="zen-check-panel-row">
-            <span className="zen-check-panel-label">Expected answer</span>
-            {target && (
-              <button type="button" className="zen-check-clear" onClick={clearTarget}>clear</button>
-            )}
-          </div>
-          <MathField value={target} onChange={setTarget} ariaLabel="Expected answer" />
-          {showVerdict && (
-            <div className={`zen-check-verdict ${verdictClass}`}>
-              {VERDICT_LABEL[result!.verdict]}
-              {result!.note && <span className="zen-check-note"> — {result!.note}</span>}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Block math: one compact bar — step status + expected answer + verdict. */}
       {showBar && (
         <div className="zen-check-bar" contentEditable={false} onMouseDown={(e) => e.stopPropagation()}>
-          {derivIssue?.kind === "bad" && (
+          {effectiveDerivIssue?.kind === "bad" && (
             <div className="zen-check-step is-bad">
-              <span className="zen-check-step-tag">Line {derivIssue.line}</span> {derivIssue.note}
+              <span className="zen-check-step-tag">Line {effectiveDerivIssue.line}</span> {effectiveDerivIssue.note}
             </div>
           )}
-          {derivIssue?.kind === "ok" && showPanel && (
+          {effectiveDerivIssue?.kind === "ok" && showPanel && (
             <div className="zen-check-step is-ok">Each step follows</div>
           )}
-          {showExpected && (
-            <div className="zen-check-expected">
-              <span className="zen-check-panel-label">Expected</span>
-              {showPanel ? (
-                <MathField value={target} onChange={setTarget} ariaLabel="Expected answer" />
-              ) : target ? (
-                <span className="zen-check-target" dangerouslySetInnerHTML={{ __html: renderLatex(target, false) }} />
-              ) : null}
-              {showPanel && target && (
-                <button type="button" className="zen-check-clear" onClick={clearTarget}>clear</button>
-              )}
-              {showVerdict && (
-                <span className={`zen-check-verdict ${verdictClass}`}>
-                  {VERDICT_LABEL[result!.verdict]}
-                  {result!.note && <span className="zen-check-note"> — {result!.note}</span>}
-                </span>
-              )}
-            </div>
-          )}
+          {showPanel && sympyLoading && <div className="zen-check-step">SymPy checking...</div>}
+          {showPanel && sympyError && <div className="zen-check-step">SymPy unavailable: {sympyError}</div>}
         </div>
       )}
     </NodeViewWrapper>
   );
 }
+

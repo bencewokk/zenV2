@@ -426,19 +426,17 @@ const TOOLS: ToolImpl[] = [
   tool(
     "insert_math",
     "Append a math equation to a note (LaTeX). Set block=true for a display equation. " +
-      "Optionally pass `target` (the correct answer in LaTeX) to make the block checkable by the note's " +
-      "Math Checker — useful for a practice problem where `latex` is blank/partial and `target` is the answer.",
+      "For worked solutions, put each algebra step on its own line in one block so the Math Checker can verify the derivation.",
     obj({
       id: str("note id"),
       latex: str("LaTeX, e.g. x^2+1"),
       block: bool("display block? default true"),
-      target: str("optional correct-answer LaTeX, enables the Math Checker for this block"),
     }, ["id", "latex"]),
     async (a) => {
       const block = a.block !== false;
       const ok = await appendBlock(String(a.id), {
         type: block ? "mathBlock" : "mathInline",
-        attrs: { latex: String(a.latex), ...(a.target ? { target: String(a.target) } : {}) },
+        attrs: { latex: String(a.latex) },
       });
       return ok ? "Math inserted." : "No note with that id.";
     }
