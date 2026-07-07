@@ -8,12 +8,38 @@ export type UpdateCheckResult =
   | { status: "unsupported" }
   | { status: "no-update" }
   | { status: "update-available"; version: string }
-  | { status: "error" };
+  | { status: "error"; reason: string; detail?: string };
+
+/**
+ * Turn a raw updater failure into a specific, actionable reason. The Tauri
+ * updater surfaces network, endpoint, and signature problems as opaque strings,
+ * so we classify by keyword rather than showing a blanket "couldn't check".
+ */
+export function describeUpdateError(error: unknown): string {
+  const message = (error instanceof Error ? error.message : String(error ?? "")).trim();
+  const lower = message.toLowerCase();
+  // "Could not fetch a valid release JSON" is Tauri's no-release case — check it
+  // before the network patterns so the shared word "fetch" doesn't misclassify it.
+  if (/404|not found|no release|could not fetch a valid release|no such file/.test(lower)) {
+    return "No published release to update to yet.";
+  }
+  if (/network|failed to fetch|fetch failed|dns|timed out|timeout|connection|unreachable|offline|failed to lookup/.test(lower)) {
+    return "Can't reach the update server — check your internet connection.";
+  }
+  if (/signature|public key|verify|untrusted|minisign/.test(lower)) {
+    return "The update failed its signature check and was not applied.";
+  }
+  if (/403|401|unauthorized|forbidden|token/.test(lower)) {
+    return "The update server rejected the request (authorization). Try again later.";
+  }
+  return message || "The update check failed for an unknown reason.";
+}
 
 /**
  * Check GitHub Releases for a newer signed build and offer to install it.
- * Desktop (Tauri) only — no-op in the browser. Best-effort: silent on failure
- * (offline, no published release yet, etc.) so it never disrupts startup.
+ * Desktop (Tauri) only — no-op in the browser. Best-effort: on failure it
+ * returns a classified reason so callers can show specific feedback instead of
+ * a blanket error, but it never throws or disrupts startup.
  */
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   if (!IS_TAURI) return { status: "unsupported" };
@@ -30,9 +56,9 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
       },
     });
     return { status: "update-available", version: update.version };
-  } catch {
-    /* offline / no endpoint / not signed in — ignore */
-    return { status: "error" };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error ?? "");
+    return { status: "error", reason: describeUpdateError(error), detail };
   }
 }
 

@@ -97,7 +97,7 @@ export function Data() {
     setUpdateState(result);
     if (result.status === "no-update") notify.info("You're up to date");
     if (result.status === "unsupported") notify.info("Update checks are desktop-only");
-    if (result.status === "error") notify.error("Couldn't check for updates");
+    if (result.status === "error") notify.error(result.reason);
   }
 
   const updateFeedback = (() => {
@@ -113,11 +113,13 @@ export function Data() {
       case "unsupported":
         return "Desktop only";
       case "error":
-        return "Check failed";
+        return updateState.reason;
       default:
         return "";
     }
   })();
+
+  const updateFeedbackTitle = updateState.status === "error" ? updateState.detail : undefined;
 
   const updateFeedbackClass = (() => {
     switch (updateState.status) {
@@ -154,7 +156,7 @@ export function Data() {
             Check for updates
           </button>
           <button className="zen-btn-ghost" onClick={openReleaseNotes}>Release notes</button>
-          {updateFeedback && <span className={`text-xs ${updateFeedbackClass}`}>{updateFeedback}</span>}
+          {updateFeedback && <span className={`text-xs ${updateFeedbackClass}`} title={updateFeedbackTitle}>{updateFeedback}</span>}
         </div>
       </SettingsSection>
 
