@@ -4,6 +4,7 @@ import { AiBehavior } from "./sections/AiBehavior";
 import { Appearance } from "./sections/Appearance";
 import { Data } from "./sections/Data";
 import { Billing } from "./sections/Billing";
+import LineSidebar from "@/shared/ui/reactbits/LineSidebar";
 
 type SectionId = "connections" | "billing" | "ai" | "appearance" | "data";
 
@@ -22,23 +23,17 @@ export function SettingsView() {
 
   return (
     <div className="flex h-full min-h-0 gap-4 px-4 py-4 sm:px-6">
-      <nav className="flex w-48 shrink-0 flex-col gap-1">
-        <div className="mb-1 px-2 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">
+      <nav className="w-52 shrink-0 pl-2 pt-1">
+        <div className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">
           Settings
         </div>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setActive(s.id)}
-            className={`zen-pressable rounded-[8px] px-3 py-2 text-left text-sm ${
-              active === s.id
-                ? "bg-[var(--bg-elev)] text-[var(--text)]"
-                : "text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
+        <LineSidebar
+          items={SECTIONS.map((s) => s.label)}
+          activeIndex={SECTIONS.findIndex((s) => s.id === active)}
+          onItemClick={(index) => setActive(SECTIONS[index].id)}
+          itemGap={14}
+          fontSize={0.9}
+        />
       </nav>
 
       <div key={active} className="zen-anim-rise-scale min-h-0 flex-1 overflow-y-auto pr-1">

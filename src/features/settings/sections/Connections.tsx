@@ -11,6 +11,7 @@ import { backupConnectionsToVault, deleteVaultConnection, listVaultConnections, 
 import { syncOnce, clearSyncState } from "@/services/sync/engine";
 import { notify } from "@/shared/ui/notify";
 import { useOnboarding } from "@/features/onboarding/store";
+import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { useStatus } from "@/shared/stores/status";
 import { Field, SettingsSection, SaveBar } from "../ui";
 
@@ -174,11 +175,15 @@ export function Connections() {
   }
 
   const replayWalkthrough = useOnboarding((s) => s.start);
+  const replayIntro = useSparkIntro((s) => s.start);
 
   return (
     <div className="space-y-6">
       <SettingsSection title="Walkthrough" hint="A quick guided tour of connecting services and using Deep Work, study, and quizzes.">
-        <button className="zen-btn-ghost" onClick={replayWalkthrough}>Replay walkthrough</button>
+        <div className="flex flex-wrap gap-2">
+          <button className="zen-btn-ghost" onClick={replayIntro}>Replay intro</button>
+          <button className="zen-btn-ghost" onClick={replayWalkthrough}>Replay walkthrough</button>
+        </div>
       </SettingsSection>
 
       <SettingsSection title="Zen account vault" hint="Your Google identity owns an encrypted vault so provider connections can follow you to another device.">

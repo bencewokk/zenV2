@@ -18,7 +18,9 @@ import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker"
 import { Onboarding } from "@/features/onboarding/Onboarding";
 import { CommandPalette, useCommandPalette } from "@/features/search/CommandPalette";
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
-import { useOnboarding } from "@/features/onboarding/store";
+import { SparkIntro } from "@/features/onboarding/SparkIntro";
+import CardNav from "@/shared/ui/reactbits/CardNav";
+import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
 import { checkForUpdates } from "@/services/update";
 import { startSync } from "@/services/sync/engine";
@@ -93,7 +95,7 @@ export function App() {
     applyAppearance();
     void usePdfs.getState().load();
     void ensureSourcesLoaded();
-    useOnboarding.getState().startIfFirstRun();
+    useSparkIntro.getState().startIfFirstRun();
     // Seed notes first, then build the ready-made sample Deep Work session from them.
     void load().then(() => seedSampleSession());
     // Check for a newer release shortly after launch (desktop only; no-op in browser).
@@ -215,133 +217,149 @@ export function App() {
         // little open space left to click — this strip is never occluded by buttons.
         <div data-tauri-drag-region className="relative z-30 h-2.5 shrink-0" />
       )}
-      {!zen && !lessonActive && <header data-tauri-drag-region className="relative z-30 flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
-        <button
-          className="zen-pressable zen-shine inline-flex h-7 items-center rounded-[6px] px-1.5 font-semibold tracking-tight text-[var(--text)] hover:text-[var(--accent)]"
-          onClick={() => {
-            select(null);
-            setSurface("home");
-            setManualDeepWork(false);
-            void useHome.getState().refresh();
-          }}
-          title="Home dashboard"
-        >
-          Zen
-        </button>
-        <div data-tauri-drag-region className="mx-3 min-w-0 flex-1">
-          <SessionTabs
-            onOpen={() => {
-              select(null);
-              setSurface("home");
-              setAdminMailId(null);
-              setManualDeepWork(true);
-            }}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
-            onClick={() => useCommandPalette.getState().setOpen(true)}
-            title="Search everything (Ctrl+K)"
-            aria-label="Search"
-          >
-            ⌕
-          </button>
-          {sidebarApplicable && (
-            <button
-              className={`${HEADER_BTN} ${sidebarVisible ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-              onClick={() => setWs({ sidebarCollapsed: !sidebarCollapsed })}
-              title={sidebarVisible ? "Hide notes" : "Show notes"}
-            >
-              Notes
-            </button>
-          )}
-          <button
-            className={`${HEADER_BTN} ${showHome && deepWork ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-            onClick={() => {
-              if (deepWork) {
-                setManualDeepWork(false);
-              } else {
+      {!zen && !lessonActive && (
+        <header data-tauri-drag-region className="relative z-30 flex items-start gap-2 px-2.5 pb-1.5 pt-1.5">
+          <div className="min-w-0 flex-1">
+            <CardNav
+              logoText="Zen"
+              onLogoClick={() => {
                 select(null);
                 setSurface("home");
-                setAdminMailId(null);
-                setManualDeepWork(true);
-              }
-            }}
-            title="Toggle Deep Work"
-          >
-            Deep Work{deepWorkItemCount > 0 ? ` · ${deepWorkItemCount}` : ""}
-          </button>
-          {([
-            ["calendar", "Calendar"],
-            ["mail", "Mail"],
-          ] as const).map(([v, label]) => (
-            <button
-              key={v}
-              className={`${HEADER_BTN} ${showAdmin && adminFocus === v ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-              onClick={() => {
-                select(null);
-                setSurface("admin");
-                setAdminFocus(v);
-                if (v !== "mail") setAdminMailId(null);
+                setManualDeepWork(false);
                 void useHome.getState().refresh();
               }}
-            >
-              {label}
-            </button>
-          ))}
-          <button
-            className={`${HEADER_BTN} ${showSources ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-            onClick={() => { select(null); setManualDeepWork(false); setAdminMailId(null); setSurface("sources"); }}
-            title="Connected sources"
-          >
-            Sources
-          </button>
-          {deepWork && (
-            // Deep-Work-only controls, lightly grouped so they read as one cluster
-            // that appears when you enter Deep Work.
-            <div className="zen-anim-fade inline-flex items-center gap-1 rounded-[8px] bg-[rgba(255,255,255,0.04)] p-0.5">
-              <FocusTimerButton />
-              <button
-                className={`${HEADER_BTN} ${showStudy ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-                onClick={() => setShowStudy((v) => !v)}
-                title="Study panel — backbone, mastery & daily goal"
-              >
-                Study
-              </button>
-              <button
-                className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
-                onClick={() => setZenMode(true)}
-                title="Zen mode — show only sources"
-                aria-label="Enter zen mode"
-              >
-                ◐
-              </button>
-            </div>
-          )}
-          <button
-            className={`${HEADER_BTN} ${aiStatus === "busy" ? "zen-glow border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]" : HEADER_BTN_IDLE}`}
-            onClick={() => useAI.getState().toggle()}
-            title="Toggle AI panel"
-          >
-            AI
-          </button>
-          <button
-            className={`${HEADER_BTN} ${showSettings ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-            onClick={() => {
-              select(null);
-              setManualDeepWork(false);
-              setAdminMailId(null);
-              setSurface("settings");
-            }}
-            title="Settings"
-            aria-label="Settings"
-          >
-            ⚙
-          </button>
-          {IS_TAURI && <WindowControls className="-mr-2 ml-1" />}
-        </div>
-      </header>}
+              centerSlot={
+                <SessionTabs
+                  onOpen={() => {
+                    select(null);
+                    setSurface("home");
+                    setAdminMailId(null);
+                    setManualDeepWork(true);
+                  }}
+                />
+              }
+              topExtras={
+                <>
+                  <button
+                    className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
+                    onClick={() => useCommandPalette.getState().setOpen(true)}
+                    title="Search everything (Ctrl+K)"
+                    aria-label="Search"
+                  >
+                    ⌕
+                  </button>
+                  {sidebarApplicable && (
+                    <button
+                      className={`${HEADER_BTN} ${sidebarVisible ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
+                      onClick={() => setWs({ sidebarCollapsed: !sidebarCollapsed })}
+                      title={sidebarVisible ? "Hide notes" : "Show notes"}
+                    >
+                      Notes
+                    </button>
+                  )}
+                  {deepWork && (
+                    <div className="zen-anim-fade inline-flex items-center gap-1 rounded-[8px] bg-[rgba(255,255,255,0.04)] p-0.5">
+                      <FocusTimerButton />
+                      <button
+                        className={`${HEADER_BTN} ${showStudy ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
+                        onClick={() => setShowStudy((v) => !v)}
+                        title="Study panel — backbone, mastery & daily goal"
+                      >
+                        Study
+                      </button>
+                      <button
+                        className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
+                        onClick={() => setZenMode(true)}
+                        title="Zen mode — show only sources"
+                        aria-label="Enter zen mode"
+                      >
+                        ◐
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    className={`${HEADER_BTN} ${aiStatus === "busy" ? "zen-glow border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]" : HEADER_BTN_IDLE}`}
+                    onClick={() => useAI.getState().toggle()}
+                    title="Toggle AI panel"
+                  >
+                    AI
+                  </button>
+                </>
+              }
+              items={[
+                {
+                  label: "Study",
+                  bgColor: "var(--bg)",
+                  textColor: "var(--text)",
+                  links: [
+                    {
+                      label: `Deep Work${deepWorkItemCount > 0 ? ` · ${deepWorkItemCount}` : ""}`,
+                      active: deepWork,
+                      onClick: () => {
+                        if (deepWork) {
+                          setManualDeepWork(false);
+                        } else {
+                          select(null);
+                          setSurface("home");
+                          setAdminMailId(null);
+                          setManualDeepWork(true);
+                        }
+                      },
+                    },
+                    {
+                      label: "Sources",
+                      active: showSources,
+                      onClick: () => { select(null); setManualDeepWork(false); setAdminMailId(null); setSurface("sources"); },
+                    },
+                  ],
+                },
+                {
+                  label: "Notes",
+                  bgColor: "var(--bg)",
+                  textColor: "var(--text)",
+                  links: [
+                    {
+                      label: "Home dashboard",
+                      active: showHome && !deepWork,
+                      onClick: () => { select(null); setSurface("home"); setManualDeepWork(false); void useHome.getState().refresh(); },
+                    },
+                    {
+                      label: sidebarVisible ? "Hide notes panel" : "Show notes panel",
+                      onClick: () => {
+                        if (!sidebarApplicable) { select(null); setSurface("home"); setManualDeepWork(false); }
+                        setWs({ sidebarCollapsed: !sidebarCollapsed });
+                      },
+                    },
+                  ],
+                },
+                {
+                  label: "Admin",
+                  bgColor: "var(--bg)",
+                  textColor: "var(--text)",
+                  links: [
+                    {
+                      label: "Calendar",
+                      active: showAdmin && adminFocus === "calendar",
+                      onClick: () => { select(null); setSurface("admin"); setAdminFocus("calendar"); setAdminMailId(null); void useHome.getState().refresh(); },
+                    },
+                    {
+                      label: "Mail",
+                      active: showAdmin && adminFocus === "mail",
+                      onClick: () => { select(null); setSurface("admin"); setAdminFocus("mail"); void useHome.getState().refresh(); },
+                    },
+                    {
+                      label: "Settings",
+                      active: showSettings,
+                      onClick: () => { select(null); setManualDeepWork(false); setAdminMailId(null); setSurface("settings"); },
+                    },
+                  ],
+                },
+              ]}
+            />
+          </div>
+          {IS_TAURI && <WindowControls className="shrink-0 pt-2" />}
+        </header>
+      )}
 
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside
@@ -417,6 +435,7 @@ export function App() {
       <AddToSessionPicker />
       {quizActive && <Suspense fallback={null}><QuizView /></Suspense>}
       {lessonActive && <Suspense fallback={null}><LessonMode /></Suspense>}
+      <SparkIntro />
       <Onboarding />
       <CommandPalette />
       <ReleaseNotesModal />

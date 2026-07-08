@@ -4,6 +4,7 @@ import { captureToSource, type WebCapturePayload } from "@/services/sources/capt
 import { refreshAllSources } from "@/services/sources/refresh";
 import { ensureSourcesLoaded, useSources } from "@/services/sources/store";
 import type { ConnectedSource, SourceProvider } from "@/services/sources/types";
+import MagicBento from "@/shared/ui/reactbits/MagicBento";
 
 const PROVIDERS: Array<{ id: "all" | SourceProvider; label: string }> = [
   { id: "all", label: "All" }, { id: "canvas", label: "Canvas" }, { id: "drive", label: "Drive" },
@@ -72,8 +73,31 @@ export function SourcesPanel() {
             </button>
           )) : <div className="p-6 text-sm text-[var(--text-dim)]">No sources here yet. Configure connections, refresh, or import a web capture.</div>}
         </div>
-        <SourceDetail source={active} />
+        {active ? <SourceDetail source={active} /> : <SourcesHub onPick={setProvider} />}
       </div>
+    </div>
+  );
+}
+
+/** Shown when nothing is selected (typically before any source is connected):
+ *  a MagicBento hub of source categories that filters on click. */
+function SourcesHub({ onPick }: { onPick: (provider: "all" | SourceProvider) => void }) {
+  return (
+    <div className="min-h-0 overflow-y-auto p-6">
+      <h2 className="text-base font-semibold text-[var(--text)]">Connect your sources</h2>
+      <p className="mb-4 mt-1 text-xs text-[var(--text-dim)]">Course material, research, files, and the web — all searchable in one place.</p>
+      <MagicBento
+        cards={[
+          { label: "LMS", title: "Canvas", description: "Courses, assignments, modules, and files", onClick: () => onPick("canvas") },
+          { label: "Files", title: "Google Drive", description: "Every file you allow, read-only", onClick: () => onPick("drive") },
+          { label: "Research", title: "Zotero", description: "Papers, annotations, and citations", onClick: () => onPick("zotero") },
+          { label: "Code", title: "GitHub", description: "Repositories allowed by your token", onClick: () => onPick("github") },
+          { label: "Web", title: "Web captures", description: "Clip any page with the extension", onClick: () => onPick("web") },
+          { label: "All", title: "Everything", description: "Browse every connected source", onClick: () => onPick("all") },
+        ]}
+        enableTilt
+        spotlightRadius={280}
+      />
     </div>
   );
 }
