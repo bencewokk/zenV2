@@ -247,8 +247,8 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
   }
 
   return (
-    <section className={`relative h-full min-h-0 overflow-hidden px-4 py-3 sm:px-6 ${deepWork ? "" : "sm:py-4"}`}>
-      <div className={deepWork ? "h-full min-h-0" : "mx-auto h-full min-h-0 w-full max-w-5xl"}>
+    <section className={`relative h-full min-h-0 overflow-hidden px-2 py-2 sm:px-3 ${deepWork ? "" : "sm:py-3"}`}>
+      <div className={deepWork ? "h-full min-h-0" : "h-full min-h-0 w-full"}>
         <div className="zen-home-center">
           <SurfaceCard
             className={`zen-focus-surface flex min-h-0 flex-col overflow-hidden p-5 sm:p-6 ${deepWork ? "h-full" : ""}`}
@@ -266,6 +266,12 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
             </div>
 
             <div className={`zen-panel-scroll mt-5 grid flex-1 gap-5 pr-1 ${deepWork ? "min-h-0 grid-cols-1" : "xl:grid-cols-[minmax(0,1.55fr)_minmax(14rem,0.45fr)]"}`}>
+              {!deepWork && (
+                <div className="xl:col-span-2">
+                  <DashboardTutorial />
+                </div>
+              )}
+
               <div className={`min-w-0 ${deepWork ? "flex min-h-0 flex-col justify-center" : "space-y-6"}`}>
                 {!deepWork && <ExamFocusHero now={now.getTime()} />}
                 <section className="border-b border-[rgba(255,255,255,0.07)] pb-5">
@@ -553,7 +559,6 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
 
               {!deepWork && <div className="space-y-6 px-1 pt-1">
                 <WhatsNew />
-                <DashboardTutorial />
                 <LabelManager />
                 <div>
                   <div className="mb-3 flex items-center justify-between gap-3">
@@ -832,7 +837,7 @@ function DashboardTutorial() {
       </div>
       <div className="zen-meta mt-1.5 text-xs">{done} of {total} ticks complete</div>
 
-      <div className="mt-4 space-y-2.5">
+      <div className="mt-4 grid gap-2.5 md:grid-cols-2 2xl:grid-cols-3">
         {groups.map((group) => {
           const groupDone = group.items.every((item) => item.done);
           return (

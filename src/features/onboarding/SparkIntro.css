@@ -177,6 +177,9 @@
   text-align: left;
   animation: spark-fade-up 520ms var(--ease-out) both;
 }
+.spark-setup-card:nth-child(3) {
+  grid-column: 1 / -1;
+}
 .spark-setup-card--done {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: color-mix(in srgb, var(--accent-dim) 36%, var(--bg-elev));
@@ -246,7 +249,7 @@
 }
 .spark-source-fields {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
   gap: 8px;
 }
 .spark-source-field {
@@ -258,6 +261,13 @@
   border-radius: 10px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.spark-source-field input,
+.spark-source-field select,
+.spark-source-field button,
+.spark-source-field > .grid {
+  min-width: 0;
+  width: 100%;
 }
 .spark-source-field span {
   font-size: 11px;
