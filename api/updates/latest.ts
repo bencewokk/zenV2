@@ -17,9 +17,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const origin = `https://${req.headers.host || "zen-v2-plum.vercel.app"}`;
     for (const platform of Object.values(manifest.platforms ?? {})) {
       if (!platform.url) continue;
-      const name = decodeURIComponent(new URL(platform.url).pathname.split("/").pop() ?? "");
-      const asset = release.assets.find((candidate) => candidate.name === name);
-      if (!asset) throw new Error(`release asset missing: ${name}`);
+      const segment = decodeURIComponent(new URL(platform.url).pathname.split("/").pop() ?? "");
+      // tauri-action embeds the GitHub API asset URL (ending in the numeric
+      // asset id) for private repos, and the plain download URL (ending in
+      // the filename) otherwise — handle both.
+      const asset = /^\d+$/.test(segment)
+        ? release.assets.find((candidate) => candidate.id === Number(segment))
+        : release.assets.find((candidate) => candidate.name === segment);
+      if (!asset) throw new Error(`release asset missing: ${segment}`);
       platform.url = `${origin}/api/updates/asset?id=${asset.id}`;
     }
     res.setHeader("Cache-Control", "public, max-age=60, s-maxage=60, stale-while-revalidate=300");
