@@ -15,7 +15,6 @@ import { useLesson } from "@/features/home/deepwork/lessonStore";
 import { useQuiz } from "@/features/home/deepwork/quizStore";
 import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
 import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
-import { Onboarding } from "@/features/onboarding/Onboarding";
 import { CommandPalette, useCommandPalette } from "@/features/search/CommandPalette";
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { SparkIntro } from "@/features/onboarding/SparkIntro";
@@ -436,7 +435,6 @@ export function App() {
       {quizActive && <Suspense fallback={null}><QuizView /></Suspense>}
       {lessonActive && <Suspense fallback={null}><LessonMode /></Suspense>}
       <SparkIntro />
-      <Onboarding />
       <CommandPalette />
       <ReleaseNotesModal />
       <Toaster theme="dark" position="bottom-right" richColors />

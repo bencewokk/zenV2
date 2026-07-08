@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { RELEASE_NOTES, LATEST_RELEASE, CURRENT_VERSION } from "@/data/releaseNotes";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
-import { isFirstRun } from "@/features/onboarding/store";
+import { isSparkFirstRun } from "@/features/onboarding/sparkStore";
 
 const SEEN_KEY = "zen.releaseNotes.seen.v1";
 
@@ -55,7 +55,7 @@ export function ReleaseNotesModal() {
     if (!useReleaseNotes.getState().isNew) return;
     // A brand-new install has no "what changed" to catch up on, and the setup
     // wizard is about to open — mark the notes seen instead of stacking modals.
-    if (isFirstRun()) {
+    if (isSparkFirstRun()) {
       useReleaseNotes.getState().close();
       return;
     }

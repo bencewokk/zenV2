@@ -10,7 +10,6 @@ import { testGitHubConnection } from "@/services/sources/github";
 import { backupConnectionsToVault, deleteVaultConnection, listVaultConnections, restoreConnectionsFromVault, type VaultConnectionStatus, type VaultProvider } from "@/services/connections/vault";
 import { syncOnce, clearSyncState } from "@/services/sync/engine";
 import { notify } from "@/shared/ui/notify";
-import { useOnboarding } from "@/features/onboarding/store";
 import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { useStatus } from "@/shared/stores/status";
 import { Field, SettingsSection, SaveBar } from "../ui";
@@ -174,15 +173,13 @@ export function Connections() {
     }
   }
 
-  const replayWalkthrough = useOnboarding((s) => s.start);
   const replayIntro = useSparkIntro((s) => s.start);
 
   return (
     <div className="space-y-6">
-      <SettingsSection title="Walkthrough" hint="A quick guided tour of connecting services and using Deep Work, study, and quizzes.">
+      <SettingsSection title="Spark setup" hint="Replay the first-run intro and connection setup.">
         <div className="flex flex-wrap gap-2">
-          <button className="zen-btn-ghost" onClick={replayIntro}>Replay intro</button>
-          <button className="zen-btn-ghost" onClick={replayWalkthrough}>Replay walkthrough</button>
+          <button className="zen-btn-ghost" onClick={replayIntro}>Replay Spark setup</button>
         </div>
       </SettingsSection>
 

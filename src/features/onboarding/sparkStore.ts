@@ -1,10 +1,8 @@
 import { create } from "zustand";
 
 /**
- * First-run "Spark Intro" — the cinematic reveal that plays once, before the
- * connection wizard (see Onboarding.tsx). Guarded by its own localStorage flag,
- * independent of the connection walkthrough so the two phases can be replayed
- * separately.
+ * First-run Spark setup: the cinematic reveal plus the initial connection
+ * choices. It plays once per install and can be replayed from Settings.
  */
 const DONE_KEY = "zen.spark-intro-done.v1";
 
@@ -24,9 +22,13 @@ function markDone(): void {
   }
 }
 
+export function isSparkFirstRun(): boolean {
+  return !done();
+}
+
 interface SparkIntroState {
   open: boolean;
-  /** Open the intro manually (e.g. a "Replay intro" button in Settings). */
+  /** Open the setup manually from Settings. */
   start: () => void;
   /** Open it only if it has never been seen on this install. */
   startIfFirstRun: () => void;

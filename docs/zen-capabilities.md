@@ -26,7 +26,7 @@ The app already has the foundations for this: notes, PDFs, AI tools, Deep Work s
 - Desktop window controls and resize handles.
 - Skeleton loading states and reusable dropdown/status UI.
 - Release notes modal and "What's new" surface.
-- Onboarding state that can be completed and replayed.
+- Spark setup state that can be completed and replayed.
 
 ## Home Dashboard
 
@@ -47,13 +47,13 @@ The app already has the foundations for this: notes, PDFs, AI tools, Deep Work s
 - Weather utility maps weather codes to display indicators.
 - Exam-focus hero aggregates the most urgent exam across all Deep Work study plans (nearest deadline, worst verdict) and shows days left, evidence-based readiness, verdict, weakest concept, and a "Study now" button into that session; hidden when no plan has an exam date.
 
-## Onboarding And First Run
+## Spark Setup And First Run
 
-- Onboarding is two-phase: a Spark Intro (ignite animation → app-look chooser → opens every tab) plays before the connection walkthrough, so new users see the app moving before configuring anything.
-- First-run onboarding introduces AI, Google, Deep Work, memory, study, quiz, and gallery concepts.
-- Onboarding can seed a welcome note, sample note, sample PDF, and sample Deep Work session.
-- Onboarding completion is persisted locally.
-- Onboarding can be replayed from Settings.
+- Spark setup combines the first-run reveal with setup choices: ignite animation, app-look chooser, Google identity, sync, source review, private profile, then a short app-surface tour.
+- First-run setup introduces AI, Google, Deep Work, memory, connected sources, study surfaces, and local-first sync choices.
+- First run can seed a welcome note, sample note, sample PDF, and sample Deep Work session.
+- Spark setup completion is persisted locally.
+- Spark setup can be replayed from Settings.
 - Seed state prevents repeated sample-session duplication.
 
 ## Notes
