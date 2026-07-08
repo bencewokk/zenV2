@@ -276,7 +276,7 @@ function BlockView({ block }: { block: LessonBlock }) {
       );
     case "snippet":
       return (
-        <div className="rounded-[12px] border-l-2 border-[var(--accent)] bg-[rgba(96,165,250,0.06)] px-3 py-2">
+        <div className="rounded-[12px] border-l-2 border-[var(--accent)] bg-[rgba(var(--accent-rgb),0.06)] px-3 py-2">
           {block.source && <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-[var(--text-dim)]">{block.source}</div>}
           <div className="zen-md text-sm text-[var(--text)]" dangerouslySetInnerHTML={{ __html: renderMarkdown(block.text) }} />
           {block.note && <div className="mt-1.5 text-xs italic text-[var(--text-dim)]">{block.note}</div>}
@@ -336,7 +336,7 @@ function QuestionBlock({ block }: { block: Extract<LessonBlock, { kind: "questio
   }
 
   return (
-    <div className="rounded-[12px] border border-[var(--accent)] bg-[rgba(96,165,250,0.08)] px-3 py-2.5">
+    <div className="rounded-[12px] border border-[var(--accent)] bg-[rgba(var(--accent-rgb),0.08)] px-3 py-2.5">
       <div className="mb-2 zen-md text-sm font-medium text-[var(--text)]" dangerouslySetInnerHTML={{ __html: renderMarkdown(block.prompt) }} />
       {block.answered ? (
         <div className="text-xs text-[var(--text-dim)]">Your answer: <span className="text-[var(--text)]">{block.answer}</span></div>

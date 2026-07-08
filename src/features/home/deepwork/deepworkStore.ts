@@ -604,7 +604,7 @@ export function hydrateDeepWork(): void {
 
 export function readinessColor(percent: number): string {
   if (percent >= 80) return "#4ade80";
-  if (percent >= 50) return "#60A5FA";
+  if (percent >= 50) return "var(--accent)";
   if (percent >= 25) return "#f5b14c";
   return "#f6685e";
 }

@@ -243,7 +243,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
         <div className="zen-home-center">
           <SurfaceCard
             className={`zen-focus-surface flex min-h-0 flex-col overflow-hidden p-5 sm:p-6 ${deepWork ? "h-full" : ""}`}
-            style={deepWork ? { borderColor: "#60A5FA", boxShadow: "0 0 0 1px #60A5FA20" } : undefined}
+            style={deepWork ? { borderColor: "var(--accent)", boxShadow: "0 0 0 1px rgba(var(--accent-rgb),0.13)" } : undefined}
           >
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] pb-4">
               <div className="space-y-2">
@@ -265,7 +265,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                       <div className="zen-meta text-[11px] uppercase tracking-[0.24em]">Focus Timer</div>
 
                       {session ? (
-                        <div className="rounded-[16px] border border-[rgba(96,165,250,0.3)] bg-[rgba(96,165,250,0.06)] px-4 py-3">
+                        <div className="rounded-[16px] border border-[rgba(var(--accent-rgb),0.3)] bg-[rgba(var(--accent-rgb),0.06)] px-4 py-3">
                           <div className="flex items-center justify-between gap-3">
                             <span className="text-3xl font-semibold tabular-nums text-[var(--text)]">
                               {fmtClock(sessionRemaining)}
@@ -279,7 +279,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                           </div>
                           <div className="mt-3 h-2 overflow-hidden rounded-full bg-[rgba(255,255,255,0.07)]">
                             <div
-                              className="h-full rounded-full bg-[#60A5FA] transition-[width] duration-1000"
+                              className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-1000"
                               style={{ width: `${sessionProgress}%` }}
                             />
                           </div>
@@ -410,7 +410,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                       </button>
                     ) : (
                       <button
-                        className="zen-pressable zen-shine shrink-0 self-start rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(96,165,250,0.24)] hover:brightness-105 disabled:opacity-60"
+                        className="zen-pressable zen-shine shrink-0 self-start rounded-[12px] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(var(--accent-rgb),0.24)] hover:brightness-105 disabled:opacity-60"
                         onClick={() => void regenerateSummary()}
                         disabled={summaryLoading}
                       >
@@ -523,14 +523,14 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                         }}
                       >
                         <textarea
-                          className="min-h-[112px] min-w-0 flex-1 rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-sm text-[var(--text)] outline-none transition placeholder:text-[rgba(232,233,237,0.34)] focus:border-[#60A5FA]"
+                          className="min-h-[112px] min-w-0 flex-1 rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-sm text-[var(--text)] outline-none transition placeholder:text-[rgba(232,233,237,0.34)] focus:border-[var(--accent)]"
                           value={quickCapture}
                           onChange={(event) => setQuickCapture(event.target.value)}
                           placeholder="Park a follow-up, loose thought, or later task without leaving focus. The first line becomes the note title and the full text is saved to the body."
                           rows={4}
                         />
                         <button
-                          className="zen-pressable zen-shine shrink-0 rounded-[12px] bg-[#60A5FA] px-4 py-2.5 text-sm font-semibold text-black hover:brightness-105 disabled:opacity-60"
+                          className="zen-pressable zen-shine shrink-0 rounded-[12px] bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-black hover:brightness-105 disabled:opacity-60"
                           type="submit"
                           disabled={!quickCapture.trim() || captureSaving}
                         >
@@ -633,7 +633,7 @@ function LabelManager() {
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         placeholder="Add a topic the AI should tag…"
-        className="w-full rounded-[10px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[#60A5FA]"
+        className="w-full rounded-[10px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-1.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[var(--accent)]"
       />
       {labels.length > 0 && (
         <div className="mt-2 flex flex-col gap-2">
@@ -873,7 +873,7 @@ function ExamFocusHero({ now }: { now: number }) {
       </div>
       <div className="mt-3">
         <button
-          className="zen-pressable zen-shine rounded-[12px] bg-[#60A5FA] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(96,165,250,0.24)] hover:brightness-105"
+          className="zen-pressable zen-shine rounded-[12px] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-black shadow-[0_16px_50px_rgba(var(--accent-rgb),0.24)] hover:brightness-105"
           onClick={studyNow}
         >
           Study now
@@ -923,7 +923,7 @@ function DeepWorkRecommendations({ now }: { now: number }) {
             return (
               <button
                 key={s.id}
-                className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:translate-x-1 hover:border-[rgba(96,165,250,0.3)] hover:bg-[rgba(96,165,250,0.06)]"
+                className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:translate-x-1 hover:border-[rgba(var(--accent-rgb),0.3)] hover:bg-[rgba(var(--accent-rgb),0.06)]"
                 onClick={() => open(s.id)}
               >
                 <span className="min-w-0 flex-1">
@@ -1107,7 +1107,7 @@ function buildDeepWorkTimer(event: CalEvent | null, now: Date): { label: string;
       label: event.allDay ? "All-day focus block" : "Focus block",
       detail: `${formatEventWindow(event.start, event.end, event.allDay)}${event.summary ? ` · ${event.summary}` : ""}`,
       progress: 100,
-      color: "#60A5FA",
+      color: "var(--accent)",
     };
   }
 
@@ -1135,7 +1135,7 @@ function buildDeepWorkTimer(event: CalEvent | null, now: Date): { label: string;
     label: `${formatRelativeDistance(end - current)} left`,
     detail: `${formatTime(new Date(start))} to ${formatTime(new Date(end))} · ${event.summary}`,
     progress,
-    color: "#60A5FA",
+    color: "var(--accent)",
   };
 }
 

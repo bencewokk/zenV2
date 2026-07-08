@@ -85,10 +85,10 @@ export function AddToSessionPicker() {
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && addToNew()}
             placeholder="New session name…"
-            className="flex-1 rounded-[10px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[rgba(96,165,250,0.5)]"
+            className="flex-1 rounded-[10px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[rgba(var(--accent-rgb),0.5)]"
           />
           <button
-            className="zen-pressable zen-shine rounded-[10px] border border-[rgba(96,165,250,0.4)] bg-[rgba(96,165,250,0.12)] px-3 py-2 text-sm text-[var(--text)] hover:bg-[rgba(96,165,250,0.2)]"
+            className="zen-pressable zen-shine rounded-[10px] border border-[rgba(var(--accent-rgb),0.4)] bg-[rgba(var(--accent-rgb),0.12)] px-3 py-2 text-sm text-[var(--text)] hover:bg-[rgba(var(--accent-rgb),0.2)]"
             onClick={addToNew}
           >
             New

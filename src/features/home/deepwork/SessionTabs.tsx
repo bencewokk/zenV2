@@ -31,7 +31,7 @@ export function SessionTabs({ onOpen }: { onOpen?: () => void } = {}) {
   }
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto">
+    <div className="zen-scrollbar-none flex items-center gap-1 overflow-x-auto">
       {open.map((s) => {
         const isActive = s.id === activeId;
         return (
@@ -39,7 +39,7 @@ export function SessionTabs({ onOpen }: { onOpen?: () => void } = {}) {
             key={s.id}
             className={`zen-anim-spring group flex shrink-0 items-center gap-1 rounded-[10px] border px-2 py-1 text-sm hover:scale-[1.03] [transition:transform_var(--motion-fast)_var(--ease-out),background-color_var(--motion-fast)_var(--ease-out),color_var(--motion-fast)_var(--ease-out),border-color_var(--motion-fast)_var(--ease-out)] ${
               isActive
-                ? "zen-glow border-[rgba(96,165,250,0.4)] bg-[rgba(96,165,250,0.12)] text-[var(--text)]"
+                ? "zen-glow border-[rgba(var(--accent-rgb),0.4)] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--text)]"
                 : "border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] text-[var(--text-dim)] hover:text-[var(--text)]"
             }`}
           >

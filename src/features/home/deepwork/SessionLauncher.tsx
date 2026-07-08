@@ -41,10 +41,10 @@ export function SessionLauncher() {
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && create()}
             placeholder="New session name…"
-            className="flex-1 rounded-[12px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[rgba(96,165,250,0.5)]"
+            className="flex-1 rounded-[12px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)] focus:border-[rgba(var(--accent-rgb),0.5)]"
           />
           <button
-            className="rounded-[12px] border border-[rgba(96,165,250,0.4)] bg-[rgba(96,165,250,0.12)] px-4 py-2 text-sm text-[var(--text)] transition hover:bg-[rgba(96,165,250,0.2)]"
+            className="rounded-[12px] border border-[rgba(var(--accent-rgb),0.4)] bg-[rgba(var(--accent-rgb),0.12)] px-4 py-2 text-sm text-[var(--text)] transition hover:bg-[rgba(var(--accent-rgb),0.2)]"
             onClick={create}
           >
             Create
@@ -99,7 +99,7 @@ function SessionRow({ session, onOpen }: { session: DeepWorkSession; onOpen: () 
   const count = session.items.length;
   return (
     <button
-      className="flex w-full items-center gap-3 rounded-[12px] border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-left transition hover:border-[rgba(96,165,250,0.3)] hover:bg-[rgba(96,165,250,0.06)]"
+      className="flex w-full items-center gap-3 rounded-[12px] border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-left transition hover:border-[rgba(var(--accent-rgb),0.3)] hover:bg-[rgba(var(--accent-rgb),0.06)]"
       onClick={onOpen}
     >
       <span className="min-w-0 flex-1">

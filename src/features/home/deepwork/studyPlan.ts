@@ -353,7 +353,7 @@ export function verdictColor(h: PlanHealth): string {
   if (h.verdict === "overcommitted" || (h.hasDeadline && h.daysLeft < 0)) return "#f6685e";
   if (h.verdict === "at-risk") return "#f5b14c";
   if (h.verdict === "ahead") return "#4ade80";
-  return "#60A5FA";
+  return "var(--accent)";
 }
 
 // ── Cross-session exam focus (drives the Home dashboard hero) ─────────────────

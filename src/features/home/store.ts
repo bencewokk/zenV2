@@ -108,7 +108,7 @@ const BRIEF_DONE_KEY = "zen.home.brief-done.v1";
 const BRIEF_DONE_TEXTS_KEY = "zen.home.brief-done-texts.v1";
 const DEEP_WORK_KEY = "zen.home.deepwork.v1";
 const MAIL_ACCENT = "#b073e0";
-const EVENT_ACCENT = "#6ea8fe";
+const EVENT_ACCENT = "var(--accent)";
 
 let authCleanup: (() => void) | null = null;
 let refreshPromise: Promise<void> | null = null;

@@ -45,9 +45,11 @@ The app already has the foundations for this: notes, PDFs, AI tools, Deep Work s
 - Home can launch any target into Deep Work.
 - Home quote feature rotates categories: humor, philosophy, science, and literature.
 - Weather utility maps weather codes to display indicators.
+- Exam-focus hero aggregates the most urgent exam across all Deep Work study plans (nearest deadline, worst verdict) and shows days left, evidence-based readiness, verdict, weakest concept, and a "Study now" button into that session; hidden when no plan has an exam date.
 
 ## Onboarding And First Run
 
+- Onboarding is two-phase: a Spark Intro (ignite animation → app-look chooser → opens every tab) plays before the connection walkthrough, so new users see the app moving before configuring anything.
 - First-run onboarding introduces AI, Google, Deep Work, memory, study, quiz, and gallery concepts.
 - Onboarding can seed a welcome note, sample note, sample PDF, and sample Deep Work session.
 - Onboarding completion is persisted locally.
@@ -409,13 +411,14 @@ Zen's assistant can currently use tools for:
 ## Settings
 
 - Settings sections: Appearance, Connections, AI Behavior, Billing, Data.
-- Appearance controls font, font size, accent color, glass/transparency, and reduced motion.
-- Accent presets are available and applied through CSS variables.
+- Appearance controls app look, font, font size, glass/transparency, and reduced motion; the accent color is owned by the chosen look.
 - Connections manage Google, Canvas, Zotero, GitHub, Drive/source settings, and the encrypted vault.
 - AI Behavior manages tool permissions.
 - Billing shows account/subscription state.
+- Data settings can export a full local backup (notes, Deep Work, quizzes, memory, settings — no auth tokens, sync cursors, or PDF binaries) and restore it non-destructively.
+- Data settings can copy a plain-text diagnostics report (version, platform, look, largest local stores, recent captured errors) for bug reports.
 - Data settings can export/import safe config keys.
-- Data settings can check desktop updates.
+- Data settings can check desktop updates; update-check failures are classified (offline, no published release, signature rejection, authorization) and shown with the specific reason, raw error on hover.
 - Data settings can open release notes.
 - Data settings can reset tool permissions.
 - Data settings can clear conversations.
@@ -426,9 +429,12 @@ Zen's assistant can currently use tools for:
 ## Appearance And UI Personalization
 
 - Theme values are stored in `zen.appearance.v1`.
-- UI font options are configurable.
+- Three app looks — Zen (graphite + aurora, default), Veil (near-black violet with DarkVeil ink-wash), and Orb (deep-space blue with a plasma orb) — retint the whole shell via a `data-look` attribute and swap the ambient AI-activity background (AmbientOverlay). Each look owns its accent color (Zen blue, Veil violet, Orb cyan); there is no separate accent picker.
+- Home cards/rails read surface tokens (`--surface-card`, `--surface-rail`) so they retint per look.
+- React Bits components liven the shell: CardNav animated header (hosts search, notes toggle, AI toggle, Deep Work controls), LineSidebar settings nav, MagicBento tiled hub for the sources empty state.
+- UI font options: System, Inter, Geist, IBM Plex Sans, Literata, Newsreader, Atkinson Hyperlegible, and JetBrains Mono — all bundled locally (no CDN), applied via --font-ui.
 - Font size can be adjusted.
-- Accent color can be selected from presets.
+- Accent color follows the chosen look (per-look CSS token overrides).
 - Glass effect and reduced motion can be toggled.
 - Appearance changes hydrate and apply on launch.
 
@@ -481,7 +487,7 @@ Zen has exactly three subscription tiers. There is no Claude/Anthropic plan — 
 - API routes include account, subscriptions, AI chat, AI usage, health, sync collections, PDF binaries, connections, latest update, and update asset redirect.
 - API CORS and request rate limits are centralized.
 - API observability logs structured events and error fields.
-- GitHub release helpers fetch latest releases and redirect private assets through public update endpoints.
+- GitHub release helpers fetch latest releases and redirect private assets through public update endpoints; the manifest proxy resolves both filename and numeric asset-id GitHub URLs.
 - Production smoke script can validate deployed behavior.
 - Windows signing configuration script supports release packaging.
 - Icon generation script supports app icon assets.

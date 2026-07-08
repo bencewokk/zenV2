@@ -12,6 +12,8 @@
   --text-dim: #9aa0a8;
   --accent: #6ea8fe;
   --accent-dim: #3b5b8a;
+  /* --accent as bare channels, for rgba(var(--accent-rgb), a) washes/borders. */
+  --accent-rgb: 110, 168, 254;
   --danger: #f6685e;
   --ok: #4caf72;
   --radius: 10px;
@@ -39,8 +41,8 @@
    App looks — Settings → Appearance sets data-look on <html> (absent for the
    original "zen" look). Each look retints the core surface tokens; the shell
    gradient overrides live next to .zen-shell below, and the AI-activity
-   visual is swapped in AmbientOverlay. Accent stays user-chosen (it's set as
-   an inline style by applyAppearance, which beats these rules anyway).
+   visual is swapped in AmbientOverlay. The accent is owned by the look —
+   there is no separate accent picker.
    ───────────────────────────────────────────────────────────────────────── */
 :root[data-look="veil"] {
   --bg: #0e0c14;
@@ -51,6 +53,9 @@
   --radius: 14px;
   --surface-card: rgba(26, 21, 40, 0.72);
   --surface-rail: rgba(23, 19, 32, 0.62);
+  --accent: #a78bfa;
+  --accent-dim: #5c4d8a;
+  --accent-rgb: 167, 139, 250;
 }
 
 :root[data-look="orb"] {
@@ -62,6 +67,9 @@
   --radius: 12px;
   --surface-card: rgba(18, 27, 46, 0.72);
   --surface-rail: rgba(18, 26, 42, 0.62);
+  --accent: #4cc9f0;
+  --accent-dim: #2a6f84;
+  --accent-rgb: 76, 201, 240;
 }
 
 html, body, #root { height: 100%; margin: 0; }
@@ -95,6 +103,14 @@ body {
 }
 *::-webkit-scrollbar-corner {
   background: transparent;
+}
+/* Scrollable strips inside chrome (e.g. header session tabs) that must never
+   show a scrollbar — they still scroll via wheel/drag. */
+.zen-scrollbar-none {
+  scrollbar-width: none;
+}
+.zen-scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -151,7 +167,7 @@ body {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes zen-glow-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 var(--zen-glow-color, rgba(110, 168, 254, 0.45)); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--zen-glow-color, rgba(var(--accent-rgb), 0.45)); }
   50% { box-shadow: 0 0 0 6px rgba(0, 0, 0, 0); }
 }
 @keyframes zen-spin {

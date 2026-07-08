@@ -26,7 +26,7 @@ export interface CardNavItem {
   links: CardNavLink[];
 }
 /** Collapsed bar height — keep in sync with `.card-nav` / `.card-nav-top` CSS. */
-const COLLAPSED_H = 48;
+const COLLAPSED_H = 40;
 
 export interface CardNavProps {
   logoText?: string;
@@ -84,8 +84,14 @@ export default function CardNav({
     contentEl.style.pointerEvents = "auto";
     contentEl.style.position = "static";
     contentEl.style.height = "auto";
+    // Cards may still carry the closed-state translateY(50px), which inflates
+    // scrollHeight and leaves a phantom gap under the cards — measure untransformed.
+    const cards = Array.from(contentEl.querySelectorAll<HTMLElement>(".nav-card"));
+    const prevTransforms = cards.map((c) => c.style.transform);
+    cards.forEach((c) => (c.style.transform = "none"));
     void contentEl.offsetHeight;
-    const height = COLLAPSED_H + contentEl.scrollHeight + 4;
+    const height = COLLAPSED_H + contentEl.scrollHeight;
+    cards.forEach((c, i) => (c.style.transform = prevTransforms[i]));
     contentEl.style.visibility = prev.v;
     contentEl.style.pointerEvents = prev.p;
     contentEl.style.position = prev.pos;

@@ -1,4 +1,7 @@
 import { useRef, useState } from "react";
+import { CURRENT_VERSION } from "@/data/releaseNotes";
+import { collectBackup, parseBackup, applyBackup } from "@/services/backup";
+import { buildDiagnosticsReport } from "@/services/diagnostics";
 import { loadMemories, deleteMemory } from "@/services/memory";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { checkForUpdates, type UpdateCheckResult } from "@/services/update";
@@ -24,6 +27,7 @@ export function Data() {
   const resetPolicies = useToolPolicy((s) => s.resetAll);
   const openReleaseNotes = useReleaseNotes((s) => s.openModal);
   const fileRef = useRef<HTMLInputElement>(null);
+  const backupRef = useRef<HTMLInputElement>(null);
   const [updateState, setUpdateState] = useState<UpdateCheckResult | { status: "checking" } | { status: "idle" }>({ status: "idle" });
 
   function clearConversations() {
@@ -52,6 +56,28 @@ export function Data() {
     setTimeout(() => location.reload(), 350);
   }
 
+  async function exportBackup() {
+    const backup = await collectBackup(CURRENT_VERSION);
+    const date = backup.exportedAt.slice(0, 10);
+    downloadJson(JSON.stringify(backup, null, 2), `zen-backup-${date}.json`);
+    notify.success(`Backup saved — ${backup.notes.length} notes`);
+  }
+
+  function restoreBackup(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      void (async () => {
+        const backup = parseBackup(String(reader.result));
+        if (!backup) { notify.error("That file isn't a Zen backup"); return; }
+        if (!confirm(`Restore backup from ${backup.exportedAt.slice(0, 10)} (${backup.notes.length} notes)? Matching notes and settings are overwritten; nothing is deleted.`)) return;
+        const { notes } = await applyBackup(backup);
+        notify.success(`Restored ${notes} notes — reloading`);
+        setTimeout(() => location.reload(), 600);
+      })();
+    };
+    reader.readAsText(file);
+  }
+
   function exportSettings() {
     const out: Record<string, unknown> = {};
     for (const k of CONFIG_KEYS) {
@@ -60,13 +86,7 @@ export function Data() {
         try { out[k] = JSON.parse(raw); } catch { out[k] = raw; }
       }
     }
-    const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "zen-settings.json";
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadJson(JSON.stringify(out, null, 2), "zen-settings.json");
   }
 
   function importSettings(file: File) {
@@ -136,8 +156,17 @@ export function Data() {
 
   return (
     <div className="space-y-6">
-      <SettingsSection title="Backup" hint="Export or restore your keys, tool permissions, and appearance (no note content).">
-        <div className="flex gap-2">
+      <SettingsSection title="Backup" hint="Full backup covers notes, Deep Work, quizzes, memory, and settings (PDFs re-download via sync). Settings-only export carries no note content.">
+        <div className="flex flex-wrap gap-2">
+          <button className="zen-btn-ghost" onClick={() => void exportBackup()}>Export full backup…</button>
+          <button className="zen-btn-ghost" onClick={() => backupRef.current?.click()}>Restore backup…</button>
+          <input
+            ref={backupRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) restoreBackup(f); e.target.value = ""; }}
+          />
           <button className="zen-btn-ghost" onClick={exportSettings}>Export settings…</button>
           <button className="zen-btn-ghost" onClick={() => fileRef.current?.click()}>Import settings…</button>
           <input
@@ -148,6 +177,20 @@ export function Data() {
             onChange={(e) => { const f = e.target.files?.[0]; if (f) importSettings(f); e.target.value = ""; }}
           />
         </div>
+      </SettingsSection>
+
+      <SettingsSection title="Diagnostics" hint="Copies a plain-text report (version, platform, recent errors — no note content) to paste into a bug report.">
+        <button
+          className="zen-btn-ghost"
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(buildDiagnosticsReport(CURRENT_VERSION))
+              .then(() => notify.success("Diagnostics copied to clipboard"))
+              .catch(() => notify.error("Couldn't access the clipboard"));
+          }}
+        >
+          Copy diagnostics
+        </button>
       </SettingsSection>
 
       <SettingsSection title="Updates" hint="Check GitHub Releases for a newer desktop build, or see what changed.">
@@ -172,6 +215,16 @@ export function Data() {
       </SettingsSection>
     </div>
   );
+}
+
+function downloadJson(json: string, filename: string): void {
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function clearIndexedDb(name: string): Promise<void> {

@@ -170,8 +170,8 @@ export function DeepWorkV2({
 
   /** Icon + accent + title for a window, shared by its tab and its frame. */
   function describe(item: HomeTarget): { glyph: string; accent: string; title: string } {
-    if (item.type === "note") return { glyph: "✎", accent: "#60A5FA", title: notes[item.id]?.title || "Untitled" };
-    if (item.type === "event") return { glyph: "◷", accent: "#6ea8fe", title: events.find((e) => e.id === item.id)?.summary || "Event" };
+    if (item.type === "note") return { glyph: "✎", accent: "var(--accent)", title: notes[item.id]?.title || "Untitled" };
+    if (item.type === "event") return { glyph: "◷", accent: "var(--accent)", title: events.find((e) => e.id === item.id)?.summary || "Event" };
     if (item.type === "pdf") return { glyph: "📄", accent: "#e0a35f", title: pdfs[item.id]?.name || "PDF" };
     return { glyph: "✉", accent: "#b073e0", title: threads.find((t) => t.id === item.id)?.subject || "Email" };
   }
@@ -369,7 +369,7 @@ export function DeepWorkV2({
                   onCommit={commit}
                   {...stack}
                   glyph="✎"
-                  accent="#60A5FA"
+                  accent="var(--accent)"
                   title={note?.title || "Untitled"}
                   onHeaderContextMenu={(e) => openRelatedMenu(e, item)}
                 >
@@ -386,7 +386,7 @@ export function DeepWorkV2({
                   onCommit={commit}
                   {...stack}
                   glyph="◷"
-                  accent="#6ea8fe"
+                  accent="var(--accent)"
                   title={event?.summary || "Event"}
                   onHeaderContextMenu={(e) => openRelatedMenu(e, item)}
                 >

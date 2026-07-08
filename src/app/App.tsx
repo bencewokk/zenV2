@@ -284,6 +284,7 @@ export function App() {
                   >
                     AI
                   </button>
+                  {IS_TAURI && <WindowControls className="shrink-0" />}
                 </>
               }
               items={[
@@ -357,7 +358,6 @@ export function App() {
               ]}
             />
           </div>
-          {IS_TAURI && <WindowControls className="shrink-0 pt-2" />}
         </header>
       )}
 
