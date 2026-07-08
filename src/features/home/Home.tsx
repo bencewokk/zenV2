@@ -11,6 +11,7 @@ import {
 import { DeepWorkV2 } from "@/features/home/deepwork/DeepWorkV2";
 import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
 import { fmtClock, nextToReview, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { sessionQuizzes, useQuiz } from "@/features/home/deepwork/quizStore";
 import {
   reconcilePlan as reconcilePlanPure, nextSession, planHealth,
   fmtPlanDay, fmtStartMin, verdictColor, verdictLabel, mostUrgentExam, KIND_META,
@@ -20,6 +21,13 @@ import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { WhatsNew } from "@/features/home/ReleaseNotes";
 import { useNotes } from "@/features/notes/store";
+import { usePdfs } from "@/features/pdfs/store";
+import { useCommandPalette } from "@/features/search/CommandPalette";
+import { isSignedIn, onAuthChange } from "@/services/google/auth";
+import { loadProfile } from "@/services/memory";
+import { useSources } from "@/services/sources/store";
+import { loadSyncSettings } from "@/services/sync/settings";
+import { isSparkFirstRun, useSparkIntro } from "@/features/onboarding/sparkStore";
 import { docToText } from "@/shared/lib/docText";
 import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
 import { notify } from "@/shared/ui/notify";
@@ -28,6 +36,7 @@ import type { CalEvent } from "@/services/google/calendar";
 type AdminFocus = "calendar" | "mail";
 
 const HIDDEN_TARGETS_KEY = "zen.home.hidden-targets.v1";
+const TUTORIAL_KEY = "zen.dashboard-tutorial.v1";
 
 type HiddenTargets = Record<string, number>;
 
@@ -544,6 +553,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
 
               {!deepWork && <div className="space-y-6 px-1 pt-1">
                 <WhatsNew />
+                <DashboardTutorial />
                 <LabelManager />
                 <div>
                   <div className="mb-3 flex items-center justify-between gap-3">
@@ -607,6 +617,261 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
         </div>
 
       </div>
+    </section>
+  );
+}
+
+type TutorialManualState = {
+  hidden?: boolean;
+  done?: Record<string, boolean>;
+};
+
+type TutorialItem = {
+  key: string;
+  label: string;
+  done: boolean;
+  manual?: boolean;
+};
+
+type TutorialGroup = {
+  key: string;
+  title: string;
+  body: string;
+  action: string;
+  run: () => void;
+  items: TutorialItem[];
+};
+
+function DashboardTutorial() {
+  const notes = useNotes((s) => s.notes);
+  const createNote = useNotes((s) => s.create);
+  const renameNote = useNotes((s) => s.rename);
+  const selectNote = useNotes((s) => s.select);
+  const pdfCount = usePdfs((s) => Object.keys(s.pdfs).length);
+  const sourcesCount = useSources((s) => Object.keys(s.sources).length);
+  const sessions = useDeepWork((s) => s.sessions);
+  const order = useDeepWork((s) => s.order);
+  const switchSession = useDeepWork((s) => s.switchSession);
+  const createSession = useDeepWork((s) => s.createSession);
+  const quizzes = useQuiz((s) => s.quizzes);
+  const quizOrder = useQuiz((s) => s.order);
+  const setManualDeepWork = useHome((s) => s.setManualDeepWork);
+  const setWorkspace = useWorkspace((s) => s.set);
+  const startSpark = useSparkIntro((s) => s.start);
+  const [signedIn, setSignedIn] = useState(() => isSignedIn());
+  const [manual, setManual] = useState<TutorialManualState>(() => readTutorialState());
+  const [syncEnabled, setSyncEnabled] = useState(() => loadSyncSettings().enabled);
+  const [profileSaved, setProfileSaved] = useState(() => hasProfile());
+
+  useEffect(() => onAuthChange(setSignedIn), []);
+  useEffect(() => {
+    const refresh = () => {
+      setSyncEnabled(loadSyncSettings().enabled);
+      setProfileSaved(hasProfile());
+    };
+    window.addEventListener("storage", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  useEffect(() => writeTutorialState(manual), [manual]);
+
+  if (manual.hidden) return null;
+
+  const allSessions = sessionList({ sessions, order }).filter((session) => !session.archived);
+  const hasSession = allSessions.length > 0;
+  const activeSession = allSessions.find((session) => session.id === useDeepWork.getState().activeId) ?? allSessions[0] ?? null;
+  const hasDeepWorkItem = allSessions.some((session) => session.items.length > 0);
+  const hasIntent = allSessions.some((session) => session.intent.trim());
+  const hasBackbone = allSessions.some((session) => !!session.backbone?.concepts.length);
+  const hasFocus = allSessions.some((session) => session.focusSessions > 0 || session.focusMs > 0);
+  const hasGradedQuiz = allSessions.some((session) =>
+    sessionQuizzes({ quizzes, order: quizOrder }, session.id).some((quiz) => quiz.status === "graded")
+  );
+  const noteCount = Object.keys(notes).length;
+  const setupDone = !isSparkFirstRun();
+  const manualDone = manual.done ?? {};
+  const markManual = (key: string) => {
+    setManual((current) => ({ ...current, done: { ...current.done, [key]: !current.done?.[key] } }));
+  };
+  const setManualDone = (key: string) => {
+    setManual((current) => ({ ...current, done: { ...current.done, [key]: true } }));
+  };
+  const openDeepWork = () => {
+    if (activeSession) switchSession(activeSession.id);
+    else createSession("First Deep Work session");
+    selectNote(null);
+    setWorkspace({ surface: "home", adminMailId: null });
+    setManualDeepWork(true);
+  };
+  const openSettings = () => {
+    setManualDone("settings");
+    selectNote(null);
+    setManualDeepWork(false);
+    setWorkspace({ surface: "settings", adminMailId: null });
+  };
+  const openSources = () => {
+    selectNote(null);
+    setManualDeepWork(false);
+    setWorkspace({ surface: "sources", adminMailId: null });
+  };
+
+  const groups: TutorialGroup[] = [
+    {
+      key: "setup",
+      title: "Set Up Zen",
+      body: "Finish the foundation so Zen knows what it may connect.",
+      action: "Replay setup",
+      run: startSpark,
+      items: [
+        { key: "spark", label: "Finish Spark setup", done: setupDone },
+        { key: "identity", label: signedIn ? "Google connected" : "Google or local-only chosen", done: setupDone || signedIn },
+        { key: "sync", label: syncEnabled ? "Sync enabled" : "Sync or local-only chosen", done: setupDone || syncEnabled },
+        { key: "profile", label: "Private profile saved or skipped", done: setupDone || profileSaved },
+      ],
+    },
+    {
+      key: "material",
+      title: "Collect Material",
+      body: "Open or create the material Zen will help you study.",
+      action: noteCount ? "Try search" : "Create note",
+      run: () => {
+        if (noteCount) {
+          setManualDone("search");
+          useCommandPalette.getState().setOpen(true);
+          return;
+        }
+        void createNote(null).then((id) => {
+          void renameNote(id, "First study note");
+          selectNote(id);
+        });
+      },
+      items: [
+        { key: "note", label: "Create or open a note", done: noteCount > 0 },
+        { key: "pdf", label: "Open the sample PDF or add one", done: pdfCount > 0 },
+        { key: "search", label: "Try Ctrl/Cmd+K search", done: !!manualDone.search, manual: true },
+      ],
+    },
+    {
+      key: "deepwork",
+      title: "Start Deep Work",
+      body: "Turn loose notes, PDFs, events, or mail into one study workspace.",
+      action: "Open Deep Work",
+      run: openDeepWork,
+      items: [
+        { key: "session", label: "Create or open a session", done: hasSession },
+        { key: "session-item", label: "Add a note, PDF, event, or email", done: hasDeepWorkItem },
+        { key: "session-intent", label: "Name the session or set intent", done: hasIntent },
+        { key: "arrange", label: "Move or resize one source window", done: !!manualDone.arrange, manual: true },
+      ],
+    },
+    {
+      key: "study",
+      title: "Study And Quiz",
+      body: "Use the learning loop: backbone, focus, quiz, feedback.",
+      action: "Go study",
+      run: openDeepWork,
+      items: [
+        { key: "backbone", label: "Generate or view a study backbone", done: hasBackbone },
+        { key: "focus", label: "Start one focus session", done: hasFocus },
+        { key: "quiz", label: "Answer and grade a quiz", done: hasGradedQuiz },
+        { key: "lesson", label: "Try a lesson/class", done: !!manualDone.lesson, manual: true },
+      ],
+    },
+    {
+      key: "connect",
+      title: "Connect Real Life",
+      body: "Bring in outside academic context when you want it.",
+      action: sourcesCount ? "Open Sources" : "Connect sources",
+      run: sourcesCount ? openSources : openSettings,
+      items: [
+        { key: "google", label: "Connect Google or stay local", done: setupDone || signedIn },
+        { key: "sources", label: "Refresh or import a connected source", done: sourcesCount > 0 },
+        { key: "add-real", label: "Add a source/event/email to Deep Work", done: !!manualDone["add-real"], manual: true },
+      ],
+    },
+    {
+      key: "trust",
+      title: "Trust And Control",
+      body: "Know where data, AI tools, backups, and diagnostics live.",
+      action: "Open Settings",
+      run: openSettings,
+      items: [
+        { key: "settings", label: "Open Settings", done: !!manualDone.settings, manual: true },
+        { key: "tools", label: "Review AI tool permissions", done: !!manualDone.tools, manual: true },
+        { key: "backup", label: "Export backup or copy diagnostics", done: !!manualDone.backup, manual: true },
+      ],
+    },
+  ];
+
+  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  const done = groups.reduce((sum, group) => sum + group.items.filter((item) => item.done).length, 0);
+  const nextGroup = groups.find((group) => group.items.some((item) => !item.done)) ?? groups[groups.length - 1];
+
+  return (
+    <section className="rounded-[14px] border border-[rgba(var(--accent-rgb),0.28)] bg-[rgba(var(--accent-rgb),0.055)] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <SectionLabel>First Run Path</SectionLabel>
+          <div className="mt-1 text-sm font-semibold text-[var(--text)]">Try the core loop</div>
+          <p className="zen-secondary-copy mt-1 text-xs">Material → Deep Work → study → proof.</p>
+        </div>
+        <button
+          className="text-xs text-[var(--text-dim)] transition hover:text-[var(--text)]"
+          onClick={() => setManual((current) => ({ ...current, hidden: true }))}
+          title="Hide tutorial"
+        >
+          Hide
+        </button>
+      </div>
+
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
+        <div className="h-full rounded-full bg-[var(--accent)] transition-[width]" style={{ width: `${Math.round((done / total) * 100)}%` }} />
+      </div>
+      <div className="zen-meta mt-1.5 text-xs">{done} of {total} ticks complete</div>
+
+      <div className="mt-4 space-y-2.5">
+        {groups.map((group) => {
+          const groupDone = group.items.every((item) => item.done);
+          return (
+            <details key={group.key} className="group rounded-[12px] border border-[rgba(255,255,255,0.07)] bg-[rgba(255,255,255,0.02)] px-3 py-2" open={group.key === nextGroup.key && !groupDone}>
+              <summary className="flex cursor-pointer list-none items-center gap-2">
+                <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-[6px] border text-[11px] ${groupDone ? "border-transparent bg-[var(--accent)] text-black" : "border-[var(--border)] text-[var(--text-dim)]"}`}>
+                  {groupDone ? "✓" : group.items.filter((item) => item.done).length}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-[var(--text)]">{group.title}</span>
+                  <span className="zen-secondary-copy block text-xs">{group.body}</span>
+                </span>
+                <span className="text-xs text-[var(--text-dim)] transition group-open:rotate-90">→</span>
+              </summary>
+              <div className="mt-3 space-y-2">
+                {group.items.map((item) => (
+                  <button
+                    key={item.key}
+                    className="flex w-full items-start gap-2 text-left text-xs"
+                    disabled={!item.manual}
+                    onClick={() => item.manual && markManual(item.key)}
+                    title={item.manual ? "Toggle this tick manually" : undefined}
+                  >
+                    <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border text-[10px] ${item.done ? "border-transparent bg-[var(--text-dim)] text-black" : "border-[var(--border)] text-transparent"}`}>
+                      ✓
+                    </span>
+                    <span className={item.done ? "text-[var(--text-dim)] line-through" : "text-[var(--text)]"}>{item.label}</span>
+                  </button>
+                ))}
+                <button className="zen-btn-ghost mt-1 w-full justify-center" onClick={group.run}>{group.action}</button>
+              </div>
+            </details>
+          );
+        })}
+      </div>
+
+      <button className="zen-btn zen-shine mt-4 w-full justify-center" onClick={nextGroup.run}>
+        Next: {nextGroup.action}
+      </button>
     </section>
   );
 }
@@ -679,6 +944,30 @@ function LabelRow({ name, hint, onRemove }: { name: string; hint: string; onRemo
       />
     </div>
   );
+}
+
+function hasProfile(): boolean {
+  const profile = loadProfile();
+  return !!(profile.name.trim() || profile.about.trim() || profile.stack.trim() || profile.preferences.trim());
+}
+
+function readTutorialState(): TutorialManualState {
+  try {
+    const raw = localStorage.getItem(TUTORIAL_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as TutorialManualState;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeTutorialState(state: TutorialManualState) {
+  try {
+    localStorage.setItem(TUTORIAL_KEY, JSON.stringify(state));
+  } catch {
+    /* ignore */
+  }
 }
 
 function FocusWorkspace({

@@ -59,14 +59,6 @@
   60% { transform: translate(-50%, -50%) scale(0.85); }
   100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
-/* Once the app schematic takes over, the spark recedes to a quiet glow. */
-.spark-intro--staged .spark-intro__spark {
-  animation: spark-recede 700ms var(--ease-out) forwards;
-}
-@keyframes spark-recede {
-  to { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
-}
-
 /* ── Title: split-text style char stagger, done natively ─────────────────── */
 .spark-intro__stage {
   position: relative;
@@ -112,70 +104,6 @@
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
-/* ── App schematic — a minimal, self-assembling frame ────────────────────── */
-.spark-frame {
-  position: relative;
-  z-index: 2;
-  width: min(880px, 92vw);
-  height: min(500px, 66vh);
-  border-radius: 16px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
-  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.55);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  opacity: 0;
-  transform: translateY(14px) scale(0.98);
-  animation: spark-frame-in 640ms var(--ease-out) forwards;
-}
-@keyframes spark-frame-in {
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.spark-frame__header {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 46px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
-  overflow: hidden;
-}
-.spark-frame__wordmark {
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--text);
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-.spark-frame__spacer { flex: 1 1 auto; }
-
-.spark-chip {
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  background: transparent;
-  white-space: nowrap;
-  opacity: 0;
-  transform: translateY(-6px) scale(0.92);
-  transition: opacity 360ms var(--ease-out), transform 360ms var(--ease-spring),
-    color 300ms var(--ease-out), border-color 300ms var(--ease-out),
-    box-shadow 300ms var(--ease-out);
-}
-.spark-chip--in { opacity: 1; transform: translateY(0) scale(1); }
-/* The chip currently being explained lights to the accent. */
-.spark-chip--active {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
-.spark-frame__body { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 /* ── Step title + look chooser ───────────────────────────────────────────── */
 .spark-intro__steptitle {
@@ -297,6 +225,11 @@
   flex-wrap: wrap;
   gap: 7px;
 }
+.spark-source-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .spark-source-pill {
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -311,83 +244,37 @@
   color: var(--accent);
   cursor: default;
 }
+.spark-source-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.spark-source-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.spark-source-field span {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text);
+}
+@media (max-width: 900px) {
+  .spark-source-fields {
+    grid-template-columns: 1fr;
+  }
+}
 .spark-profile {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.spark-mock { flex: 1 1 auto; min-width: 0; display: flex; gap: 12px; overflow: hidden; }
-.spark-mock--pad { padding: 16px; flex-direction: column; }
-.spark-mock--center { flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
-.spark-mock__home { gap: 12px; }
-.spark-mock-bento { flex: 1 1 auto; min-height: 0; }
-
-.spark-mock__h { height: 12px; border-radius: 6px; background: color-mix(in srgb, var(--text) 16%, transparent); width: 55%; }
-.spark-mock__line { height: 9px; border-radius: 5px; background: color-mix(in srgb, var(--text) 9%, transparent); }
-
-/* notes */
-.spark-mock__notes { width: 190px; flex: 0 0 auto; border-right: 1px solid var(--border); padding: 14px; display: flex; flex-direction: column; gap: 8px; }
-.spark-mock__note { font-size: 12px; color: var(--text-dim); padding: 7px 9px; border-radius: 8px; background: color-mix(in srgb, var(--text) 5%, transparent); }
-.spark-mock__note--active { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.spark-mock__editor { flex: 1 1 auto; padding: 16px; display: flex; flex-direction: column; gap: 11px; }
-
-/* deep work */
-.spark-mock__timer { font-size: 52px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); font-variant-numeric: tabular-nums; }
-.spark-mock__bar { width: min(360px, 70%); height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); overflow: hidden; }
-.spark-mock__bar span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
-.spark-mock__chips { display: flex; gap: 8px; }
-.spark-mock__chips span { font-size: 12px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
-
-/* calendar */
-.spark-mock__cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; height: 100%; }
-.spark-mock__cell { border-radius: 8px; background: color-mix(in srgb, var(--text) 6%, transparent); border: 1px solid var(--border); }
-.spark-mock__cell--event { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-
-/* mail */
-.spark-mock__mailrow { display: flex; align-items: center; gap: 10px; padding: 11px 6px; border-bottom: 1px solid var(--border); }
-.spark-mock__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: 0 0 auto; }
-.spark-mock__dot--unread { background: var(--accent); }
-.spark-mock__mailtext { font-size: 13px; color: var(--text); }
-
-/* ai */
-.spark-mock__ai { align-items: stretch; gap: 10px; }
-.spark-mock__bubble { max-width: 78%; font-size: 13px; padding: 9px 12px; border-radius: 12px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); align-self: flex-start; }
-.spark-mock__bubble--me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 20%, transparent); }
-
-/* settings */
-.spark-mock__settings { flex-direction: row; gap: 20px; }
-.spark-mock__settingspane { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; padding-top: 6px; }
-
-/* ── Caption — the little tutorial line under the frame ──────────────────── */
-.spark-intro__caption {
-  position: relative;
-  z-index: 2;
-  min-height: 40px;
-  max-width: 40ch;
-  margin-top: 22px;
-  text-align: center;
-  color: var(--text-dim);
-  font-size: 14px;
-  line-height: 1.5;
-}
-.spark-intro__caption b { color: var(--text); font-weight: 600; }
-.spark-caption-swap {
-  animation: spark-fade-up 420ms var(--ease-out) both;
-}
-
-/* ── Controls ────────────────────────────────────────────────────────────── */
-.spark-intro__controls {
-  position: absolute;
-  z-index: 3;
-  bottom: 26px;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-}
 .spark-intro__skip {
   position: absolute;
   top: 20px;
@@ -404,16 +291,6 @@
 }
 .spark-intro__skip:hover { color: var(--text); border-color: var(--border); }
 
-.spark-intro__dots { display: inline-flex; gap: 6px; align-items: center; }
-.spark-intro__dot {
-  height: 6px;
-  width: 6px;
-  border-radius: 999px;
-  background: var(--border);
-  transition: width 260ms var(--ease-out), background 260ms var(--ease-out);
-}
-.spark-intro__dot--on { width: 20px; background: var(--accent); }
-
 /* Exit dissolve when entering the app. */
 .spark-intro--leaving { animation: spark-out 520ms var(--ease-out) forwards; }
 @keyframes spark-out {
@@ -424,11 +301,7 @@
    [data-reduce-motion] rules already near-zero the durations; these keep the
    end state correct for the few properties they don't cover. */
 [data-reduce-motion] .spark-intro__char,
-[data-reduce-motion] .spark-intro__subtitle,
-[data-reduce-motion] .spark-canvas-line,
-[data-reduce-motion] .spark-frame,
-[data-reduce-motion] .spark-chip,
-[data-reduce-motion] .spark-frame__notes {
+[data-reduce-motion] .spark-intro__subtitle {
   opacity: 1;
   transform: none;
   filter: none;
