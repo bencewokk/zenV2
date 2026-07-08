@@ -1371,3 +1371,33 @@ math-field:focus-within { border-color: var(--accent); }
   height: 0;
   pointer-events: none;
 }
+
+/* ---------------------------------------------------------------------------
+   Calm bento dashboard — the whole home surface laid out as restful tiles in a
+   true (row-first) masonry grid, packed by height via the Masonry component
+   (grid-auto-rows + per-child row spans). Matches the zen mindset: no motion,
+   just a quiet border shift on hover for interactive tiles.
+   --------------------------------------------------------------------------- */
+.bento-masonry {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: 8px;
+  gap: 12px;
+  align-items: start;
+}
+@media (min-width: 768px) {
+  .bento-masonry { grid-template-columns: repeat(2, 1fr); }
+}
+@media (min-width: 1280px) {
+  .bento-masonry { grid-template-columns: repeat(3, 1fr); }
+}
+
+.bento-tile {
+  position: relative;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  padding: 1.25rem;
+  overflow: hidden;
+  transition: border-color 0.3s ease, background 0.3s ease;
+}

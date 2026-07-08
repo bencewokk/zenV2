@@ -283,36 +283,51 @@ export interface MagicBentoProps {
   clickEffect?: boolean;
   enableMagnetism?: boolean;
   className?: string;
+  /**
+   * Calm mode: switches off every motion/glow effect (stars, spotlight, border
+   * glow, tilt, magnetism, ripple) and softens the hover so the grid reads as
+   * plain, restful cards. Individual effect props still win if passed explicitly.
+   */
+  calm?: boolean;
 }
 
 export default function MagicBento({
   cards = DEFAULT_CARDS,
   textAutoHide = true,
-  enableStars = true,
-  enableSpotlight = true,
-  enableBorderGlow = true,
+  enableStars,
+  enableSpotlight,
+  enableBorderGlow,
   disableAnimations = false,
   spotlightRadius = DEFAULT_SPOTLIGHT_RADIUS,
   particleCount = DEFAULT_PARTICLE_COUNT,
-  enableTilt = false,
+  enableTilt,
   glowColor,
-  clickEffect = true,
-  enableMagnetism = true,
+  clickEffect,
+  enableMagnetism,
   className = "",
+  calm = false,
 }: MagicBentoProps) {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const isMobile = useMobileDetection();
   const shouldDisable = disableAnimations || isMobile;
   const glow = glowColor ?? accentRgb();
 
+  // Calm mode is the restful default-off for every effect; explicit props override.
+  const stars = enableStars ?? !calm;
+  const spotlight = enableSpotlight ?? !calm;
+  const borderGlow = enableBorderGlow ?? !calm;
+  const tilt = enableTilt ?? false;
+  const click = clickEffect ?? !calm;
+  const magnetism = enableMagnetism ?? !calm;
+
   return (
     <>
-      {enableSpotlight && (
+      {spotlight && (
         <GlobalSpotlight gridRef={gridRef} disableAnimations={shouldDisable} spotlightRadius={spotlightRadius} glowColor={glow} />
       )}
-      <div className={`card-grid bento-section ${className}`} ref={gridRef}>
+      <div className={`card-grid bento-section ${calm ? "magic-bento--calm" : ""} ${className}`} ref={gridRef}>
         {cards.map((card, index) => {
-          const cls = `magic-bento-card ${textAutoHide ? "magic-bento-card--text-autohide" : ""} ${enableBorderGlow ? "magic-bento-card--border-glow" : ""}`;
+          const cls = `magic-bento-card ${textAutoHide ? "magic-bento-card--text-autohide" : ""} ${borderGlow ? "magic-bento-card--border-glow" : ""}`;
           const style = { "--glow-color": glow } as CSSProperties;
           const content = (
             <>
@@ -325,7 +340,7 @@ export default function MagicBento({
               </div>
             </>
           );
-          if (enableStars) {
+          if (stars) {
             return (
               <ParticleCard
                 key={index}
@@ -334,9 +349,9 @@ export default function MagicBento({
                 disableAnimations={shouldDisable}
                 particleCount={particleCount}
                 glowColor={glow}
-                enableTilt={enableTilt}
-                clickEffect={clickEffect}
-                enableMagnetism={enableMagnetism}
+                enableTilt={tilt}
+                clickEffect={click}
+                enableMagnetism={magnetism}
                 onClick={card.onClick}
               >
                 {content}

@@ -79,5 +79,17 @@
 }
 
 .mb-particle-container:hover { box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2), 0 0 24px rgba(var(--glow-color), 0.2); }
+
+/* Calm variant — no lift, no glow; a quiet border/background shift on hover so
+   the grid stays restful and blends into the surrounding surface. */
+.magic-bento--calm .magic-bento-card {
+  transition: border-color 0.3s ease, background 0.3s ease;
+}
+.magic-bento--calm .magic-bento-card:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--text-dim);
+  background: var(--bg-elev);
+}
 .mb-global-spotlight { mix-blend-mode: screen; will-change: transform, opacity; z-index: 200 !important; pointer-events: none; }
 .bento-section { position: relative; user-select: none; }

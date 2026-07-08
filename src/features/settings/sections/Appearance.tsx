@@ -4,10 +4,12 @@ import {
   UI_FONTS, APP_LOOKS, type AppearanceSettings,
 } from "@/services/appearance";
 import { SettingsSection, Field } from "../ui";
+import { isTutorialHidden, setTutorialHidden } from "@/features/home/dashboardPrefs";
 
 /** App look, motion, and UI font. Changes apply live. */
 export function Appearance() {
   const [s, setS] = useState<AppearanceSettings>(() => loadAppearance());
+  const [showTutorial, setShowTutorial] = useState(() => !isTutorialHidden());
 
   // Apply + persist on every change so the user sees it immediately.
   function update(patch: Partial<AppearanceSettings>) {
@@ -78,6 +80,20 @@ export function Appearance() {
             onChange={(e) => update({ reduceMotion: e.target.checked })}
           />
           Reduce motion
+        </label>
+      </SettingsSection>
+
+      <SettingsSection title="Dashboard" hint="The first-run tutorial (“First Run Path”) shown at the top of the dashboard.">
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={showTutorial}
+            onChange={(e) => {
+              setShowTutorial(e.target.checked);
+              setTutorialHidden(!e.target.checked);
+            }}
+          />
+          Show dashboard tutorial
         </label>
       </SettingsSection>
     </div>

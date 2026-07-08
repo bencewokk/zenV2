@@ -95,8 +95,7 @@ function SourcesHub({ onPick }: { onPick: (provider: "all" | SourceProvider) => 
           { label: "Web", title: "Web captures", description: "Clip any page with the extension", onClick: () => onPick("web") },
           { label: "All", title: "Everything", description: "Browse every connected source", onClick: () => onPick("all") },
         ]}
-        enableTilt
-        spotlightRadius={280}
+        calm
       />
     </div>
   );
