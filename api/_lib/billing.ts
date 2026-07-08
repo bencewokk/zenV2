@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb, withMongoTransaction } from "./db.js";
 
-export type SubscriptionTier = "free" | "basic" | "plus";
+export type SubscriptionTier = "free" | "trial" | "basic" | "plus";
 export type DeepSeekModel = "deepseek-v4-flash" | "deepseek-v4-pro";
 
 export interface SubscriptionRecord {
@@ -47,18 +47,24 @@ function periodLabel(subscription: SubscriptionRecord, date = new Date()): strin
   return currentPeriod(date);
 }
 
+/** Map a website user record's plan/status to a tier. Pure, for testability. */
+export function tierFromExternal(activePlan: unknown, subscriptionStatus: unknown): SubscriptionTier {
+  const active = ["active", "trialing"].includes(String(subscriptionStatus ?? "").toLowerCase());
+  const plan = String(activePlan ?? "").toLowerCase();
+  // Canonical plan names are "trial", "basic", and "plus". The extra keywords
+  // are legacy values that may still exist on older website records — kept only
+  // so those subscribers don't silently lose access; never shown in the UI.
+  return !active ? "free"
+    : ["plus", "claude", "anthropic"].includes(plan) ? "plus"
+    : ["basic", "deepseek"].includes(plan) ? "basic"
+    : plan === "trial" ? "trial" : "free";
+}
+
 export async function subscriptionFor(userId: string): Promise<SubscriptionRecord> {
   const db = await getDb();
   const external = await db.collection<ExternalUserRecord>("users").findOne({ googleSub: userId });
   if (external) {
-    const active = ["active", "trialing"].includes(String(external.subscriptionStatus ?? "").toLowerCase());
-    const plan = String(external.activePlan ?? "").toLowerCase();
-    // Canonical plan names are "basic" and "plus". The extra keywords are legacy
-    // values that may still exist on older website records — kept only so those
-    // subscribers don't silently lose access; never shown in the UI.
-    const tier: SubscriptionTier = !active ? "free"
-      : ["plus", "claude", "anthropic"].includes(plan) ? "plus"
-      : ["basic", "deepseek"].includes(plan) ? "basic" : "free";
+    const tier = tierFromExternal(external.activePlan, external.subscriptionStatus);
     return {
       userId, tier, updatedAt: external.subscriptionUpdatedAt?.getTime() ?? 0, source: "users",
       status: external.subscriptionStatus,
@@ -83,6 +89,10 @@ function positiveNumber(name: string, fallback: number): number {
 }
 
 export function budgetUsdFor(tier: SubscriptionTier): number {
+  // Trial: a small one-off taster budget (~€0.50). The website sets
+  // currentPeriodEnd to the trial's end, so the budget is scoped to that
+  // window by periodFor and never renews.
+  if (tier === "trial") return positiveNumber("AI_BUDGET_TRIAL_USD", 0.5);
   if (tier === "basic") return positiveNumber("AI_BUDGET_BASIC_USD", 5);
   if (tier === "plus") return positiveNumber("AI_BUDGET_PLUS_USD", 25);
   return 0;
@@ -95,6 +105,7 @@ export function budgetUsdFor(tier: SubscriptionTier): number {
  */
 const TIER_MODELS: Record<SubscriptionTier, DeepSeekModel[]> = {
   free: [],
+  trial: ["deepseek-v4-flash"],
   basic: ["deepseek-v4-flash"],
   plus: ["deepseek-v4-pro", "deepseek-v4-flash"],
 };
@@ -156,8 +167,9 @@ export async function reserveAIRequest(userId: string, payload: Record<string, u
   const now = Date.now();
   await recoverStaleReservations(userId);
   await enforceRateLimit(userId);
+  const budgetLabel = subscription.tier === "trial" ? `$${budgetUsd} trial AI budget` : `$${budgetUsd} monthly AI budget`;
   const maxBeforeReserve = budgetPicoUsd - reservedPicoUsd;
-  if (maxBeforeReserve < 0) throw Object.assign(new Error(`This request is larger than the remaining $${budgetUsd} monthly AI budget.`), { code: "quota_exceeded", status: 429 });
+  if (maxBeforeReserve < 0) throw Object.assign(new Error(`This request is larger than the remaining ${budgetLabel}.`), { code: "quota_exceeded", status: 429 });
   const reserved = await withMongoTransaction(async (db, session) => {
     const budgets = db.collection<BudgetRecord>("ai_usage_budgets");
     await budgets.updateOne(
@@ -177,7 +189,12 @@ export async function reserveAIRequest(userId: string, payload: Record<string, u
     );
     return true;
   });
-  if (!reserved) throw Object.assign(new Error(`Monthly AI budget reached ($${budgetUsd}).`), { code: "quota_exceeded", status: 429 });
+  if (!reserved) {
+    const message = subscription.tier === "trial"
+      ? `Trial AI budget used up ($${budgetUsd}). Get Basic on the Zen website to keep going.`
+      : `Monthly AI budget reached ($${budgetUsd}).`;
+    throw Object.assign(new Error(message), { code: "quota_exceeded", status: 429 });
+  }
   return { reservationId: id, tier: subscription.tier, model, period, budgetUsd, heldPicoUsd: reservedPicoUsd };
 }
 

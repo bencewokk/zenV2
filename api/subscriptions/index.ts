@@ -22,7 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const secret = process.env.BILLING_WEBHOOK_SECRET;
     if (!secret || req.headers.authorization !== `Bearer ${secret}`) { res.status(401).json({ error: "unauthorized" }); return; }
     const body = (req.body ?? {}) as { userId?: string; tier?: SubscriptionTier; source?: string };
-    if (!body.userId || !["free", "basic", "plus"].includes(String(body.tier))) { res.status(400).json({ error: "userId and valid tier required" }); return; }
+    if (!body.userId || !["free", "trial", "basic", "plus"].includes(String(body.tier))) { res.status(400).json({ error: "userId and valid tier required" }); return; }
     res.status(200).json(await setSubscription(body.userId, body.tier!, body.source)); return;
   }
   res.status(405).json({ error: "method not allowed" });

@@ -2,7 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { getAuthToken } from "@/services/google/auth";
 import { loadSyncSettings } from "@/services/sync/settings";
 
-export type SubscriptionTier = "free" | "basic" | "plus";
+export type SubscriptionTier = "free" | "trial" | "basic" | "plus";
 export interface AIUsageStatus {
   tier: SubscriptionTier;
   period: string;
@@ -36,7 +36,7 @@ export async function loadAIUsageStatus(): Promise<AIUsageStatus> {
   const response = await httpFetch(`${base()}/api/ai-usage`, { headers: { Authorization: `Bearer ${await token()}` } });
   if (!response.ok) return parseError(response);
   const raw = await response.json().catch(() => ({})) as Partial<AIUsageStatus>;
-  const tier = raw.tier === "basic" || raw.tier === "plus" ? raw.tier : "free";
+  const tier = raw.tier === "trial" || raw.tier === "basic" || raw.tier === "plus" ? raw.tier : "free";
   const model = raw.model === "deepseek-v4-flash" || raw.model === "deepseek-v4-pro" ? raw.model : null;
   return {
     tier,

@@ -30,6 +30,8 @@ export function Billing() {
   const percent = budget ? Math.min(100, (spent / budget) * 100) : 0;
   const requests = (usage?.usage ?? []).reduce((sum, row) => sum + finite(row.requests), 0);
   const periodEnd = safeDate(subscription?.currentPeriodEnd);
+  const trial = usage?.tier === "trial";
+  const trialSpent = trial && budget > 0 && remaining < 0.005;
 
   return <div className="space-y-6">
     <SettingsSection title="Plan & usage" hint="Live account access and server-metered DeepSeek spend.">
@@ -51,17 +53,20 @@ export function Billing() {
       {error && <div className="rounded-[9px] border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">{error}</div>}
     </SettingsSection>
 
-    <SettingsSection title="This month" hint={`UTC calendar month${usage ? ` · ${usage.period}` : ""}`}>
+    <SettingsSection title={trial ? "Trial usage" : "This month"} hint={trial ? `One-off trial budget${usage ? ` · ${usage.period}` : ""}` : `UTC calendar month${usage ? ` · ${usage.period}` : ""}`}>
       <div className="grid grid-cols-3 gap-2">
         <Metric label="Spent" value={budget ? money(spent, 4) : "—"} />
         <Metric label="Remaining" value={budget ? money(remaining, 2) : "—"} />
         <Metric label="Requests" value={String(requests)} />
       </div>
       <div className="mt-3 rounded-[12px] border border-[var(--border)] bg-[var(--bg)] p-4">
-        <div className="flex items-center text-xs"><span className="font-medium text-[var(--text)]">Monthly AI budget</span><span className="ml-auto tabular-nums text-[var(--text-dim)]">{budget ? `${money(spent, 4)} of ${money(budget, 2)}` : "AI not included"}</span></div>
+        <div className="flex items-center text-xs"><span className="font-medium text-[var(--text)]">{trial ? "Trial AI budget" : "Monthly AI budget"}</span><span className="ml-auto tabular-nums text-[var(--text-dim)]">{budget ? `${money(spent, 4)} of ${money(budget, 2)}` : "AI not included"}</span></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--border)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width]" style={{ width: `${percent}%` }} /></div>
         <div className="mt-1.5 text-right text-[11px] tabular-nums text-[var(--text-dim)]">{budget ? `${percent.toFixed(1)}% used` : "Free plan"}</div>
       </div>
+      {trialSpent && <div className="mt-2 rounded-[10px] border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] px-3 py-2 text-xs text-[var(--text)]">
+        Your trial budget is used up. Liked it? Get <b>Basic</b> (€5/month) on the Zen website to keep the AI going.
+      </div>}
     </SettingsSection>
 
     <SettingsSection title="Model breakdown" hint="Settled provider usage for the current month.">

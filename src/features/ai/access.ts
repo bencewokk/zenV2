@@ -57,10 +57,10 @@ export const useAiAccess = create<AiAccessState>((set) => ({
   },
 }));
 
-/** Models the account may request. Plus can pick Pro or Flash; Basic is Flash-only. */
+/** Models the account may request. Plus can pick Pro or Flash; Trial and Basic are Flash-only. */
 export function availableModels(tier: SubscriptionTier | null): AiModel[] {
   if (tier === "plus") return ["pro", "flash"];
-  if (tier === "basic") return ["flash"];
+  if (tier === "basic" || tier === "trial") return ["flash"];
   return [];
 }
 

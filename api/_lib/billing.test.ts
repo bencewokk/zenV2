@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costPicoUsd, currentPeriod, estimatePicoUsd, modelFor, modelsFor, resolveModel, periodFor } from "./billing.js";
+import { budgetUsdFor, costPicoUsd, currentPeriod, estimatePicoUsd, modelFor, modelsFor, resolveModel, periodFor, tierFromExternal } from "./billing.js";
 
 describe("AI billing rules", () => {
   it("keeps tier model access deterministic", () => {
@@ -9,8 +9,25 @@ describe("AI billing rules", () => {
 
   it("exposes each tier's allowed model set", () => {
     expect(modelsFor("free")).toEqual([]);
+    expect(modelsFor("trial")).toEqual(["deepseek-v4-flash"]);
     expect(modelsFor("basic")).toEqual(["deepseek-v4-flash"]);
     expect(modelsFor("plus")).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
+  });
+
+  it("gives the trial tier a small taster budget, Flash-only", () => {
+    expect(budgetUsdFor("trial")).toBe(0.5);
+    expect(budgetUsdFor("free")).toBe(0);
+    expect(resolveModel("trial", "pro")).toBe("deepseek-v4-flash");
+  });
+
+  it("maps website plan/status records to tiers", () => {
+    expect(tierFromExternal("trial", "active")).toBe("trial");
+    expect(tierFromExternal("trial", "trialing")).toBe("trial");
+    expect(tierFromExternal("trial", "canceled")).toBe("free");
+    expect(tierFromExternal("basic", "active")).toBe("basic");
+    expect(tierFromExternal("plus", "active")).toBe("plus");
+    expect(tierFromExternal("unknown-plan", "active")).toBe("free");
+    expect(tierFromExternal(undefined, undefined)).toBe("free");
   });
 
   it("enforces the tier's allowed models against client requests", () => {
