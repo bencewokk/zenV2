@@ -3,7 +3,8 @@
  * canvas viewer (UI) import from here so the worker is wired up exactly once.
  *
  * The `?url` import makes Vite emit a hashed asset and hand back a resolvable
- * URL — works in dev and `vite build`. Tauri's CSP is null, so no extra plumbing.
+ * URL — works in dev and `vite build`. Tauri's CSP allows `worker-src blob:`,
+ * so the worker loads without extra plumbing.
  */
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
