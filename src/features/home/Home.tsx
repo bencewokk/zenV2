@@ -440,7 +440,6 @@ function DashboardTutorial() {
   const sessions = useDeepWork((s) => s.sessions);
   const order = useDeepWork((s) => s.order);
   const switchSession = useDeepWork((s) => s.switchSession);
-  const createSession = useDeepWork((s) => s.createSession);
   const quizzes = useQuiz((s) => s.quizzes);
   const quizOrder = useQuiz((s) => s.order);
   const setManualDeepWork = useHome((s) => s.setManualDeepWork);
@@ -489,7 +488,6 @@ function DashboardTutorial() {
   };
   const openDeepWork = () => {
     if (activeSession) switchSession(activeSession.id);
-    else createSession("First Deep Work session");
     selectNote(null);
     setWorkspace({ surface: "home", adminMailId: null });
     setManualDeepWork(true);
@@ -692,7 +690,6 @@ function QuickAccessBento({ onOpenAdmin }: { onOpenAdmin: (focus: AdminFocus, ta
   const renameNote = useNotes((s) => s.rename);
   const selectNote = useNotes((s) => s.select);
   const switchSession = useDeepWork((s) => s.switchSession);
-  const createSession = useDeepWork((s) => s.createSession);
   const setManualDeepWork = useHome((s) => s.setManualDeepWork);
   const setWorkspace = useWorkspace((s) => s.set);
 
@@ -701,7 +698,6 @@ function QuickAccessBento({ onOpenAdmin }: { onOpenAdmin: (focus: AdminFocus, ta
     const active = sessionList({ sessions, order }).find((session) => !session.archived && session.id === activeId)
       ?? sessionList({ sessions, order }).find((session) => !session.archived);
     if (active) switchSession(active.id);
-    else createSession();
     selectNote(null);
     setWorkspace({ surface: "home", adminMailId: null });
     setManualDeepWork(true);
@@ -1155,4 +1151,3 @@ function isTargetHidden(hiddenTargets: HiddenTargets, target: HomeTarget, now: n
   const until = hiddenTargets[targetKey(target)];
   return typeof until === "number" && until > now;
 }
-
