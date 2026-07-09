@@ -140,7 +140,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <aside className="zen-anim-slide-right flex w-[340px] shrink-0 flex-col border-l border-[var(--border)]">
+    <aside data-tour="study-panel" className="zen-anim-slide-right flex w-[340px] shrink-0 flex-col border-l border-[var(--border)]">
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Study</span>
         {backbone && (
@@ -181,6 +181,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
             </button>
           )}
           <button
+            data-tour="study-quiz"
             className="zen-pressable rounded-[10px] border border-[var(--accent)] bg-[var(--accent-dim)] px-3 py-3 text-left disabled:opacity-50"
             onClick={startQuiz}
             disabled={aiActionsDisabled}

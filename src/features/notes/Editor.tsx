@@ -110,6 +110,7 @@ export function Editor({ noteId }: { noteId: string }) {
     <div>
       {/* Title — explicit, editable */}
       <input
+        data-tour="note-title"
         value={note?.title === "Untitled" ? "" : note?.title ?? ""}
         onChange={(e) => void rename(noteId, e.target.value)}
         placeholder="Untitled"

@@ -262,6 +262,7 @@ export function App() {
                     <div className="zen-anim-fade inline-flex items-center gap-1 rounded-[8px] bg-[rgba(255,255,255,0.04)] p-0.5">
                       <FocusTimerButton />
                       <button
+                        data-tour="dw-study"
                         className={`${HEADER_BTN} ${showStudy ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
                         onClick={() => setShowStudy((v) => !v)}
                         title="Study panel — backbone, mastery & daily goal"

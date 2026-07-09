@@ -29,6 +29,13 @@ export interface TourStep {
    */
   interactive?: boolean;
   /**
+   * Optional "good job" / feedback shown *after* the action completes. When the
+   * action fires, instead of jumping to the next step the spotlight holds where
+   * it is and this message appears, confirming what just happened; the user
+   * clicks Next to move on. Only meaningful for action steps.
+   */
+  feedback?: string;
+  /**
    * Auto-advance when the user completes the step's action. Given an `advance`
    * callback, subscribe to whatever signals completion (usually a store) and
    * call `advance()` once; return an unsubscribe fn. The engine also guards

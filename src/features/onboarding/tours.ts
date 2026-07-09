@@ -3,6 +3,9 @@ import { useHome } from "@/features/home/store";
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
 import { useCommandPalette } from "@/features/search/CommandPalette";
+import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { useFocusStore } from "@/features/home/deepwork/useFocusSession";
+import { useQuiz } from "@/features/home/deepwork/quizStore";
 import { docToText } from "@/shared/lib/docText";
 import { useTour, type TourStep } from "./tourStore";
 
@@ -12,6 +15,7 @@ function goDashboard() {
   useHome.getState().setManualDeepWork(false);
   useWorkspace.getState().set({ surface: "home", adminMailId: null });
 }
+
 
 /**
  * The core study loop: capture → find → study → bring in material. Every anchor
@@ -78,7 +82,8 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     {
       id: "m-note",
       title: "Create a note",
-      body: "Click New note. It creates a note and drops you straight into the editor.",
+      body: "Notes are the core unit in Zen. Click New note to make your first one.",
+      feedback: "Nice — that's your note, open in the editor. Everything you do next lives here.",
       anchor: '[data-tour="new-note"]',
       interactive: true,
       beforeShow: goDashboard,
@@ -90,9 +95,47 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       },
     },
     {
+      id: "m-rename",
+      title: "Name your note",
+      body: "A clear title is how you'll find this later. Type a real name over “New note” up here.",
+      feedback: "That title now shows in search, the sidebar, and any links to this note.",
+      anchor: '[data-tour="note-title"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        // Advance only on a genuine, user-chosen rename of the *currently
+        // selected* note. Two hazards to avoid: (1) the create step fires on
+        // note-count change but selection/rename settle a tick later and in an
+        // unpredictable order, and (2) the new note is programmatically titled
+        // "New note". So: ignore the default placeholders entirely, baseline the
+        // title per selected note, and only advance when the current note's
+        // title is a real title that differs from its baseline.
+        const DEFAULTS = new Set(["", "New note", "Untitled"]);
+        let baseId = useNotes.getState().selectedId;
+        let baseTitle = baseId ? useNotes.getState().notes[baseId]?.title ?? "" : "";
+        return useNotes.subscribe((s) => {
+          const id = s.selectedId;
+          if (id !== baseId) {
+            baseId = id;
+            baseTitle = id ? s.notes[id]?.title ?? "" : "";
+            return;
+          }
+          const cur = (id ? s.notes[id]?.title ?? "" : "").trim();
+          if (cur && cur !== baseTitle && !DEFAULTS.has(cur)) advance();
+        });
+      },
+    },
+    {
+      id: "m-meta",
+      title: "Organise it",
+      body: "Optionally tag the note with a space, subject, unit, or comma-separated tags — these power search and filtering. MOC turns a note into a Map of Content that lists its child notes.",
+      anchor: '[data-tour="note-meta"]',
+      interactive: true,
+    },
+    {
       id: "m-write",
       title: "Write freely",
-      body: "This is the editor. Type at least a few words — Zen autosaves as you go, so there's no save button.",
+      body: "Type at least a few words in the editor.",
+      feedback: "Already saved — no save button, ever. Zen writes as you type.",
       anchor: '[data-tour="editor"]',
       interactive: true,
       advanceWhen: (advance) => {
@@ -108,7 +151,8 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     {
       id: "m-pdf",
       title: "Attach a PDF",
-      body: "Click 📄 PDFs to add or pick a PDF. It opens beside your note so you can study both together.",
+      body: "You can pin a PDF beside a note. Click 📄 PDFs, then add or pick one (optional).",
+      feedback: "Your PDF is docked next to the note — study both side by side.",
       anchor: '[data-tour="attach-pdf"]',
       anchorWhenOpen: '[data-tour="pdf-popover"]',
       interactive: true,
@@ -124,7 +168,8 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     {
       id: "m-search",
       title: "Find it later",
-      body: "Everything you add is searchable. Press Ctrl / ⌘ + K, then open any result.",
+      body: "Everything you add is indexed instantly. Press Ctrl / ⌘ + K, then open any result.",
+      feedback: "That's search — an instant jump to anything you've added.",
       anchor: '[data-tour="search-header"]',
       anchorWhenOpen: '[data-tour="command-palette"]',
       interactive: true,
@@ -162,6 +207,173 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       id: "m-done",
       title: "Material collected",
       body: "Notes, PDFs, and search — that's how your material gets into Zen. Back to the checklist.",
+    },
+  ],
+  deepwork: [
+    {
+      id: "dw-intro",
+      title: "Start Deep Work",
+      body: "Deep Work is one focused canvas per topic — notes, PDFs, events, and mail side by side. Let's build one.",
+      beforeShow: goDashboard,
+    },
+    {
+      id: "dw-open",
+      title: "Open Deep Work",
+      body: "Open the Deep Work canvas from here.",
+      feedback: "This is the Deep Work canvas — a workspace all its own.",
+      anchor: '[data-tour="deep-work"]',
+      interactive: true,
+      beforeShow: goDashboard,
+      advanceWhen: (advance) =>
+        useHome.subscribe((s, prev) => {
+          if (s.manualDeepWork && !prev.manualDeepWork) advance();
+        }),
+    },
+    {
+      id: "dw-session",
+      title: "Start a session",
+      body: "Each topic gets its own session. Click ＋ up here to start a fresh one.",
+      feedback: "That's a clean session — a blank canvas for this topic.",
+      anchor: '[data-tour="dw-new-session"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        const base = Object.keys(useDeepWork.getState().sessions).length;
+        return useDeepWork.subscribe((s) => {
+          if (Object.keys(s.sessions).length > base) advance();
+        });
+      },
+    },
+    {
+      id: "dw-name",
+      title: "Name the session",
+      body: "Double-click the session tab and type a topic name.",
+      feedback: "Named — jump between sessions from these tabs any time.",
+      anchor: '[data-tour="dw-session-tab"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        // Advance on a real rename of the active session (baseline per session,
+        // re-baseline if the active session changes).
+        let baseId = useDeepWork.getState().activeId;
+        let baseName = baseId ? useDeepWork.getState().sessions[baseId]?.name ?? "" : "";
+        return useDeepWork.subscribe((s) => {
+          const id = s.activeId;
+          if (id !== baseId) {
+            baseId = id;
+            baseName = id ? s.sessions[id]?.name ?? "" : "";
+            return;
+          }
+          const cur = id ? s.sessions[id]?.name ?? "" : "";
+          if (cur.trim() && cur !== baseName) advance();
+        });
+      },
+    },
+    {
+      id: "dw-add",
+      title: "Add a source",
+      body: "Pull in a note, PDF, event, or email. Click ＋ Add source, then pick one.",
+      feedback: "It opens as a movable window right on the canvas.",
+      anchor: '[data-tour="dw-add-source"]',
+      anchorWhenOpen: '[data-tour="dw-source-library"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        const base = useDeepWork.getState().items.length;
+        return useDeepWork.subscribe((s) => {
+          if (s.items.length > base) advance();
+        });
+      },
+    },
+    {
+      id: "dw-arrange",
+      title: "Arrange the canvas",
+      body: "Drag a window by its header, or resize it from the bottom-right corner.",
+      feedback: "Lay your sources out however helps you think.",
+      anchor: '[data-tour="dw-window"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        const snapshot = () => JSON.stringify(useDeepWork.getState().windows);
+        const base = snapshot();
+        return useDeepWork.subscribe(() => {
+          if (snapshot() !== base) advance();
+        });
+      },
+    },
+    {
+      id: "dw-done",
+      title: "That's Deep Work",
+      body: "One workspace per topic, all your sources in reach. Sessions live in the tabs up top.",
+    },
+  ],
+  study: [
+    {
+      id: "sq-intro",
+      title: "Study and quiz",
+      body: "Zen's learning loop lives in Deep Work: focus, quiz yourself, and watch your mastery climb.",
+      beforeShow: goDashboard,
+    },
+    {
+      id: "sq-open",
+      title: "Open Deep Work",
+      body: "The study tools live on the Deep Work canvas. Open it from here.",
+      feedback: "Good — studying always happens inside a Deep Work session.",
+      anchor: '[data-tour="deep-work"]',
+      interactive: true,
+      beforeShow: goDashboard,
+      advanceWhen: (advance) =>
+        useHome.subscribe((s, prev) => {
+          if (s.manualDeepWork && !prev.manualDeepWork) advance();
+        }),
+    },
+    {
+      id: "sq-study",
+      title: "Open the Study panel",
+      body: "Click Study to open your cockpit — mastery, quizzes, and your revision plan.",
+      feedback: "This panel tracks how ready you are and what to review next.",
+      anchor: '[data-tour="dw-study"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        const id = setInterval(() => {
+          if (document.querySelector('[data-tour="study-panel"]')) advance();
+        }, 200);
+        return () => clearInterval(id);
+      },
+    },
+    {
+      id: "sq-focus",
+      title: "Start a focus block",
+      body: "Click the timer, type some minutes, and press Enter. Focus blocks work even with AI off.",
+      feedback: "Timer's running — Zen logs your focus time against this session.",
+      anchor: '[data-tour="dw-timer"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        if (useFocusStore.getState().session) {
+          advance();
+          return () => {};
+        }
+        return useFocusStore.subscribe((s) => {
+          if (s.session) advance();
+        });
+      },
+    },
+    {
+      id: "sq-quiz",
+      title: "Quiz yourself",
+      body: "With AI on, Start quiz builds questions weighted to your weak spots, then grades them here.",
+      feedback: "Every graded answer updates your mastery so Zen re-tests what you miss.",
+      anchor: '[data-tour="study-quiz"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Skip — needs AI",
+      advanceWhen: (advance) => {
+        const base = Object.keys(useQuiz.getState().quizzes).length;
+        return useQuiz.subscribe((s) => {
+          if (Object.keys(s.quizzes).length > base) advance();
+        });
+      },
+    },
+    {
+      id: "sq-done",
+      title: "That's the loop",
+      body: "Focus, quiz, review — repeat, and your readiness climbs. Guided lessons live in the AI panel too.",
     },
   ],
 };

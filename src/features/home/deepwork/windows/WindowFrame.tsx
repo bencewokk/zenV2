@@ -189,6 +189,7 @@ export function WindowFrame({
   return (
     <div
       ref={rootRef}
+      data-tour="dw-window"
       onMouseDownCapture={onFocus}
       className={`absolute flex flex-col overflow-hidden rounded-[14px] border bg-[rgba(18,19,24,0.97)] ${
         active

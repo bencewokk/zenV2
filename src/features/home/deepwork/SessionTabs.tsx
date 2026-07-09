@@ -37,6 +37,7 @@ export function SessionTabs({ onOpen }: { onOpen?: () => void } = {}) {
         return (
           <div
             key={s.id}
+            data-tour={isActive ? "dw-session-tab" : undefined}
             className={`zen-anim-spring group flex shrink-0 items-center gap-1 rounded-[10px] border px-2 py-1 text-sm hover:scale-[1.03] [transition:transform_var(--motion-fast)_var(--ease-out),background-color_var(--motion-fast)_var(--ease-out),color_var(--motion-fast)_var(--ease-out),border-color_var(--motion-fast)_var(--ease-out)] ${
               isActive
                 ? "zen-glow border-[rgba(var(--accent-rgb),0.4)] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--text)]"
@@ -81,6 +82,7 @@ export function SessionTabs({ onOpen }: { onOpen?: () => void } = {}) {
         );
       })}
       <button
+        data-tour="dw-new-session"
         className="zen-pressable shrink-0 rounded-[10px] border border-[rgba(255,255,255,0.06)] px-2 py-1 text-sm text-[var(--text-dim)] hover:scale-110 hover:text-[var(--accent)]"
         onClick={() => { createSession(); onOpen?.(); }}
         title="New session"

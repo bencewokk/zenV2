@@ -311,6 +311,7 @@ export function DeepWorkV2({
             })
           )}
           <button
+            data-tour="dw-add-source"
             className="zen-pressable shrink-0 rounded-[8px] px-2 py-1 text-base leading-none text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
             onClick={() => setShowLibrary(true)}
             title="Add a note, PDF, event, or email to this session"

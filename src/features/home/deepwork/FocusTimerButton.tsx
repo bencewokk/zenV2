@@ -72,6 +72,7 @@ export function FocusTimerButton() {
 
   return (
     <button
+      data-tour="dw-timer"
       className="zen-pressable inline-flex h-7 items-center rounded-[6px] border border-[var(--border)] bg-[var(--bg-elev)] px-2.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
       onClick={() => setEditing(true)}
       title="Start a focus timer"

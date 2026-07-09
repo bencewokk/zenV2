@@ -91,6 +91,7 @@ export function SourceLibrary({
       onPointerDown={onClose}
     >
       <div
+        data-tour="dw-source-library"
         className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-[16px] border border-[var(--border)] bg-[rgba(18,19,24,0.98)] shadow-[0_24px_60px_rgba(0,0,0,0.4)]"
         onPointerDown={(e) => e.stopPropagation()}
       >

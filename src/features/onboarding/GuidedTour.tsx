@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTour } from "./tourStore";
 
 /**
@@ -23,6 +23,19 @@ export function GuidedTour() {
   const holeRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
 
+  // Two phases per action step: "act" (spotlight on the target, user performs
+  // the task) then "feedback" (the app's "good job" confirmation — spotlight
+  // holds where it is and the user clicks Next to continue). Steps without
+  // `feedback` advance straight to the next step when the action completes.
+  const [phase, setPhase] = useState<"act" | "feedback">("act");
+  const inFeedback = phase === "feedback";
+
+  // Reset to the action phase whenever the step changes.
+  useEffect(() => {
+    setPhase("act");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, index]);
+
   // Prepare the surface for this step before we start tracking its anchor.
   useEffect(() => {
     if (active && step) step.beforeShow?.();
@@ -39,6 +52,9 @@ export function GuidedTour() {
       if (hole && tip) {
         // Prefer a panel that the action just opened (palette/popover) so the
         // spotlight follows focus onto it instead of the button that spawned it.
+        // Prefer a panel the action opened (palette/popover); in the feedback
+        // phase the spotlight simply holds on the step's anchor ("focus doesn't
+        // move yet") until the user clicks Next.
         const openEl = step.anchorWhenOpen
           ? (document.querySelector(step.anchorWhenOpen) as HTMLElement | null)
           : null;
@@ -78,18 +94,20 @@ export function GuidedTour() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, index]);
 
-  // Action-driven steps: auto-advance when the user completes the task.
+  // Action-driven steps: when the user completes the task, either show the
+  // feedback phase (if the step has one) or advance straight to the next step.
   useEffect(() => {
-    if (!active || !step?.advanceWhen) return;
+    if (!active || inFeedback || !step?.advanceWhen) return;
     let fired = false;
     const unsub = step.advanceWhen(() => {
       if (fired) return;
       fired = true;
-      next();
+      if (step.feedback) setPhase("feedback");
+      else next();
     });
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, index]);
+  }, [active, index, inFeedback]);
 
   // Keyboard: only Esc (skip). Arrow/Enter are intentionally NOT bound — steps
   // are interactive, so the user types into the editor and search, and a global
@@ -105,11 +123,12 @@ export function GuidedTour() {
 
   if (!active || !step) return null;
   const isLast = index === steps.length - 1;
-  const actionRequired = !!step.advanceWhen;
+  const actionRequired = !!step.advanceWhen && !inFeedback;
+  const centered = !step.anchor;
 
   return (
     <div
-      className={`tour-root ${step.anchor ? "" : "tour-root--centered"} ${step.interactive ? "tour-root--interactive" : ""}`}
+      className={`tour-root ${centered ? "tour-root--centered" : ""} ${step.interactive ? "tour-root--interactive" : ""}`}
       role="dialog"
       aria-modal="true"
     >
@@ -119,8 +138,9 @@ export function GuidedTour() {
         <div className="tour-tip__step">
           {index + 1} / {steps.length}
         </div>
+        {inFeedback && <div className="tour-tip__done">✓ Done</div>}
         <div className="tour-tip__title">{step.title}</div>
-        <p className="tour-tip__body">{step.body}</p>
+        <p className="tour-tip__body">{inFeedback ? step.feedback : step.body}</p>
         {actionRequired && <div className="tour-tip__hint">Do this to continue →</div>}
         <div className="tour-tip__actions">
           <button className="tour-tip__skip" onClick={stop}>
@@ -132,15 +152,23 @@ export function GuidedTour() {
                 Back
               </button>
             )}
-            {step.optional && (
-              <button className="tour-tip__ghost" onClick={next}>
-                {step.skipLabel ?? "Skip step"}
-              </button>
-            )}
-            {!actionRequired && (
+            {inFeedback ? (
               <button className="tour-tip__next" onClick={next}>
                 {isLast ? "Done" : "Next"}
               </button>
+            ) : (
+              <>
+                {step.optional && (
+                  <button className="tour-tip__ghost" onClick={next}>
+                    {step.skipLabel ?? "Skip step"}
+                  </button>
+                )}
+                {!actionRequired && (
+                  <button className="tour-tip__next" onClick={next}>
+                    {isLast ? "Done" : "Next"}
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

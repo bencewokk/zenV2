@@ -24,7 +24,7 @@ export function NoteMeta({ note }: { note: Note }) {
   );
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-[var(--border)] pb-3 text-xs">
+    <div data-tour="note-meta" className="mb-4 flex flex-wrap items-center gap-2 border-b border-[var(--border)] pb-3 text-xs">
       {field("space")}
       {field("subject")}
       {field("unit")}
