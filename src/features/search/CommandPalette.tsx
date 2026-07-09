@@ -340,6 +340,7 @@ export function CommandPalette() {
       onMouseDown={() => setOpen(false)}
     >
       <div
+        data-tour="command-palette"
         className="zen-anim-rise-scale mt-[12vh] flex h-fit max-h-[60vh] w-full max-w-xl flex-col overflow-hidden rounded-[14px] border border-[var(--border)] bg-[rgba(18,19,24,0.97)] shadow-[0_24px_80px_rgba(0,0,0,0.5)]"
         onMouseDown={(e) => e.stopPropagation()}
       >

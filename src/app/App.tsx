@@ -18,6 +18,7 @@ import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker"
 import { CommandPalette, useCommandPalette } from "@/features/search/CommandPalette";
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { SparkIntro } from "@/features/onboarding/SparkIntro";
+import { GuidedTour } from "@/features/onboarding/GuidedTour";
 import CardNav from "@/shared/ui/reactbits/CardNav";
 import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
@@ -240,6 +241,7 @@ export function App() {
               topExtras={
                 <>
                   <button
+                    data-tour="search-header"
                     className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
                     onClick={() => useCommandPalette.getState().setOpen(true)}
                     title="Search everything (Ctrl+K)"
@@ -435,6 +437,7 @@ export function App() {
       {quizActive && <Suspense fallback={null}><QuizView /></Suspense>}
       {lessonActive && <Suspense fallback={null}><LessonMode /></Suspense>}
       <SparkIntro />
+      <GuidedTour />
       <CommandPalette />
       <ReleaseNotesModal />
       <Toaster theme="dark" position="bottom-right" richColors />

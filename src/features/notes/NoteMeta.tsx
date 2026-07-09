@@ -137,6 +137,7 @@ function NotePdfs({ note }: { note: Note }) {
   return (
     <div ref={wrapRef} className="relative">
       <button
+        data-tour="attach-pdf"
         className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--text-dim)] hover:text-[var(--text)]"
         onClick={() => setOpen((v) => !v)}
         title="Attach PDFs to this note"
@@ -145,6 +146,7 @@ function NotePdfs({ note }: { note: Note }) {
       </button>
       {open && (
         <div
+          data-tour="pdf-popover"
           className={`zen-anim-pop absolute right-0 z-50 mt-1 max-h-[60vh] min-w-[260px] overflow-auto rounded-[12px] border bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur ${dragging ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
           style={{ transformOrigin: "top right" }}
           onDragOver={(e) => { e.preventDefault(); setDragging(true); }}

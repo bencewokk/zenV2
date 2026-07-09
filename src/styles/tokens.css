@@ -1401,3 +1401,113 @@ math-field:focus-within { border-color: var(--accent); }
   overflow: hidden;
   transition: border-color 0.3s ease, background 0.3s ease;
 }
+
+/* ---------------------------------------------------------------------------
+   Guided tour — spotlight coach-marks (see features/onboarding/GuidedTour).
+   --------------------------------------------------------------------------- */
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none; /* only the tip (and, when interactive, the app) take clicks */
+}
+.tour-catch {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto; /* block interaction with the app on informational steps */
+}
+.tour-root--centered .tour-catch {
+  background: rgba(0, 0, 0, 0.62);
+}
+/* Action-driven steps: let clicks reach the real UI so the user can do the task. */
+.tour-root--interactive .tour-catch {
+  pointer-events: none;
+}
+.tour-hole {
+  position: absolute;
+  border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.62);
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  pointer-events: none;
+  transition: top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+.tour-tip {
+  position: absolute;
+  width: min(340px, calc(100vw - 24px));
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  padding: 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+.tour-tip__step {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.tour-tip__title {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.tour-tip__body {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.tour-tip__hint {
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.tour-tip__actions {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tour-tip__nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tour-tip__skip {
+  font-size: 12px;
+  color: var(--text-dim);
+  transition: color 0.2s ease;
+}
+.tour-tip__skip:hover {
+  color: var(--text);
+}
+.tour-tip__ghost {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.tour-tip__ghost:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.tour-tip__next {
+  border-radius: 10px;
+  background: var(--accent);
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #000;
+  transition: filter 0.2s ease;
+}
+.tour-tip__next:hover {
+  filter: brightness(1.05);
+}

@@ -30,6 +30,7 @@ import { docToText } from "@/shared/lib/docText";
 import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
 import { readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
 import { Masonry } from "@/shared/ui/Masonry";
+import { startCoreLoopTour, startGroupTour, GROUP_TOURS } from "@/features/onboarding/tours";
 
 type AdminFocus = "calendar" | "mail";
 
@@ -605,13 +606,22 @@ function DashboardTutorial() {
           <div className="mt-1 text-sm font-semibold text-[var(--text)]">Try the core loop</div>
           <p className="zen-secondary-copy mt-1 text-xs">Material → Deep Work → study → proof.</p>
         </div>
-        <button
-          className="text-xs text-[var(--text-dim)] transition hover:text-[var(--text)]"
-          onClick={() => setManual((current) => ({ ...current, hidden: true }))}
-          title="Hide tutorial"
-        >
-          Hide
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            className="zen-pressable zen-shine rounded-[10px] bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-black hover:brightness-105"
+            onClick={startCoreLoopTour}
+            title="Guided walkthrough of the core loop"
+          >
+            Show me how
+          </button>
+          <button
+            className="text-xs text-[var(--text-dim)] transition hover:text-[var(--text)]"
+            onClick={() => setManual((current) => ({ ...current, hidden: true }))}
+            title="Hide tutorial"
+          >
+            Hide
+          </button>
+        </div>
       </div>
 
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
@@ -649,7 +659,16 @@ function DashboardTutorial() {
                     <span className={item.done ? "text-[var(--text-dim)] line-through" : "text-[var(--text)]"}>{item.label}</span>
                   </button>
                 ))}
-                <button className="zen-btn-ghost mt-1 w-full justify-center" onClick={group.run}>{group.action}</button>
+                {GROUP_TOURS[group.key] ? (
+                  <button
+                    className="zen-btn zen-shine mt-1 w-full justify-center"
+                    onClick={() => startGroupTour(group.key)}
+                  >
+                    Start walkthrough
+                  </button>
+                ) : (
+                  <button className="zen-btn-ghost mt-1 w-full justify-center" onClick={group.run}>{group.action}</button>
+                )}
               </div>
             </details>
           );
@@ -688,11 +707,12 @@ function QuickAccessBento({ onOpenAdmin }: { onOpenAdmin: (focus: AdminFocus, ta
     setManualDeepWork(true);
   }
 
-  const items: Array<{ label: string; title: string; onClick: () => void }> = [
-    { label: "Focus", title: "Deep Work", onClick: openDeepWork },
+  const items: Array<{ label: string; title: string; tour?: string; onClick: () => void }> = [
+    { label: "Focus", title: "Deep Work", tour: "deep-work", onClick: openDeepWork },
     {
       label: "Capture",
       title: "New note",
+      tour: "new-note",
       onClick: () => {
         setManualDeepWork(false);
         setWorkspace({ surface: "home", adminMailId: null });
@@ -702,10 +722,11 @@ function QuickAccessBento({ onOpenAdmin }: { onOpenAdmin: (focus: AdminFocus, ta
         });
       },
     },
-    { label: "Find", title: "Search", onClick: () => useCommandPalette.getState().setOpen(true) },
+    { label: "Find", title: "Search", tour: "search", onClick: () => useCommandPalette.getState().setOpen(true) },
     {
       label: "Connect",
       title: "Sources",
+      tour: "sources",
       onClick: () => {
         selectNote(null);
         setManualDeepWork(false);
@@ -729,6 +750,7 @@ function QuickAccessBento({ onOpenAdmin }: { onOpenAdmin: (focus: AdminFocus, ta
       {items.map((item) => (
         <button
           key={item.title}
+          data-tour={item.tour}
           onClick={item.onClick}
           className="zen-pressable rounded-[12px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-2.5 text-left transition hover:border-[var(--text-dim)]"
         >

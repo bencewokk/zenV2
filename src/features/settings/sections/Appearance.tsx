@@ -5,6 +5,7 @@ import {
 } from "@/services/appearance";
 import { SettingsSection, Field } from "../ui";
 import { isTutorialHidden, setTutorialHidden } from "@/features/home/dashboardPrefs";
+import { startCoreLoopTour } from "@/features/onboarding/tours";
 
 /** App look, motion, and UI font. Changes apply live. */
 export function Appearance() {
@@ -95,6 +96,12 @@ export function Appearance() {
           />
           Show dashboard tutorial
         </label>
+        <button
+          className="zen-pressable mt-3 rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-dim)] hover:text-[var(--text)]"
+          onClick={startCoreLoopTour}
+        >
+          Replay guided walkthrough
+        </button>
       </SettingsSection>
     </div>
   );

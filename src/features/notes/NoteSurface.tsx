@@ -20,7 +20,7 @@ export function NoteSurface({ note }: { note: Note }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const editorColumn = (
-    <div className="mx-auto w-full max-w-3xl px-8 py-6">
+    <div data-tour="editor" className="mx-auto w-full max-w-3xl px-8 py-6">
       <NoteMeta note={note} />
       <Editor noteId={note.id} />
     </div>
