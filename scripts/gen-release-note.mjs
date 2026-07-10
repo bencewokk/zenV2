@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 /**
  * Run by the post-commit git hook (.githooks/post-commit). Each commit becomes
@@ -39,16 +39,28 @@ const version = `${maj}.${min}.${pat + 1}`;
 
 const date = new Date().toISOString().slice(0, 10);
 
-// Every release gets a codename ("randomword"). It lives only in the note's
-// frontmatter and human-facing UI — tags and bundle versions stay plain semver
-// because Tauri's updater and version.mjs parse them.
+// Every release carries a codename ("randomword"), scoped to the MAJOR
+// version: the whole 3.x line shares one word, and a fresh one is drawn only
+// when the major number bumps. It lives only in the note's frontmatter and
+// human-facing UI — tags and bundle versions stay plain semver because
+// Tauri's updater and version.mjs parse them.
 const CODENAMES = [
   "Lantern", "Ember", "Sierra", "Meadow", "Drift", "Halcyon", "Quill", "Vesper",
   "Cairn", "Sable", "Aurora", "Tundra", "Willow", "Zephyr", "Cove", "Onyx",
   "Fable", "Harbor", "Juniper", "Kestrel", "Lumen", "Mistral", "Nimbus", "Opal",
   "Pine", "Quartz", "Reverie", "Solstice", "Thicket", "Umber", "Verdant", "Wren",
 ];
-const codename = CODENAMES[Math.floor(Math.random() * CODENAMES.length)];
+let codename = "";
+try {
+  const prevNote = readFileSync(`release-notes/${base}.md`, "utf8");
+  const match = prevNote.match(/codename:\s*(.+)/);
+  if (match) codename = match[1].trim();
+} catch {
+  /* no previous note — draw fresh below */
+}
+if (!codename || parseInt(base.split(".")[0], 10) !== maj) {
+  codename = CODENAMES[Math.floor(Math.random() * CODENAMES.length)];
+}
 
 // Prefer the commit body (the detailed lines under the subject); fall back to
 // the subject for one-line commits. The modal already shows the version as a

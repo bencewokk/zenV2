@@ -38,6 +38,8 @@ import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { notify } from "@/shared/ui/notify";
 import { Masonry } from "@/shared/ui/Masonry";
 import { AssistantConnect } from "@/features/home/AssistantConnect";
+import { loadAssistantCaptures, onAssistantCapturesChange } from "@/services/assistantCaptures";
+import { loadAssistantTasks, onAssistantTasksChange } from "@/services/assistantTasks";
 import { startCoreLoopTour, startGroupTour, GROUP_TOURS } from "@/features/onboarding/tours";
 
 type AdminFocus = "calendar" | "mail";
@@ -348,7 +350,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
               </div>
 
               {/* Phone assistant — QR handoff to the assistant PWA */}
-              <div className="bento-tile">
+              <div className="bento-tile" data-tour="phone-qr">
                 <div className="mb-3">
                   <SectionLabel>Zen on your phone</SectionLabel>
                 </div>
@@ -500,6 +502,19 @@ function DashboardTutorial() {
   const toolOverrideCount = useToolPolicy((s) => Object.keys(s.overrides).length);
   const hasProviderSource = useSources((s) => Object.values(s.sources).some((source) => source.provider !== "web"));
   const hasWebCapture = useSources((s) => Object.values(s.sources).some((source) => source.provider === "web"));
+  // Phone link: any assistant data having synced proves a phone signed in.
+  const [phoneLinked, setPhoneLinked] = useState(
+    () => loadAssistantTasks().length > 0 || loadAssistantCaptures().length > 0
+  );
+  useEffect(() => {
+    const refresh = () => setPhoneLinked(loadAssistantTasks().length > 0 || loadAssistantCaptures().length > 0);
+    const unsubTasks = onAssistantTasksChange(refresh);
+    const unsubCaptures = onAssistantCapturesChange(refresh);
+    return () => {
+      unsubTasks();
+      unsubCaptures();
+    };
+  }, []);
   // Plain localStorage settings — re-read per render; the dashboard remounts when
   // the user navigates back from Settings, so changes show up then.
   const appearance = loadAppearance();
@@ -802,6 +817,7 @@ function DashboardTutorial() {
           items: [
             { key: "google", label: "Connect Google or stay local", done: setupDone || signedIn },
             { key: "sources", label: "Refresh or import a connected source", done: sourcesCount > 0 },
+            { key: "phone-link", label: "Link your phone via the QR tile", done: phoneLinked },
             { key: "add-real", label: "Add a source/event/email to Deep Work", done: !!manualDone["add-real"], manual: true },
           ],
         },

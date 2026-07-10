@@ -1031,6 +1031,13 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       body: "Pick a category to connect it, then refresh to pull the latest. To study anything, right-click a source, note, event, or email → Add to Deep Work.",
     },
     {
+      id: "cr-phone",
+      title: "Link your phone",
+      body: "Scan this QR with your phone camera — it installs the Zen Assistant. Sign in there with the same Google account, and tasks or thoughts you capture on the go sync straight into this tile.",
+      anchor: '[data-tour="phone-qr"]',
+      beforeShow: goDashboard,
+    },
+    {
       id: "cr-done",
       title: "Real life connected",
       body: "Your outside material now flows into search and Deep Work alongside your notes.",
