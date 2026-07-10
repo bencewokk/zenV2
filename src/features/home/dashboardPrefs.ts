@@ -5,6 +5,7 @@
  */
 
 const TUTORIAL_KEY = "zen.dashboard-tutorial.v1";
+const TUTORIAL_EVENT = "zen:dashboard-tutorial-change";
 
 export type TutorialManualState = {
   hidden?: boolean;
@@ -26,10 +27,25 @@ export function readTutorialState(): TutorialManualState {
 
 export function writeTutorialState(state: TutorialManualState): void {
   try {
-    localStorage.setItem(TUTORIAL_KEY, JSON.stringify(state));
+    const current = readTutorialState();
+    const next = {
+      ...current,
+      ...state,
+      done: { ...current.done, ...state.done },
+      seen: { ...current.seen, ...state.seen },
+    };
+    if (JSON.stringify(next) === JSON.stringify(current)) return;
+    localStorage.setItem(TUTORIAL_KEY, JSON.stringify(next));
+    window.dispatchEvent(new CustomEvent<TutorialManualState>(TUTORIAL_EVENT, { detail: next }));
   } catch {
     /* ignore */
   }
+}
+
+export function onTutorialStateChange(listener: (state: TutorialManualState) => void): () => void {
+  const onChange = (event: Event) => listener((event as CustomEvent<TutorialManualState>).detail);
+  window.addEventListener(TUTORIAL_EVENT, onChange);
+  return () => window.removeEventListener(TUTORIAL_EVENT, onChange);
 }
 
 /**

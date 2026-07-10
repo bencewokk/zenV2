@@ -28,7 +28,7 @@ import { loadSyncSettings } from "@/services/sync/settings";
 import { isSparkFirstRun, useSparkIntro } from "@/features/onboarding/sparkStore";
 import { docToText } from "@/shared/lib/docText";
 import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
-import { markTutorialItemDone, readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
+import { markTutorialItemDone, onTutorialStateChange, readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
 import { useLesson } from "@/features/home/deepwork/lessonStore";
 import { DEFAULT_GOAL_HOURS, useStudyLog } from "@/features/home/deepwork/studyLog";
 import { isFilterActive } from "@/features/filtering/filter";
@@ -475,6 +475,7 @@ useDeepWork.subscribe((s, prev) => {
 });
 useWorkspace.subscribe((s, prev) => {
   if (s.surface === "admin" && prev.surface !== "admin") markTutorialItemDone("open-admin");
+  if (s.surface === "settings" && prev.surface !== "settings") markTutorialItemDone("settings");
 });
 
 function DashboardTutorial() {
@@ -523,15 +524,14 @@ function DashboardTutorial() {
   // from the in-memory notes; seeded sample notes don't count as the user's own
   // organising/authoring work.
   const contentSignals = useMemo(() => {
-    const all = Object.values(notes);
-    const own = all.filter((n) => !isSeededSample(n));
+    const own = Object.values(notes).filter((n) => !isSeededSample(n));
     return {
       hasMeta: own.some((n) => n.tags.length > 0 || n.space || n.subject || n.unit),
-      hasWikiLink: all.some((n) => docHasNode(n.content, ["wikiLink"])),
-      hasMoc: all.some((n) => n.moc),
+      hasWikiLink: own.some((n) => docHasNode(n.content, ["wikiLink"])),
+      hasMoc: own.some((n) => n.moc),
       hasMath: own.some((n) => docHasNode(n.content, ["mathBlock", "mathInline"])),
-      hasCheckedMath: all.some((n) => !!n.mathCheck && docHasDerivation(n.content)),
-      hasBlock: all.some((n) => docHasNode(n.content, ["table", "geometry"])),
+      hasCheckedMath: own.some((n) => !!n.mathCheck && docHasDerivation(n.content)),
+      hasBlock: own.some((n) => docHasNode(n.content, ["table", "geometry"])),
     };
   }, [notes]);
 
@@ -549,6 +549,7 @@ function DashboardTutorial() {
     };
   }, []);
   useEffect(() => writeTutorialState(manual), [manual]);
+  useEffect(() => onTutorialStateChange(setManual), []);
 
   const setManualDone = useCallback((key: string) => {
     setManual((current) => (current.done?.[key] ? current : { ...current, done: { ...current.done, [key]: true } }));
@@ -770,7 +771,6 @@ function DashboardTutorial() {
             { key: "study-open", label: "Open the Study panel", done: !!manualDone["study-open"], manual: true },
             { key: "focus", label: "Start one focus session", done: hasFocus },
             { key: "quiz", label: "Take a quiz", done: hasAnyQuiz },
-            { key: "lesson", label: "Try a lesson/class", done: !!manualDone.lesson, manual: true },
           ],
         },
         {
@@ -790,7 +790,7 @@ function DashboardTutorial() {
             { key: "plan", label: "Set a study plan + exam date", done: hasPlan },
             { key: "hero", label: "Read the Exam-Focus hero", done: !!manualDone.hero, manual: true },
             { key: "planned-block", label: "Finish a planned session", done: hasPlannedBlockDone },
-            { key: "daily-goal", label: "Set your daily goal", done: goalHours !== DEFAULT_GOAL_HOURS || !!manualDone["daily-goal"] },
+            { key: "daily-goal", label: "Set your daily goal", done: goalHours !== DEFAULT_GOAL_HOURS || !!manualDone["daily-goal"], manual: true },
           ],
         },
         {

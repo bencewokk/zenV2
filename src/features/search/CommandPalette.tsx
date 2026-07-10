@@ -7,6 +7,7 @@ import { useHome } from "@/features/home/store";
 import { sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { docToText } from "@/shared/lib/docText";
+import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 
 /**
  * Global search / command palette (Ctrl+K). Searches everything the stores
@@ -318,6 +319,12 @@ export function CommandPalette() {
 
   if (!open) return null;
 
+  function runResult(result: Result | undefined) {
+    if (!result) return;
+    markTutorialItemDone("search");
+    result.run();
+  }
+
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -330,7 +337,7 @@ export function CommandPalette() {
       setActive((a) => Math.max(a - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      results[active]?.run();
+      runResult(results[active]);
     }
   }
 
@@ -369,7 +376,7 @@ export function CommandPalette() {
                   i === active ? "bg-[var(--accent-dim)]" : "hover:bg-[var(--bg-elev)]"
                 }`}
                 onMouseMove={() => setActive(i)}
-                onClick={() => r.run()}
+                onClick={() => runResult(r)}
               >
                 <span className="mt-0.5 w-4 shrink-0 text-center text-xs text-[var(--text-dim)]">
                   {KIND_GLYPH[r.kind]}

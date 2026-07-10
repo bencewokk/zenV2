@@ -3,6 +3,7 @@ import type { HomeTarget } from "@/features/home/store";
 import type { PlannedSession, StudyPlan } from "@/features/home/deepwork/studyPlan";
 import { creditFocusToPlan, reconcilePlan as reconcilePlanPure } from "@/features/home/deepwork/studyPlan";
 import { markBlobDirty } from "@/services/sync/cursor";
+import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 
 /**
  * Deep Work — a collection of named **sessions**. Each session is a curated canvas:
@@ -276,6 +277,7 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
     },
 
     setWindow(key, geom) {
+      markTutorialItemDone("arrange");
       mutateActive((s) => ({ ...s, windows: { ...s.windows, [key]: geom } }));
     },
 

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { markBlobDirty } from "@/services/sync/cursor";
+import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 
 /**
  * Study log — a global, cross-session record of how much time the user has
@@ -73,6 +74,7 @@ export const useStudyLog = create<StudyLogState>((set, get) => {
     setGoalHours(hours) {
       const goalHours = Math.max(1, Math.min(16, Math.round(hours) || DEFAULT_GOAL_HOURS));
       const st = get();
+      markTutorialItemDone("daily-goal");
       set({ goalHours });
       persist({ days: st.days, goalHours });
     },

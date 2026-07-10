@@ -15,6 +15,7 @@ import {
 } from "@/features/home/deepwork/deepworkStore";
 import { useFocusSession, useFocusStore } from "@/features/home/deepwork/useFocusSession";
 import { useStudyLog, todayMs, computeStreak, HOUR_MS, dayKey } from "@/features/home/deepwork/studyLog";
+import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 import { useQuiz, sessionQuizzes, sessionMistakes, type QuizRecord } from "@/features/home/deepwork/quizStore";
 import {
   planHealth, actionableSessions, fmtPlanDay, fmtStartMin, KIND_META, verdictLabel, verdictColor,
@@ -132,6 +133,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   }
 
   function requizMistakes() {
+    markTutorialItemDone("requiz");
     ask(
       "Re-quiz me ONLY on the things I've gotten wrong before. Call deepwork_read_material to pull up my " +
         "mistake bank, then call deepwork_start_quiz with questions that re-test those exact missed concepts " +
