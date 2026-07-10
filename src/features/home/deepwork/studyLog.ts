@@ -14,7 +14,7 @@ import { markBlobDirty } from "@/services/sync/cursor";
  */
 
 const KEY = "zen.studylog.v1";
-const DEFAULT_GOAL_HOURS = 4;
+export const DEFAULT_GOAL_HOURS = 4;
 export const HOUR_MS = 60 * 60 * 1000;
 
 /** Local-date key (YYYY-MM-DD) for a Date — not UTC, so "today" matches the user. */

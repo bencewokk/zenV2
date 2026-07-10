@@ -171,6 +171,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
             </button>
           ) : (
             <button
+              data-tour="study-session"
               className="zen-pressable rounded-[10px] border border-[var(--border)] bg-[var(--bg-elev)] px-3 py-3 text-left disabled:opacity-50"
               onClick={() => startStudySession()}
               disabled={aiActionsDisabled}
@@ -213,6 +214,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
 
         {mistakeCount > 0 && (
           <button
+            data-tour="study-requiz"
             className="zen-pressable w-full rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
             onClick={requizMistakes}
             disabled={aiActionsDisabled}
@@ -238,6 +240,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
 
             {next ? (
               <button
+                data-tour="study-review-next"
                 className="zen-pressable flex w-full items-center gap-2 rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-2.5 py-1.5 text-left text-xs disabled:opacity-50"
                 onClick={() => drill(next.title)}
                 disabled={aiActionsDisabled}
@@ -434,7 +437,7 @@ function PlanSection({ now }: { now: number }) {
 
   if (!plan) {
     return (
-      <div className="rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-3 py-2.5">
+      <div data-tour="study-plan" className="rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-3 py-2.5">
         <div className="text-xs font-medium text-[var(--text)]">Plan your week</div>
         <div className="mt-1 text-[11px] text-[var(--text-dim)]">
           Let the AI lay out study sessions across the next days — adapting as your mastery changes and the deadline nears.
@@ -465,7 +468,7 @@ function PlanSection({ now }: { now: number }) {
   const upcoming = actionableSessions(plan, now).slice(0, 8);
 
   return (
-    <div className="space-y-2">
+    <div data-tour="study-plan" className="space-y-2">
       <div className="rounded-[8px] border border-[var(--border)] px-2.5 py-2">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Goal forecast</span>
@@ -616,7 +619,7 @@ function DailyGoalBar() {
   }
 
   return (
-    <div className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5">
+    <div data-tour="daily-goal" className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5">
       <div className="flex items-center gap-1.5 text-[11px]">
         <span className="text-[var(--text-dim)]">Today</span>
         <span className="font-medium tabular-nums text-[var(--text)]">{(today / HOUR_MS).toFixed(1)}h</span>

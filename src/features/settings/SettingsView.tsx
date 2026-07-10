@@ -23,7 +23,7 @@ export function SettingsView() {
 
   return (
     <div className="flex h-full min-h-0 gap-4 px-4 py-4 sm:px-6">
-      <nav className="w-52 shrink-0 pl-2 pt-1">
+      <nav data-tour="settings-rail" className="w-52 shrink-0 pl-2 pt-1">
         <div className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">
           Settings
         </div>

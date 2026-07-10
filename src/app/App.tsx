@@ -280,6 +280,7 @@ export function App() {
                     </div>
                   )}
                   <button
+                    data-tour="ai-toggle"
                     className={`${HEADER_BTN} ${aiStatus === "busy" ? "zen-glow border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]" : HEADER_BTN_IDLE}`}
                     onClick={() => useAI.getState().toggle()}
                     title="Toggle AI panel"

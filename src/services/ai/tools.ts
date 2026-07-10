@@ -38,6 +38,8 @@ import {
 } from "@/services/canvas/client";
 import { ensureSourcesLoaded, searchConnectedSources, useSources } from "@/services/sources/store";
 import { refreshAllSources } from "@/services/sources/refresh";
+import { createAssistantTask, loadAssistantTasks, setAssistantTaskDone } from "@/services/assistantTasks";
+import { createAssistantRoutine, deleteAssistantRoutine, loadAssistantRoutines } from "@/services/assistantRoutines";
 
 interface ToolImpl {
   def: ToolDef;
@@ -294,6 +296,80 @@ const TOOLS: ToolImpl[] = [
       return "Memory forgotten.";
     },
     true
+  ),
+  // ---- Shared assistant tasks ----
+  tool(
+    "list_tasks",
+    "List tasks shared with the Zen mobile assistant.",
+    obj({ includeDone: bool("include completed tasks") }),
+    async (a) => {
+      const tasks = loadAssistantTasks().filter((task) => a.includeDone === true || task.status !== "done");
+      if (!tasks.length) return "No assistant tasks.";
+      return tasks.map((task) => `- [${task.status === "done" ? "x" : " "}] ${task.title}${task.dueISO ? ` (due ${task.dueISO})` : ""} [id:${task.id}]`).join("\n");
+    },
+  ),
+  tool(
+    "create_task",
+    "Create a task shared with the Zen mobile assistant.",
+    obj({ title: str("task title"), notes: str("optional details"), dueISO: str("optional ISO due date/time") }, ["title"]),
+    async (a) => {
+      const task = createAssistantTask(String(a.title), a.notes ? String(a.notes) : undefined, a.dueISO ? String(a.dueISO) : undefined);
+      return `Created task "${task.title}" [id:${task.id}].`;
+    },
+  ),
+  tool(
+    "complete_task",
+    "Complete or reopen a task shared with the Zen mobile assistant.",
+    obj({ id: str("task id"), done: bool("true to complete, false to reopen") }, ["id", "done"]),
+    async (a) => {
+      const task = setAssistantTaskDone(String(a.id), a.done === true);
+      return task ? `${task.status === "done" ? "Completed" : "Reopened"} task "${task.title}".` : "No task with that id.";
+    },
+  ),
+  // ---- Shared assistant routines ----
+  tool(
+    "list_routines",
+    "List reminders and routines shared with the Zen mobile assistant.",
+    obj({}),
+    async () => {
+      const routines = loadAssistantRoutines();
+      if (!routines.length) return "No assistant routines.";
+      return routines.map((routine) => `- ${routine.title} (${routine.schedule.kind}${routine.schedule.time ? ` at ${routine.schedule.time}` : ""}) [id:${routine.id}]`).join("\n");
+    },
+  ),
+  tool(
+    "create_routine",
+    "Create a background reminder or routine shared with the Zen mobile assistant.",
+    obj({
+      title: str("routine title"),
+      prompt: str("instruction to run"),
+      kind: str("once | daily | weekly"),
+      at: str("ISO timestamp for once"),
+      time: str("HH:MM for daily/weekly"),
+      days: arr("weekly day numbers, Sunday=0"),
+      timezone: str("IANA timezone"),
+    }, ["title", "prompt", "kind"]),
+    async (a) => {
+      const kind = String(a.kind) as "once" | "daily" | "weekly";
+      if (!["once", "daily", "weekly"].includes(kind)) return "kind must be once, daily, or weekly.";
+      const routine = createAssistantRoutine({
+        title: String(a.title),
+        prompt: String(a.prompt),
+        kind,
+        at: a.at ? String(a.at) : undefined,
+        time: a.time ? String(a.time) : undefined,
+        days: Array.isArray(a.days) ? a.days.map(Number) : undefined,
+        timezone: a.timezone ? String(a.timezone) : Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      return `Created routine "${routine.title}" [id:${routine.id}].`;
+    },
+  ),
+  tool(
+    "delete_routine",
+    "Delete a reminder or routine shared with the Zen mobile assistant.",
+    obj({ id: str("routine id") }, ["id"]),
+    async (a) => deleteAssistantRoutine(String(a.id)) ? "Routine deleted." : "No routine with that id.",
+    true,
   ),
   tool(
     "recall",
@@ -1997,6 +2073,8 @@ export const CONFIRM_TOOLS = new Set(TOOLS.filter((t) => t.confirm).map((t) => t
  */
 export const READ_TOOLS = new Set([
   "search_notes", "read_note", "get_tree", "recall", "list_memories",
+  "list_tasks",
+  "list_routines",
   "list_events", "get_event", "find_free_slots", "search_mail", "read_mail",
   "list_tags", "list_facets", // added in phase 3
   "list_pdfs", "read_pdf", "search_pdf", "find_in_pdf", "pdf_outline",
@@ -2055,6 +2133,8 @@ export interface ToolMeta {
 const CATEGORY_SETS: Array<[string, Set<string>]> = [
   ["Interaction", new Set(["ask_user"])],
   ["Memory", new Set(["update_profile", "save_memory", "list_memories", "forget_memory", "recall"])],
+  ["Tasks", new Set(["list_tasks", "create_task", "complete_task"])],
+  ["Routines", new Set(["list_routines", "create_routine", "delete_routine"])],
   ["Notes", new Set([
     "search_notes", "read_note", "create_note", "update_note", "open_note", "get_tree",
     "append_note", "set_metadata", "move_note", "delete_note", "insert_math", "insert_svg", "insert_table", "link_notes",
@@ -2152,6 +2232,12 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "update_profile": return d("Update your profile", Object.keys(a).join(", "));
     case "save_memory": return d("Save memory", s("title"));
     case "forget_memory": return d("Forget memory", memoryTitle(s("id")));
+    case "list_tasks": return d("List tasks", "phone and desktop");
+    case "create_task": return d("Create task", s("title"));
+    case "complete_task": return d(s("done") === "false" ? "Reopen task" : "Complete task", s("id"));
+    case "list_routines": return d("List routines", "phone and desktop");
+    case "create_routine": return d("Create routine", s("title"));
+    case "delete_routine": return d("Delete routine", s("id"));
     // Calendar
     case "create_event": return d("Create event", s("summary"));
     case "update_event": return d("Update event", eventSummary(s("id")));

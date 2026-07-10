@@ -1,8 +1,25 @@
 import { createHash } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { applyCors } from "../_lib/cors.js";
+import { applyCors, isAllowedOrigin } from "../_lib/cors.js";
 import { userIdFromRequest } from "../_lib/auth.js";
 import { costPicoUsd, markReservationAccepted, reserveAIRequest, settleReservation, type DeepSeekUsage } from "../_lib/billing.js";
+import { assistantConfig, runAssistant, type AssistantChatRequest } from "../_lib/assistant.js";
+import { issueAssistantSession, revokeAssistantSession } from "../_lib/assistantSession.js";
+import { enforceRequestRateLimit } from "../_lib/limits.js";
+import type { AssistantStreamEvent } from "../_lib/assistantTypes.js";
+import {
+  disconnectGoogleOffline,
+  exchangeGoogleAuthorizationCode,
+  googleOfflineConfigured,
+  googleOfflineStatus,
+} from "../_lib/assistantGoogleOffline.js";
+import {
+  pushConfigured,
+  pushSubscriptionCount,
+  removePushSubscription,
+  savePushSubscription,
+} from "../_lib/assistantPush.js";
+import { latestRoutineRun, runDueAssistantRoutines } from "../_lib/assistantRoutines.js";
 
 function apiKey(): string {
   const key = process.env.DEEPSEEK_API_KEY;
@@ -26,6 +43,118 @@ function usageFromBody(raw: string): DeepSeekUsage | null {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res)) return;
+  if (req.query.assistant === "config") {
+    if (req.method !== "GET") { res.status(405).json({ error: "method not allowed" }); return; }
+    res.status(200).json(assistantConfig()); return;
+  }
+  if (req.query.assistant === "google-code") {
+    if (req.method !== "POST") { res.status(405).json({ error: "method not allowed" }); return; }
+    const origin = String(req.headers.origin || "");
+    const requestedWith = String(req.headers["x-requested-with"] || "");
+    const body = (req.body ?? {}) as { code?: unknown; redirectOrigin?: unknown };
+    if (!origin || !isAllowedOrigin(origin) || body.redirectOrigin !== origin || requestedWith !== "ZenAssistant") {
+      res.status(403).json({ error: "origin verification failed", code: "origin_rejected" }); return;
+    }
+    try {
+      const google = await exchangeGoogleAuthorizationCode(String(body.code || ""), origin);
+      await enforceRequestRateLimit(google.userId, "assistant-oauth", 10);
+      const session = await issueAssistantSession(google.userId);
+      res.status(200).json({ session, google: { connected: true, expiresAt: google.expiresAt } }); return;
+    } catch (error) {
+      const typed = error as Error & { status?: number; code?: string };
+      res.status(typed.status ?? 500).json({ error: typed.message, code: typed.code ?? "google_code_failed" }); return;
+    }
+  }
+  if (req.query.assistant === "background") {
+    let userId: string;
+    try { userId = await userIdFromRequest(req.headers.authorization); }
+    catch { res.status(401).json({ error: "unauthorized", code: "unauthorized" }); return; }
+    if (req.method === "GET") {
+      const [google, subscriptions, latestRun] = await Promise.all([
+        googleOfflineStatus(userId),
+        pushSubscriptionCount(userId),
+        latestRoutineRun(userId),
+      ]);
+      res.status(200).json({
+        google,
+        push: { configured: pushConfigured(), subscriptions },
+        scheduler: { enabled: true, cadence: "daily", latestRun },
+      }); return;
+    }
+    if (req.method !== "POST") { res.status(405).json({ error: "method not allowed" }); return; }
+    const body = (req.body ?? {}) as { action?: unknown; subscription?: unknown; endpoint?: unknown };
+    try {
+      switch (String(body.action || "")) {
+        case "push_subscribe":
+          await savePushSubscription(userId, body.subscription, String(req.headers["user-agent"] || ""));
+          res.status(200).json({ ok: true, subscriptions: await pushSubscriptionCount(userId) }); return;
+        case "push_unsubscribe":
+          await removePushSubscription(userId, String(body.endpoint || ""));
+          res.status(200).json({ ok: true, subscriptions: await pushSubscriptionCount(userId) }); return;
+        case "run_due":
+          res.status(200).json({ ok: true, summary: await runDueAssistantRoutines({ userId, limit: 2, timeBudgetMs: 50_000 }) }); return;
+        case "google_disconnect":
+          await disconnectGoogleOffline(userId);
+          res.status(200).json({ ok: true }); return;
+        default:
+          res.status(400).json({ error: "unknown background action" }); return;
+      }
+    } catch (error) {
+      const typed = error as Error & { status?: number; code?: string };
+      res.status(typed.status ?? 500).json({ error: typed.message, code: typed.code ?? "background_action_failed" }); return;
+    }
+  }
+  if (req.query.assistant === "session") {
+    if (!req.headers.authorization?.startsWith("Bearer ")) { res.status(401).json({ error: "unauthorized" }); return; }
+    if (req.method === "DELETE") {
+      await revokeAssistantSession(req.headers.authorization.slice("Bearer ".length).trim()).catch(() => {});
+      res.status(204).end(); return;
+    }
+    if (req.method !== "GET" && req.method !== "POST") { res.status(405).json({ error: "method not allowed" }); return; }
+    try {
+      const userId = await userIdFromRequest(req.headers.authorization);
+      if (req.method === "GET") { res.status(200).json({ connected: true }); return; }
+      res.status(200).json(await issueAssistantSession(userId)); return;
+    } catch {
+      res.status(401).json({ error: "unauthorized" }); return;
+    }
+  }
+  if (req.query.assistant === "chat") {
+    if (req.method !== "POST") { res.status(405).json({ error: "method not allowed" }); return; }
+    let assistantUserId: string;
+    try {
+      assistantUserId = await userIdFromRequest(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: "unauthorized", code: "unauthorized" }); return;
+    }
+    try {
+      await enforceRequestRateLimit(assistantUserId, "assistant", 45);
+      const body = (req.body ?? {}) as AssistantChatRequest;
+      if (!Array.isArray(body.messages)) { res.status(400).json({ error: "messages array required" }); return; }
+      if (body.messages.length > 120) { res.status(400).json({ error: "too many messages" }); return; }
+      const stream = String(req.headers.accept || "").includes("text/event-stream") || req.query.stream === "1";
+      if (!stream) { res.status(200).json(await runAssistant(body, assistantUserId)); return; }
+
+      res.status(200);
+      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      const emit = (event: AssistantStreamEvent) => {
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      };
+      const response = await runAssistant(body, assistantUserId, emit);
+      emit({ type: "done", response });
+      res.end(); return;
+    } catch (error) {
+      const typed = error as Error & { status?: number; code?: string };
+      if (res.headersSent) {
+        const event: AssistantStreamEvent = { type: "error", label: typed.message || "assistant request failed" };
+        res.write(`event: error\ndata: ${JSON.stringify(event)}\n\n`);
+        res.end(); return;
+      }
+      res.status(typed.status ?? 500).json({ error: typed.message || "assistant request failed", code: typed.code ?? "assistant_error" }); return;
+    }
+  }
   if (req.method !== "POST") { res.status(405).json({ error: "method not allowed" }); return; }
   let userId: string;
   try { userId = await userIdFromRequest(req.headers.authorization); }

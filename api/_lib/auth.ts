@@ -1,4 +1,5 @@
 import { OAuth2Client } from "google-auth-library";
+import { userIdFromAssistantSession } from "./assistantSession.js";
 
 /**
  * Resolve the stable Google account id (`sub`) from the Authorization header. Every
@@ -26,6 +27,7 @@ export async function userIdFromRequest(authHeader: string | undefined): Promise
     throw new Error("missing bearer token");
   }
   const token = authHeader.slice("Bearer ".length).trim();
+  if (token.startsWith("zen_")) return userIdFromAssistantSession(token);
   const aud = audiences();
   if (aud.length === 0) throw new Error("GOOGLE_CLIENT_ID is not configured");
 

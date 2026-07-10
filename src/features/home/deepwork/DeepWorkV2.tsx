@@ -331,6 +331,7 @@ export function DeepWorkV2({
             {allMinimized ? "▣" : "—"}
           </button>
           <button
+            data-tour="dw-zen"
             className="zen-pressable rounded-[8px] px-2 py-1 text-sm leading-none text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
             onClick={() => setZenMode(!zenMode)}
             title={zenMode ? "Exit zen mode" : "Enter zen mode (distraction-free)"}

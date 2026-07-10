@@ -5,6 +5,10 @@ import { pull, push } from "./client";
 import { getCursor, setCursor, onDirty, resetSyncState } from "./cursor";
 import { notesAdapter } from "./adapters/notes";
 import { pdfsAdapter } from "./adapters/pdfs";
+import { assistantCapturesAdapter } from "./adapters/assistantCaptures";
+import { assistantTasksAdapter } from "./adapters/assistantTasks";
+import { assistantRoutinesAdapter } from "@/services/assistantRoutines";
+import { assistantReceiptsAdapter } from "@/services/assistantReceipts";
 import { makeBlobAdapter } from "./adapters/blob";
 import { makeFilteredBlobAdapter } from "./adapters/filteredBlob";
 import { WORKSPACE_KEY, hydrateWorkspace } from "@/shared/stores/workspace";
@@ -26,6 +30,10 @@ import type { SyncAdapter } from "./types";
 const adapters: SyncAdapter[] = [
   notesAdapter,
   pdfsAdapter,
+  assistantCapturesAdapter,
+  assistantTasksAdapter,
+  assistantRoutinesAdapter,
+  assistantReceiptsAdapter,
   makeBlobAdapter("workspace", WORKSPACE_KEY, hydrateWorkspace),
   makeBlobAdapter("studylog", STUDYLOG_KEY, hydrateStudyLog),
   makeBlobAdapter("deepwork", DEEPWORK_KEY, hydrateDeepWork),

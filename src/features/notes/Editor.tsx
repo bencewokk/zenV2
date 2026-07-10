@@ -120,6 +120,7 @@ export function Editor({ noteId }: { noteId: string }) {
       {/* Note-wide controls */}
       <div className="mb-2 flex items-center gap-2">
         <button
+          data-tour="math-check"
           className={`zen-pressable rounded-[6px] border px-2 py-1 text-xs ${
             mathCheck
               ? "border-[var(--accent)] text-[var(--accent)]"

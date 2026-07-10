@@ -46,6 +46,7 @@ export function NoteMeta({ note }: { note: Note }) {
         inbox
       </button>
       <button
+        data-tour="note-moc"
         className={`zen-pressable rounded px-2 py-0.5 ${
           note.moc ? "bg-[var(--accent-dim)] text-[var(--text)]" : "bg-[var(--bg-elev)] text-[var(--text-dim)]"
         }`}

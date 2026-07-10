@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   buildActionGroups,
   parseBriefItems,
@@ -28,7 +28,14 @@ import { loadSyncSettings } from "@/services/sync/settings";
 import { isSparkFirstRun, useSparkIntro } from "@/features/onboarding/sparkStore";
 import { docToText } from "@/shared/lib/docText";
 import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
-import { readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
+import { markTutorialItemDone, readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
+import { useLesson } from "@/features/home/deepwork/lessonStore";
+import { DEFAULT_GOAL_HOURS, useStudyLog } from "@/features/home/deepwork/studyLog";
+import { isFilterActive } from "@/features/filtering/filter";
+import { docHasDerivation, docHasNode, isSeededSample } from "@/features/onboarding/contentSignals";
+import { loadAppearance } from "@/services/appearance";
+import { useToolPolicy } from "@/services/ai/toolPolicy";
+import { notify } from "@/shared/ui/notify";
 import { Masonry } from "@/shared/ui/Masonry";
 import { startCoreLoopTour, startGroupTour, GROUP_TOURS } from "@/features/onboarding/tours";
 
@@ -421,14 +428,43 @@ type TutorialItem = {
   manual?: boolean;
 };
 
+type TutorialPhase = {
+  /** `<group>-<number>` — also the GROUP_TOURS key for this phase's walkthrough. */
+  key: string;
+  label: string;
+  items: TutorialItem[];
+};
+
 type TutorialGroup = {
   key: string;
   title: string;
   body: string;
   action: string;
   run: () => void;
-  items: TutorialItem[];
+  /** Ordered phases; a deeper phase stays hidden until the prior one is complete. */
+  phases: TutorialPhase[];
 };
+
+/** The phase the group currently shows: the first with an unfinished item
+ *  (falling back to the last once everything is done). */
+function currentPhaseIndex(group: TutorialGroup): number {
+  const idx = group.phases.findIndex((phase) => phase.items.some((item) => !item.done));
+  return idx === -1 ? group.phases.length - 1 : idx;
+}
+
+// These signals fire inside Deep Work / Calendar / Mail, while the dashboard
+// tutorial is unmounted — record the ticks straight to storage; the tutorial
+// re-reads on mount, so they appear when the user comes back to the dashboard.
+useLesson.subscribe((s, prev) => {
+  if (s.active && !prev.active) markTutorialItemDone("lesson-start");
+  if (!s.active && prev.active) markTutorialItemDone("class-finish");
+});
+useDeepWork.subscribe((s, prev) => {
+  if (s.zenMode && !prev.zenMode) markTutorialItemDone("zen-mode");
+});
+useWorkspace.subscribe((s, prev) => {
+  if (s.surface === "admin" && prev.surface !== "admin") markTutorialItemDone("open-admin");
+});
 
 function DashboardTutorial() {
   const notes = useNotes((s) => s.notes);
@@ -449,6 +485,31 @@ function DashboardTutorial() {
   const [manual, setManual] = useState<TutorialManualState>(() => readTutorialState());
   const [syncEnabled, setSyncEnabled] = useState(() => loadSyncSettings().enabled);
   const [profileSaved, setProfileSaved] = useState(() => hasProfile());
+  const goalHours = useStudyLog((s) => s.goalHours);
+  const filterActive = useNotes((s) => isFilterActive(s.filter));
+  const customLabelCount = useHome((s) => s.customLabels.length);
+  const toolOverrideCount = useToolPolicy((s) => Object.keys(s.overrides).length);
+  const hasProviderSource = useSources((s) => Object.values(s.sources).some((source) => source.provider !== "web"));
+  const hasWebCapture = useSources((s) => Object.values(s.sources).some((source) => source.provider === "web"));
+  // Plain localStorage settings — re-read per render; the dashboard remounts when
+  // the user navigates back from Settings, so changes show up then.
+  const appearance = loadAppearance();
+
+  // Content-derived goals (metadata, wiki-links, MOCs, math, tables) — scanned
+  // from the in-memory notes; seeded sample notes don't count as the user's own
+  // organising/authoring work.
+  const contentSignals = useMemo(() => {
+    const all = Object.values(notes);
+    const own = all.filter((n) => !isSeededSample(n));
+    return {
+      hasMeta: own.some((n) => n.tags.length > 0 || n.space || n.subject || n.unit),
+      hasWikiLink: all.some((n) => docHasNode(n.content, ["wikiLink"])),
+      hasMoc: all.some((n) => n.moc),
+      hasMath: own.some((n) => docHasNode(n.content, ["mathBlock", "mathInline"])),
+      hasCheckedMath: all.some((n) => !!n.mathCheck && docHasDerivation(n.content)),
+      hasBlock: all.some((n) => docHasNode(n.content, ["table", "geometry"])),
+    };
+  }, [notes]);
 
   useEffect(() => onAuthChange(setSignedIn), []);
   useEffect(() => {
@@ -465,6 +526,58 @@ function DashboardTutorial() {
   }, []);
   useEffect(() => writeTutorialState(manual), [manual]);
 
+  const setManualDone = useCallback((key: string) => {
+    setManual((current) => (current.done?.[key] ? current : { ...current, done: { ...current.done, [key]: true } }));
+  }, []);
+
+  // "New goals unlocked" shows only the FIRST time a deeper phase is seen. The
+  // snapshot is frozen for this mount so the cue doesn't vanish mid-visit; the
+  // effect below persists the keys, hiding the cue from the next visit on.
+  const [seenAtMount] = useState<Record<string, boolean>>(() => readTutorialState().seen ?? {});
+  const groupsRef = useRef<TutorialGroup[]>([]);
+  const prevProgress = useRef<Record<string, { idx: number; done: boolean }> | null>(null);
+  useEffect(() => {
+    const snapshot = Object.fromEntries(
+      groupsRef.current.map((group) => [
+        group.key,
+        {
+          idx: currentPhaseIndex(group),
+          done: group.phases.every((phase) => phase.items.every((item) => item.done)),
+        },
+      ])
+    );
+    // Celebrate transitions that happen while the dashboard is open (the first
+    // run only records a baseline, so returning to the dashboard never toasts).
+    const prev = prevProgress.current;
+    prevProgress.current = snapshot;
+    if (prev) {
+      for (const group of groupsRef.current) {
+        const before = prev[group.key];
+        const now = snapshot[group.key];
+        if (!before || !now) continue;
+        if (!before.done && now.done) notify.success(`${group.title} complete 🎉`);
+        else if (now.idx > before.idx) notify.success(`${group.phases[before.idx].label} complete — new goals unlocked`);
+      }
+    }
+    // Persist which deeper phases have shown their cue.
+    const unseen = groupsRef.current
+      .filter((group) => currentPhaseIndex(group) > 0)
+      .map((group) => group.phases[currentPhaseIndex(group)].key)
+      .filter((key) => !manual.seen?.[key]);
+    if (unseen.length) {
+      setManual((current) => ({
+        ...current,
+        seen: { ...current.seen, ...Object.fromEntries(unseen.map((key) => [key, true])) },
+      }));
+    }
+  });
+
+  // Sidebar filtering is transient store state — persist the achievement the
+  // moment it's observed so the tick survives restarts.
+  useEffect(() => {
+    if (filterActive) setManualDone("filter");
+  }, [filterActive, setManualDone]);
+
   if (manual.hidden) return null;
 
   const allSessions = sessionList({ sessions, order }).filter((session) => !session.archived);
@@ -477,14 +590,24 @@ function DashboardTutorial() {
   const hasGradedQuiz = allSessions.some((session) =>
     sessionQuizzes({ quizzes, order: quizOrder }, session.id).some((quiz) => quiz.status === "graded")
   );
+  const hasAnyQuiz = quizOrder.length > 0;
+  const hasReviewedWeak = allSessions.some((session) =>
+    (session.backbone?.concepts ?? []).some((concept) => (concept.reviewCount ?? 0) > 0)
+  );
+  const hasPlan = allSessions.some((session) => !!session.plan);
+  const hasPlannedBlockDone = allSessions.some((session) =>
+    !!session.plan?.sessions.some((planned) => planned.status === "done")
+  );
+  const hasSecondSource = allSessions.some((session) => session.items.length >= 2);
+  const hasSecondSession = allSessions.length >= 2;
+  const hasRealItem = allSessions.some((session) =>
+    session.items.some((item) => item.type === "event" || item.type === "mail")
+  );
   const noteCount = Object.keys(notes).length;
   const setupDone = !isSparkFirstRun();
   const manualDone = manual.done ?? {};
   const markManual = (key: string) => {
     setManual((current) => ({ ...current, done: { ...current.done, [key]: !current.done?.[key] } }));
-  };
-  const setManualDone = (key: string) => {
-    setManual((current) => ({ ...current, done: { ...current.done, [key]: true } }));
   };
   const openDeepWork = () => {
     if (activeSession) switchSession(activeSession.id);
@@ -511,11 +634,26 @@ function DashboardTutorial() {
       body: "Finish the foundation so Zen knows what it may connect.",
       action: "Replay setup",
       run: startSpark,
-      items: [
-        { key: "spark", label: "Finish Spark setup", done: setupDone },
-        { key: "identity", label: signedIn ? "Google connected" : "Google or local-only chosen", done: setupDone || signedIn },
-        { key: "sync", label: syncEnabled ? "Sync enabled" : "Sync or local-only chosen", done: setupDone || syncEnabled },
-        { key: "profile", label: "Private profile saved or skipped", done: setupDone || profileSaved },
+      phases: [
+        {
+          key: "setup-1",
+          label: "Foundation",
+          items: [
+            { key: "spark", label: "Finish Spark setup", done: setupDone },
+            { key: "identity", label: signedIn ? "Google connected" : "Google or local-only chosen", done: setupDone || signedIn },
+            { key: "sync", label: syncEnabled ? "Sync enabled" : "Sync or local-only chosen", done: setupDone || syncEnabled },
+            { key: "profile", label: "Private profile saved or skipped", done: setupDone || profileSaved },
+          ],
+        },
+        {
+          key: "setup-2",
+          label: "Make it yours",
+          items: [
+            { key: "look", label: "Pick an app look", done: appearance.appLook !== "zen" || !!manualDone.look, manual: true },
+            { key: "font", label: "Choose a UI font", done: appearance.uiFont !== "system" || !!manualDone.font, manual: true },
+            { key: "ai-label", label: "Add an AI email label", done: customLabelCount > 0 },
+          ],
+        },
       ],
     },
     {
@@ -534,10 +672,35 @@ function DashboardTutorial() {
           selectNote(id);
         });
       },
-      items: [
-        { key: "note", label: "Create or open a note", done: noteCount > 0 },
-        { key: "pdf", label: "Open the sample PDF or add one", done: pdfCount > 0 },
-        { key: "search", label: "Try Ctrl/Cmd+K search", done: !!manualDone.search, manual: true },
+      phases: [
+        {
+          key: "material-1",
+          label: "Capture",
+          items: [
+            { key: "note", label: "Create or open a note", done: noteCount > 0 },
+            { key: "pdf", label: "Open the sample PDF or add one", done: pdfCount > 0 },
+            { key: "search", label: "Try Ctrl/Cmd+K search", done: !!manualDone.search, manual: true },
+          ],
+        },
+        {
+          key: "material-2",
+          label: "Organise & link",
+          items: [
+            { key: "meta", label: "Tag a note (space, subject, unit, or tags)", done: contentSignals.hasMeta },
+            { key: "filter", label: "Filter the sidebar", done: !!manualDone.filter, manual: true },
+            { key: "wikilink", label: "Link notes with [[ ]]", done: contentSignals.hasWikiLink },
+            { key: "moc", label: "Turn a note into a Map of Content", done: contentSignals.hasMoc },
+          ],
+        },
+        {
+          key: "material-3",
+          label: "Author & solve",
+          items: [
+            { key: "math", label: "Insert a math block with /", done: contentSignals.hasMath },
+            { key: "math-check", label: "Check a derivation with Math check", done: contentSignals.hasCheckedMath },
+            { key: "block", label: "Insert a table or geometry block", done: contentSignals.hasBlock },
+          ],
+        },
       ],
     },
     {
@@ -546,11 +709,27 @@ function DashboardTutorial() {
       body: "Turn loose notes, PDFs, events, or mail into one study workspace.",
       action: "Open Deep Work",
       run: openDeepWork,
-      items: [
-        { key: "session", label: "Create or open a session", done: hasSession },
-        { key: "session-item", label: "Add a note, PDF, event, or email", done: hasDeepWorkItem },
-        { key: "session-intent", label: "Name the session or set intent", done: hasIntent },
-        { key: "arrange", label: "Move or resize one source window", done: !!manualDone.arrange, manual: true },
+      phases: [
+        {
+          key: "deepwork-1",
+          label: "Build a workspace",
+          items: [
+            { key: "session", label: "Create or open a session", done: hasSession },
+            { key: "session-item", label: "Add a note, PDF, event, or email", done: hasDeepWorkItem },
+            { key: "session-intent", label: "Name the session or set intent", done: hasIntent },
+            { key: "arrange", label: "Move or resize one source window", done: !!manualDone.arrange, manual: true },
+          ],
+        },
+        {
+          key: "deepwork-2",
+          label: "Work the canvas",
+          items: [
+            { key: "second-source", label: "Gather a second source", done: hasSecondSource },
+            { key: "add-related", label: "Right-click something → Add to Deep Work", done: !!manualDone["add-related"], manual: true },
+            { key: "zen-mode", label: "Try zen mode", done: !!manualDone["zen-mode"], manual: true },
+            { key: "second-session", label: "Open a second session", done: hasSecondSession },
+          ],
+        },
       ],
     },
     {
@@ -559,11 +738,46 @@ function DashboardTutorial() {
       body: "Use the learning loop: backbone, focus, quiz, feedback.",
       action: "Go study",
       run: openDeepWork,
-      items: [
-        { key: "backbone", label: "Generate or view a study backbone", done: hasBackbone },
-        { key: "focus", label: "Start one focus session", done: hasFocus },
-        { key: "quiz", label: "Answer and grade a quiz", done: hasGradedQuiz },
-        { key: "lesson", label: "Try a lesson/class", done: !!manualDone.lesson, manual: true },
+      phases: [
+        {
+          key: "study-1",
+          label: "The loop",
+          items: [
+            { key: "study-open", label: "Open the Study panel", done: !!manualDone["study-open"], manual: true },
+            { key: "focus", label: "Start one focus session", done: hasFocus },
+            { key: "quiz", label: "Take a quiz", done: hasAnyQuiz },
+            { key: "lesson", label: "Try a lesson/class", done: !!manualDone.lesson, manual: true },
+          ],
+        },
+        {
+          key: "study-2",
+          label: "Evidence & mastery",
+          items: [
+            { key: "backbone", label: "Generate a study backbone", done: hasBackbone },
+            { key: "review-weak", label: "Review your weakest concept", done: hasReviewedWeak },
+            { key: "quiz-graded", label: "Grade a quiz into mastery", done: hasGradedQuiz },
+            { key: "requiz", label: "Re-quiz a mistake", done: !!manualDone.requiz, manual: true },
+          ],
+        },
+        {
+          key: "study-3",
+          label: "Plan to the deadline",
+          items: [
+            { key: "plan", label: "Set a study plan + exam date", done: hasPlan },
+            { key: "hero", label: "Read the Exam-Focus hero", done: !!manualDone.hero, manual: true },
+            { key: "planned-block", label: "Finish a planned session", done: hasPlannedBlockDone },
+            { key: "daily-goal", label: "Set your daily goal", done: goalHours !== DEFAULT_GOAL_HOURS || !!manualDone["daily-goal"] },
+          ],
+        },
+        {
+          key: "study-4",
+          label: "Lessons & tutoring",
+          items: [
+            { key: "lesson-start", label: "Start a guided lesson", done: !!manualDone["lesson-start"], manual: true },
+            { key: "class-finish", label: "Finish a class", done: !!manualDone["class-finish"], manual: true },
+            { key: "deadline-modes", label: "Learn the deadline modes", done: !!manualDone["deadline-modes"], manual: true },
+          ],
+        },
       ],
     },
     {
@@ -572,10 +786,26 @@ function DashboardTutorial() {
       body: "Bring in outside academic context when you want it.",
       action: sourcesCount ? "Open Sources" : "Connect sources",
       run: sourcesCount ? openSources : openSettings,
-      items: [
-        { key: "google", label: "Connect Google or stay local", done: setupDone || signedIn },
-        { key: "sources", label: "Refresh or import a connected source", done: sourcesCount > 0 },
-        { key: "add-real", label: "Add a source/event/email to Deep Work", done: !!manualDone["add-real"], manual: true },
+      phases: [
+        {
+          key: "connect-1",
+          label: "Bring it in",
+          items: [
+            { key: "google", label: "Connect Google or stay local", done: setupDone || signedIn },
+            { key: "sources", label: "Refresh or import a connected source", done: sourcesCount > 0 },
+            { key: "add-real", label: "Add a source/event/email to Deep Work", done: !!manualDone["add-real"], manual: true },
+          ],
+        },
+        {
+          key: "connect-2",
+          label: "Wire it up",
+          items: [
+            { key: "provider", label: "Connect Canvas, Drive, Zotero, or GitHub", done: hasProviderSource },
+            { key: "web-capture", label: "Capture a web page", done: hasWebCapture },
+            { key: "open-admin", label: "Open Calendar or Mail", done: !!manualDone["open-admin"], manual: true },
+            { key: "real-to-dw", label: "Add an event or email to Deep Work", done: hasRealItem },
+          ],
+        },
       ],
     },
     {
@@ -584,33 +814,64 @@ function DashboardTutorial() {
       body: "Know where data, AI tools, backups, and diagnostics live.",
       action: "Open Settings",
       run: openSettings,
-      items: [
-        { key: "settings", label: "Open Settings", done: !!manualDone.settings, manual: true },
-        { key: "tools", label: "Review AI tool permissions", done: !!manualDone.tools, manual: true },
-        { key: "backup", label: "Export backup or copy diagnostics", done: !!manualDone.backup, manual: true },
+      phases: [
+        {
+          key: "trust-1",
+          label: "Where things live",
+          items: [
+            { key: "settings", label: "Open Settings", done: !!manualDone.settings, manual: true },
+            { key: "tools", label: "Review AI tool permissions", done: !!manualDone.tools, manual: true },
+            { key: "backup", label: "Export backup or copy diagnostics", done: !!manualDone.backup, manual: true },
+          ],
+        },
+        {
+          key: "trust-2",
+          label: "Own your data",
+          items: [
+            { key: "tool-toggle", label: "Adjust an AI tool permission", done: toolOverrideCount > 0 },
+            { key: "export-backup", label: "Export a backup", done: !!manualDone["export-backup"], manual: true },
+            { key: "diagnostics", label: "Copy diagnostics", done: !!manualDone.diagnostics, manual: true },
+            { key: "plan-usage", label: "Review Plan & usage", done: !!manualDone["plan-usage"], manual: true },
+          ],
+        },
       ],
     },
   ];
 
-  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
-  const done = groups.reduce((sum, group) => sum + group.items.filter((item) => item.done).length, 0);
-  const nextGroup = groups.find((group) => group.items.some((item) => !item.done)) ?? groups[groups.length - 1];
+  // Let the transition-watching effect see this render's group state.
+  groupsRef.current = groups;
+
+  // Progress counts only the phases unlocked so far — deeper phases join the
+  // total (and the bar dips) when they unlock, which is the "new goals" moment.
+  const { total, done } = groups.reduce(
+    (acc, group) => {
+      for (const phase of group.phases.slice(0, currentPhaseIndex(group) + 1)) {
+        acc.total += phase.items.length;
+        acc.done += phase.items.filter((item) => item.done).length;
+      }
+      return acc;
+    },
+    { total: 0, done: 0 }
+  );
+  const nextGroup =
+    groups.find((group) => group.phases.some((phase) => phase.items.some((item) => !item.done))) ??
+    groups[groups.length - 1];
 
   return (
     <section className="mb-4 rounded-[14px] border border-[rgba(var(--accent-rgb),0.28)] bg-[rgba(var(--accent-rgb),0.055)] p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <SectionLabel>First Run Path</SectionLabel>
-          <div className="mt-1 text-sm font-semibold text-[var(--text)]">Try the core loop</div>
-          <p className="zen-secondary-copy mt-1 text-xs">Material → Deep Work → study → proof.</p>
+          <div className="mt-1 text-sm font-semibold text-[var(--text)]">Learn Zen by doing</div>
+          <p className="zen-secondary-copy mt-1 text-xs">Click any goal below and Zen walks you through actually doing it.</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
             className="zen-pressable zen-shine rounded-[10px] bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-black hover:brightness-105"
             onClick={startCoreLoopTour}
-            title="Guided walkthrough of the core loop"
+            title="Hands-on tour: make a real note, find it, study it (~2 min)"
           >
-            Show me how
+            Do the core loop
           </button>
           <button
             className="text-xs text-[var(--text-dim)] transition hover:text-[var(--text)]"
@@ -625,16 +886,22 @@ function DashboardTutorial() {
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
         <div className="h-full rounded-full bg-[var(--accent)] transition-[width]" style={{ width: `${Math.round((done / total) * 100)}%` }} />
       </div>
-      <div className="zen-meta mt-1.5 text-xs">{done} of {total} ticks complete</div>
+      <div className="zen-meta mt-1.5 text-xs">{done} of {total} done{done < total ? ` — next up: ${nextGroup.title}` : " — all done 🎉"}</div>
 
       <Masonry className="mt-4">
         {groups.map((group) => {
-          const groupDone = group.items.every((item) => item.done);
+          // Only the CURRENT phase is shown in full: earlier phases collapse to a
+          // "complete" line, later phases stay hidden until this one is done.
+          const phaseIdx = currentPhaseIndex(group);
+          const phase = group.phases[phaseIdx];
+          const phaseDoneCount = phase.items.filter((item) => item.done).length;
+          const groupDone = group.phases.every((p) => p.items.every((item) => item.done));
+          const justUnlocked = phaseIdx > 0 && !groupDone && !seenAtMount[phase.key];
           return (
             <details key={group.key} className="group rounded-[12px] border border-[rgba(255,255,255,0.07)] bg-[rgba(255,255,255,0.02)] px-3 py-2" open={group.key === nextGroup.key && !groupDone}>
               <summary className="flex cursor-pointer list-none items-center gap-2">
                 <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-[6px] border text-[11px] ${groupDone ? "border-transparent bg-[var(--accent)] text-black" : "border-[var(--border)] text-[var(--text-dim)]"}`}>
-                  {groupDone ? "✓" : group.items.filter((item) => item.done).length}
+                  {groupDone ? "✓" : phaseDoneCount}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-[var(--text)]">{group.title}</span>
@@ -643,24 +910,55 @@ function DashboardTutorial() {
                 <span className="text-xs text-[var(--text-dim)] transition group-open:rotate-90">→</span>
               </summary>
               <div className="mt-3 space-y-2">
-                {group.items.map((item) => (
-                  <button
-                    key={item.key}
-                    className="flex w-full items-start gap-2 text-left text-xs"
-                    disabled={!item.manual}
-                    onClick={() => item.manual && markManual(item.key)}
-                    title={item.manual ? "Toggle this tick manually" : undefined}
-                  >
-                    <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border text-[10px] ${item.done ? "border-transparent bg-[var(--text-dim)] text-black" : "border-[var(--border)] text-transparent"}`}>
-                      ✓
-                    </span>
-                    <span className={item.done ? "text-[var(--text-dim)] line-through" : "text-[var(--text)]"}>{item.label}</span>
-                  </button>
+                {group.phases.slice(0, phaseIdx).map((donePhase) => (
+                  <div key={donePhase.key} className="flex items-center gap-2 text-xs text-[var(--text-dim)]">
+                    <span className="grid h-4 w-4 shrink-0 place-items-center rounded-[4px] bg-[var(--accent)] text-[10px] text-black">✓</span>
+                    <span>{donePhase.label} complete</span>
+                  </div>
                 ))}
-                {GROUP_TOURS[group.key] ? (
+                {/* Keyed by phase so a newly-unlocked phase remounts and pops in. */}
+                <div key={phase.key} className={`space-y-2 ${justUnlocked ? "zen-anim-pop" : ""}`}>
+                  {group.phases.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">
+                      <span>
+                        Phase {phaseIdx + 1} of {group.phases.length} — {phase.label}
+                      </span>
+                      {justUnlocked && (
+                        <span className="rounded-full bg-[var(--accent-dim)] px-1.5 py-0.5 normal-case tracking-normal text-[var(--accent)]">
+                          New goals unlocked
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {phase.items.map((item) => {
+                    // Every unfinished goal is a live entry point: manual ticks
+                    // toggle, everything else jumps into the phase's guided
+                    // walkthrough so "click what you want to learn" always works.
+                    const launchesTour = !item.manual && !item.done && !!GROUP_TOURS[phase.key];
+                    const clickable = item.manual || launchesTour;
+                    return (
+                      <button
+                        key={item.key}
+                        className="group/tick flex w-full items-start gap-2 text-left text-xs"
+                        disabled={!clickable}
+                        onClick={() => (item.manual ? markManual(item.key) : startGroupTour(phase.key))}
+                        title={item.manual ? "Toggle this tick manually" : launchesTour ? "Show me how — guided walkthrough" : undefined}
+                      >
+                        <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border text-[10px] ${item.done ? "border-transparent bg-[var(--text-dim)] text-black" : "border-[var(--border)] text-transparent"}`}>
+                          ✓
+                        </span>
+                        <span className={`min-w-0 flex-1 ${item.done ? "text-[var(--text-dim)] line-through" : "text-[var(--text)]"}`}>{item.label}</span>
+                        {launchesTour && (
+                          <span className="shrink-0 text-[var(--text-dim)] opacity-0 transition group-hover/tick:opacity-100">Show me →</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {GROUP_TOURS[phase.key] ? (
                   <button
                     className="zen-btn zen-shine mt-1 w-full justify-center"
-                    onClick={() => startGroupTour(group.key)}
+                    onClick={() => startGroupTour(phase.key)}
                   >
                     Start walkthrough
                   </button>
@@ -673,9 +971,20 @@ function DashboardTutorial() {
         })}
       </Masonry>
 
-      <button className="zen-btn zen-shine mt-4 w-full justify-center" onClick={nextGroup.run}>
-        Next: {nextGroup.action}
-      </button>
+      {/* Primary CTA leads into DOING the next unfinished phase — its guided
+          walkthrough when one exists, the group's plain action otherwise. */}
+      {(() => {
+        const nextPhase = nextGroup.phases[currentPhaseIndex(nextGroup)];
+        const hasTour = !!GROUP_TOURS[nextPhase.key];
+        return (
+          <button
+            className="zen-btn zen-shine mt-4 w-full justify-center"
+            onClick={() => (hasTour ? startGroupTour(nextPhase.key) : nextGroup.run())}
+          >
+            {hasTour ? `Walk me through: ${nextGroup.title} — ${nextPhase.label}` : `Next: ${nextGroup.action}`}
+          </button>
+        );
+      })()}
     </section>
   );
 }
@@ -729,10 +1038,11 @@ function QuickAccessBento({ onOpenAdmin }: { onOpenAdmin: (focus: AdminFocus, ta
         setWorkspace({ surface: "sources", adminMailId: null });
       },
     },
-    { label: "Plan", title: "Calendar", onClick: () => onOpenAdmin("calendar") },
+    { label: "Plan", title: "Calendar", tour: "calendar", onClick: () => onOpenAdmin("calendar") },
     {
       label: "Tune",
       title: "Settings",
+      tour: "settings",
       onClick: () => {
         selectNote(null);
         setManualDeepWork(false);
@@ -770,7 +1080,7 @@ function LabelManager() {
   }
 
   return (
-    <div>
+    <div data-tour="ai-labels">
       <div className="mb-3 flex items-center justify-between gap-3">
         <SectionLabel>AI Labels</SectionLabel>
         <span className="zen-meta text-xs">Topics for email</span>
@@ -980,6 +1290,7 @@ function ExamFocusHero({ now, className = "" }: { now: number; className?: strin
 
   return (
     <section
+      data-tour="exam-hero"
       className={`rounded-[16px] border p-4 ${className}`}
       style={{ borderColor: `${color}55`, background: `${color}0f` }}
     >

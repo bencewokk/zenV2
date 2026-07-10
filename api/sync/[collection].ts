@@ -9,6 +9,8 @@ import { enforceRequestRateLimit, positiveEnvInt } from "../_lib/limits.js";
 const ALLOWED = new Set([
   "notes", "ai", "deepwork", "studylog", "workspace", "pdfs", "quiz",
   "memoryProfile", "memoryEntries", "appearance", "toolPolicy", "aiSettings", "googleSettings", "canvasSettings", "externalConnections",
+  "assistant_captures",
+  "assistantTasks", "assistantRoutines", "assistantReceipts",
 ]);
 
 /** Page size cap for a single pull, to bound function memory/time. */

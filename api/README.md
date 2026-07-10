@@ -20,6 +20,8 @@ scoped to the token's Google account (`sub`).
 | `GET`  | `/api/account` | Return the authenticated account snapshot and subscription access status. |
 | `GET` | `/api/ai-usage` | Return the current tier, UTC month, per-model usage, and caps. |
 | `POST` | `/api/ai/chat` | Authenticated, budget-enforced DeepSeek streaming gateway. |
+| `POST` | `/api/ai/chat?assistant=google-code` | Exchange the PWA Google code and store encrypted offline credentials. |
+| `GET/POST` | `/api/ai/chat?assistant=background` | Manage background routine status, Web Push, and due-run wakeups. |
 | `GET` | `/api/updates/latest` | Public Tauri update manifest backed by the private GitHub release. |
 | `GET` | `/api/updates/asset?id=...` | Redirect to a short-lived authenticated release-asset download. |
 | `PUT`  | `/api/pdfs/:id?uploadId=&part=&parts=` | Upload one PDF part; the final part atomically assembles it in GridFS. |
@@ -47,6 +49,11 @@ never leave the device (see `src/services/sync/adapters/filteredBlob.ts`).
    env vars in the host dashboard for production. AI also requires `DEEPSEEK_API_KEY`.
    Private-repository updates require `GITHUB_RELEASES_TOKEN` with read-only Contents
    access scoped only to this repository.
+
+Background Gmail and Calendar routines also require `ASSISTANT_GOOGLE_CLIENT_ID` and
+`ASSISTANT_GOOGLE_CLIENT_SECRET` from the PWA's Web OAuth client. Web Push requires a
+VAPID key pair. Refresh tokens and push subscriptions are encrypted with the existing
+`CONNECTION_VAULT_KEY` before they are stored.
 
 ## Subscription and AI quotas
 

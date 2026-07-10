@@ -15,7 +15,7 @@ export function FilterBar() {
   const tags = allTags(list);
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--border)] px-2 py-1.5">
+    <div data-tour="filter-bar" className="flex flex-wrap items-center gap-1.5 border-b border-[var(--border)] px-2 py-1.5">
       <input
         value={filter.query}
         onChange={(e) => setFilter({ query: e.target.value })}

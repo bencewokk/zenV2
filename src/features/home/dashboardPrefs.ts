@@ -9,6 +9,8 @@ const TUTORIAL_KEY = "zen.dashboard-tutorial.v1";
 export type TutorialManualState = {
   hidden?: boolean;
   done?: Record<string, boolean>;
+  /** Phase keys whose "New goals unlocked" cue has already been shown once. */
+  seen?: Record<string, boolean>;
 };
 
 export function readTutorialState(): TutorialManualState {
@@ -28,6 +30,18 @@ export function writeTutorialState(state: TutorialManualState): void {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Tick a tutorial item straight in storage — for signals that fire while the
+ * dashboard (and its tutorial state) is unmounted, e.g. lesson lifecycle inside
+ * Deep Work. The tutorial re-reads storage on mount, so the tick shows up when
+ * the user returns to the dashboard.
+ */
+export function markTutorialItemDone(key: string): void {
+  const state = readTutorialState();
+  if (state.done?.[key]) return;
+  writeTutorialState({ ...state, done: { ...state.done, [key]: true } });
 }
 
 /** Whether the dashboard tutorial is currently hidden. */

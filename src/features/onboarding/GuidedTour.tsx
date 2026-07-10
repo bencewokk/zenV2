@@ -22,6 +22,12 @@ export function GuidedTour() {
 
   const holeRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
+  // Edge cue shown when the anchor is scrolled out of view, pointing the user
+  // toward it. The auto-scroll fires once per step; after that the cue (also a
+  // click-to-scroll button) is the recovery path if the user scrolls away again.
+  const cueRef = useRef<HTMLButtonElement>(null);
+  const autoScrolledRef = useRef(false);
+  const targetRef = useRef<HTMLElement | null>(null);
 
   // Two phases per action step: "act" (spotlight on the target, user performs
   // the task) then "feedback" (the app's "good job" confirmation — spotlight
@@ -30,9 +36,11 @@ export function GuidedTour() {
   const [phase, setPhase] = useState<"act" | "feedback">("act");
   const inFeedback = phase === "feedback";
 
-  // Reset to the action phase whenever the step changes.
+  // Reset to the action phase (and re-arm the one-shot auto-scroll) whenever
+  // the step changes.
   useEffect(() => {
     setPhase("act");
+    autoScrolledRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, index]);
 
@@ -60,6 +68,7 @@ export function GuidedTour() {
           : null;
         const target =
           openEl ?? (step.anchor ? (document.querySelector(step.anchor) as HTMLElement | null) : null);
+        targetRef.current = target;
         if (target) {
           const r = target.getBoundingClientRect();
           hole.style.display = "block";
@@ -67,6 +76,48 @@ export function GuidedTour() {
           hole.style.left = `${r.left - PAD}px`;
           hole.style.width = `${r.width + PAD * 2}px`;
           hole.style.height = `${r.height + PAD * 2}px`;
+
+          // The spotlight can sit outside the viewport (the anchor lives further
+          // down a scrollable surface, or the user scrolled away mid-step). Scroll
+          // it into view once per step; if it goes offscreen again, pin a cue at
+          // the nearest screen edge pointing toward it. A zero-size rect means the
+          // anchor is hidden, not scrolled away — no cue for that.
+          const hasSize = r.width > 0 && r.height > 0;
+          const M = 40; // how far past the edge counts as "out of view"
+          const offUp = hasSize && r.bottom < M;
+          const offDown = hasSize && r.top > window.innerHeight - M;
+          const offLeft = hasSize && r.right < M;
+          const offRight = hasSize && r.left > window.innerWidth - M;
+          const offscreen = offUp || offDown || offLeft || offRight;
+          if (offscreen && !autoScrolledRef.current) {
+            autoScrolledRef.current = true;
+            target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+          }
+          const cue = cueRef.current;
+          if (cue) {
+            if (offscreen) {
+              cue.style.display = "flex";
+              cue.textContent = offUp
+                ? "↑ The highlight is above — scroll up"
+                : offDown
+                  ? "↓ The highlight is below — scroll down"
+                  : offLeft
+                    ? "← The highlight is off to the left"
+                    : "→ The highlight is off to the right";
+              const cw = cue.offsetWidth;
+              const ch = cue.offsetHeight;
+              const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi));
+              if (offUp || offDown) {
+                cue.style.top = offUp ? "12px" : `${window.innerHeight - ch - 12}px`;
+                cue.style.left = `${clamp(r.left + r.width / 2 - cw / 2, 12, window.innerWidth - cw - 12)}px`;
+              } else {
+                cue.style.left = offLeft ? "12px" : `${window.innerWidth - cw - 12}px`;
+                cue.style.top = `${clamp(r.top + r.height / 2 - ch / 2, 12, window.innerHeight - ch - 12)}px`;
+              }
+            } else {
+              cue.style.display = "none";
+            }
+          }
 
           const tr = tip.getBoundingClientRect();
           let top = r.bottom + 12;
@@ -82,6 +133,7 @@ export function GuidedTour() {
         } else {
           // Centered card: either the step has no anchor, or it hasn't mounted yet.
           hole.style.display = "none";
+          if (cueRef.current) cueRef.current.style.display = "none";
           tip.style.top = "50%";
           tip.style.left = "50%";
           tip.style.transform = "translate(-50%, -50%)";
@@ -134,6 +186,12 @@ export function GuidedTour() {
     >
       <div className="tour-catch" />
       <div ref={holeRef} className="tour-hole" />
+      <button
+        ref={cueRef}
+        className="tour-cue"
+        style={{ display: "none" }}
+        onClick={() => targetRef.current?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })}
+      />
       <div ref={tipRef} className="tour-tip">
         <div className="tour-tip__step">
           {index + 1} / {steps.length}
