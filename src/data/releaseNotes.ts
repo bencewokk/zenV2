@@ -3,6 +3,8 @@ export interface ReleaseEntry {
   version: string;
   /** From the file's `date:` frontmatter, or "" if absent. */
   date: string;
+  /** From the file's `codename:` frontmatter — the release's "randomword". */
+  codename: string;
   /** Markdown body (frontmatter stripped). Rendered in the modal. */
   body: string;
   /** First line of the body, plain text — used for the dashboard card. */
@@ -28,12 +30,15 @@ const files = import.meta.glob("/release-notes/*.md", {
 function parse(path: string, raw: string): ReleaseEntry {
   const version = path.split("/").pop()!.replace(/\.md$/, "");
   let date = "";
+  let codename = "";
   let body = raw;
 
   const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (fm) {
     const d = fm[1].match(/date:\s*(.+)/);
     if (d) date = d[1].trim();
+    const c = fm[1].match(/codename:\s*(.+)/);
+    if (c) codename = c[1].trim();
     body = raw.slice(fm[0].length);
   }
   body = body.trim();
@@ -43,7 +48,7 @@ function parse(path: string, raw: string): ReleaseEntry {
     .replace(/^[-*#>\s]+/, "")
     .slice(0, 120);
 
-  return { version, date, body, summary };
+  return { version, date, codename, body, summary };
 }
 
 function cmpSemver(a: string, b: string): number {

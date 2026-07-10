@@ -90,7 +90,10 @@ export function ReleaseNotesModal() {
           {RELEASE_NOTES.map((entry) => (
             <div key={entry.version} className="flex flex-col gap-2">
               <div className="flex items-baseline gap-3">
-                <span className="text-sm font-semibold text-[var(--text)]">v{entry.version}</span>
+                <span className="text-sm font-semibold text-[var(--text)]">
+                  v{entry.version}
+                  {entry.codename && <span className="font-normal text-[var(--accent)]"> “{entry.codename}”</span>}
+                </span>
                 {entry.date && <span className="text-xs text-[var(--text-dim)]">{entry.date}</span>}
               </div>
               <div
@@ -137,7 +140,8 @@ export function WhatsNew() {
           {isNew ? "What's new" : "Release notes"}
         </span>
         <span className="truncate text-xs text-[var(--text-dim)]">
-          v{LATEST_RELEASE.version} — {LATEST_RELEASE.summary}
+          v{LATEST_RELEASE.version}
+          {LATEST_RELEASE.codename ? ` “${LATEST_RELEASE.codename}”` : ""} — {LATEST_RELEASE.summary}
         </span>
       </span>
       <span className="ml-auto text-xs text-[var(--text-dim)] group-hover:text-[var(--text)]">→</span>

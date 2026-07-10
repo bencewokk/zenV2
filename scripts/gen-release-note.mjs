@@ -39,6 +39,17 @@ const version = `${maj}.${min}.${pat + 1}`;
 
 const date = new Date().toISOString().slice(0, 10);
 
+// Every release gets a codename ("randomword"). It lives only in the note's
+// frontmatter and human-facing UI — tags and bundle versions stay plain semver
+// because Tauri's updater and version.mjs parse them.
+const CODENAMES = [
+  "Lantern", "Ember", "Sierra", "Meadow", "Drift", "Halcyon", "Quill", "Vesper",
+  "Cairn", "Sable", "Aurora", "Tundra", "Willow", "Zephyr", "Cove", "Onyx",
+  "Fable", "Harbor", "Juniper", "Kestrel", "Lumen", "Mistral", "Nimbus", "Opal",
+  "Pine", "Quartz", "Reverie", "Solstice", "Thicket", "Umber", "Verdant", "Wren",
+];
+const codename = CODENAMES[Math.floor(Math.random() * CODENAMES.length)];
+
 // Prefer the commit body (the detailed lines under the subject); fall back to
 // the subject for one-line commits. The modal already shows the version as a
 // heading, so the subject would just be noise when a body exists.
@@ -54,7 +65,7 @@ const body = stripped || `- ${subject}`;
 
 mkdirSync("release-notes", { recursive: true });
 const file = `release-notes/${version}.md`;
-writeFileSync(file, `---\ndate: ${date}\n---\n\n${body}\n`);
+writeFileSync(file, `---\ndate: ${date}\ncodename: ${codename}\n---\n\n${body}\n`);
 
 sh(`git tag v${version}`);
-console.log(`[release] tagged v${version} · ${file}`);
+console.log(`[release] tagged v${version} "${codename}" · ${file}`);

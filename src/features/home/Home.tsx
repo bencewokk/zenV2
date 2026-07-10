@@ -37,6 +37,7 @@ import { loadAppearance } from "@/services/appearance";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { notify } from "@/shared/ui/notify";
 import { Masonry } from "@/shared/ui/Masonry";
+import { AssistantConnect } from "@/features/home/AssistantConnect";
 import { startCoreLoopTour, startGroupTour, GROUP_TOURS } from "@/features/onboarding/tours";
 
 type AdminFocus = "calendar" | "mail";
@@ -344,6 +345,14 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                   <SectionLabel>Jump Back In</SectionLabel>
                 </div>
                 <QuickAccessBento onOpenAdmin={openAdmin} />
+              </div>
+
+              {/* Phone assistant — QR handoff to the assistant PWA */}
+              <div className="bento-tile">
+                <div className="mb-3">
+                  <SectionLabel>Zen on your phone</SectionLabel>
+                </div>
+                <AssistantConnect />
               </div>
 
               {/* What's new — self-styled button */}
