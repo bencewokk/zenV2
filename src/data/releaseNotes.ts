@@ -43,8 +43,11 @@ function parse(path: string, raw: string): ReleaseEntry {
   }
   body = body.trim();
 
-  // First meaningful line, stripped of leading markdown markers, for the card.
-  const summary = (body.split("\n").find((l) => l.trim()) ?? "")
+  // First meaningful line for the card, stripped of leading markdown markers.
+  // Skip `#` headings that just restate the version/codename (the card already
+  // shows both), but fall back to them for notes that are heading-only.
+  const lines = body.split("\n").filter((l) => l.trim());
+  const summary = (lines.find((l) => !l.trim().startsWith("#")) ?? lines[0] ?? "")
     .replace(/^[-*#>\s]+/, "")
     .slice(0, 120);
 
