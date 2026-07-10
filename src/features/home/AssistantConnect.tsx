@@ -143,11 +143,14 @@ function PhoneFeed({ tasks, onShowQr }: { tasks: AssistantTask[]; onShowQr: () =
           {hiddenOpen > 0 ? `+${hiddenOpen} more in Settings → Data` : "Synced from your phone"}
         </span>
         <button
-          className="text-[11px] text-[var(--text-dim)] transition hover:text-[var(--text)]"
+          className="zen-pressable flex shrink-0 items-center gap-1.5 rounded-[8px] border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--text-dim)] transition hover:text-[var(--text)]"
           onClick={onShowQr}
-          title="Show the QR again to link another phone"
+          title="Show the QR code to link a phone"
         >
-          Link a phone
+          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor" aria-hidden="true">
+            <path d="M1 1h6v6H1V1zm2 2v2h2V3H3zm6-2h6v6H9V1zm2 2v2h2V3h-2zM1 9h6v6H1V9zm2 2v2h2v-2H3zm8-2h2v2h-2V9zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4-4h2v2h-2V9z" />
+          </svg>
+          Show QR code
         </button>
       </div>
     </div>
