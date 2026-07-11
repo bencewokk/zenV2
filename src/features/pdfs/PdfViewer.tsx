@@ -160,7 +160,7 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
   const hasPanel = sorted.length > 0 || matches.length > 0 || outline.length > 0;
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg)]">
+    <div data-tour="pdf-viewer" className="flex h-full flex-col bg-[var(--bg)]">
       {/* toolbar */}
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--border)] px-2 py-1.5 text-xs">
         <button className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 disabled:opacity-40" onClick={() => go(page - 1)} disabled={page <= 1}>‹</button>
@@ -172,10 +172,11 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
         <span className="text-[var(--text-dim)]">/ {pageCount || "?"}</span>
         <button className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 disabled:opacity-40" onClick={() => go(page + 1)} disabled={!!pageCount && page >= pageCount}>›</button>
         <span className="mx-1 h-4 w-px bg-[var(--border)]" />
-        <button className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--accent)]" onClick={addBookmark} title="Bookmark this page">＋ Bookmark</button>
-        <button className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--text-dim)] hover:text-[var(--text)]" onClick={() => useDeepWork.getState().requestAdd({ type: "pdf", id: pdfId })} title="Add this PDF to Deep Work">⊕ Deep Work</button>
+        <button data-tour="pdf-bookmark" className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--accent)]" onClick={addBookmark} title="Bookmark this page">＋ Bookmark</button>
+        <button data-tour="pdf-deep-work" className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-[var(--text-dim)] hover:text-[var(--text)]" onClick={() => useDeepWork.getState().requestAdd({ type: "pdf", id: pdfId })} title="Add this PDF to Deep Work">⊕ Deep Work</button>
         <span className="mx-1 h-4 w-px bg-[var(--border)]" />
         <input
+          data-tour="pdf-search"
           value={query}
           onChange={(e) => runSearch(e.target.value)}
           placeholder="Find page…"
@@ -187,10 +188,11 @@ export function PdfViewer({ pdfId }: { pdfId: string }) {
 
       <div className="flex min-h-0 flex-1">
         {hasPanel && (
-          <div className="w-52 shrink-0 overflow-auto border-r border-[var(--border)] p-1 text-[11px]">
+          <div data-tour="pdf-research-panel" className="w-52 shrink-0 overflow-auto border-r border-[var(--border)] p-1 text-[11px]">
             {outline.length > 0 && (
               <>
                 <button
+                  data-tour="pdf-outline"
                   className="flex w-full items-center gap-1 px-1 py-1 font-semibold uppercase tracking-wide text-[var(--text-dim)] hover:text-[var(--text)]"
                   onClick={() => setShowToc((v) => !v)}
                   title={showToc ? "Collapse contents" : "Expand contents"}

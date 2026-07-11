@@ -20,18 +20,18 @@ export function linkifyCitations(html: string): string {
     const name = usePdfs.getState().pdfs[id]?.name ?? "PDF";
     const label = page ? `${name} · p${page}` : name;
     return (
-      `<button type="button" class="zen-cite" data-cite-pdf="${id}"${page ? ` data-cite-page="${page}"` : ""}>` +
+      `<button type="button" class="zen-cite" data-tour="ai-citation" data-cite-pdf="${id}"${page ? ` data-cite-page="${page}"` : ""}>` +
       `📄 ${escapeHtml(label)}</button>`
     );
   });
   out = out.replace(/\[id:([\w-]+)\]/g, (_m, id) => {
     const title = useNotes.getState().notes[id]?.title;
     // Leave unknown ids as-is so we don't fabricate a dead link.
-    return title ? `<button type="button" class="zen-cite" data-cite-note="${id}">✎ ${escapeHtml(title)}</button>` : `[id:${id}]`;
+    return title ? `<button type="button" class="zen-cite" data-tour="ai-citation" data-cite-note="${id}">✎ ${escapeHtml(title)}</button>` : `[id:${id}]`;
   });
   out = out.replace(/\[source:([^\]]+)\]/g, (_m, id) => {
     const source = useSources.getState().sources[id];
-    return source ? `<button type="button" class="zen-cite" data-cite-source="${escapeHtml(id)}">⌘ ${escapeHtml(source.title)}</button>` : `[source:${escapeHtml(id)}]`;
+    return source ? `<button type="button" class="zen-cite" data-tour="ai-citation" data-cite-source="${escapeHtml(id)}">⌘ ${escapeHtml(source.title)}</button>` : `[source:${escapeHtml(id)}]`;
   });
   return out;
 }

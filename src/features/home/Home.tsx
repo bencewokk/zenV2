@@ -15,6 +15,7 @@ import {
 } from "@/features/home/deepwork/studyPlan";
 import { useStudyLog, dayKey, HOUR_MS, computeStreak } from "@/features/home/deepwork/studyLog";
 import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
+import { useAI } from "@/features/ai/store";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { WhatsNew } from "@/features/home/ReleaseNotes";
 import { useNotes } from "@/features/notes/store";
@@ -531,6 +532,20 @@ function DashboardTutorial() {
 
   const configuredGroups: TutorialGroup[] = [
     {
+      key: "assistant",
+      title: "Use the Zen Assistant",
+      body: "Work with an assistant that can understand and operate your academic workspace.",
+      action: "Open Assistant",
+      run: () => {
+        if (!useAI.getState().open) useAI.getState().toggle();
+      },
+      phases: [
+        { key: "assistant-1", label: "Ask with context", items: [] },
+        { key: "assistant-2", label: "Let Zen do work", items: [] },
+        { key: "assistant-3", label: "Control and verify", items: [] },
+      ],
+    },
+    {
       key: "setup",
       title: "Set Up Zen",
       body: "Finish the foundation so Zen knows what it may connect.",
@@ -580,6 +595,11 @@ function DashboardTutorial() {
           label: "Author & solve",
           items: [],
         },
+        {
+          key: "material-4",
+          label: "PDF research",
+          items: [],
+        },
       ],
     },
     {
@@ -603,7 +623,7 @@ function DashboardTutorial() {
     },
     {
       key: "study",
-      title: "Study And Quiz",
+      title: "Study and Quiz",
       body: "Use the learning loop: backbone, focus, quiz, feedback.",
       action: "Go study",
       run: openDeepWork,
@@ -620,11 +640,21 @@ function DashboardTutorial() {
         },
         {
           key: "study-3",
-          label: "Plan to the deadline",
+          label: "Mistakes & mastery",
           items: [],
         },
         {
           key: "study-4",
+          label: "Plan to the deadline",
+          items: [],
+        },
+        {
+          key: "study-5",
+          label: "Adaptive study strategy",
+          items: [],
+        },
+        {
+          key: "study-6",
           label: "Lessons & tutoring",
           items: [],
         },
@@ -651,7 +681,7 @@ function DashboardTutorial() {
     },
     {
       key: "trust",
-      title: "Trust And Control",
+      title: "Trust and Control",
       body: "Know where data, AI tools, backups, and diagnostics live.",
       action: "Open Settings",
       run: openSettings,
@@ -679,7 +709,7 @@ function DashboardTutorial() {
       ...phase,
       items: (GROUP_TOURS[phase.key] ?? [])
         .filter(isChecklistTourStep)
-        .map((step) => ({ key: step.id, label: step.title, done: !!manualDone[step.id] })),
+        .map((step) => ({ key: step.id, label: step.title, done: !!manualDone[step.id], optional: step.optional })),
     })),
   }));
 

@@ -133,7 +133,7 @@ export function ChatPanel() {
 
   if (showTools) {
     return (
-      <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
+      <aside data-tour="ai-tools" className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
         <ToolSettings onClose={() => setShowTools(false)} />
       </aside>
     );
@@ -141,14 +141,14 @@ export function ChatPanel() {
 
   if (showActivity) {
     return (
-      <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
+      <aside data-tour="ai-activity" className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
         <ActivityPanel turns={turns} onClose={() => setShowActivity(false)} />
       </aside>
     );
   }
 
   return (
-    <aside className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
+    <aside data-tour="ai-panel" className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
       {/* Primary row: conversation + new + close */}
       <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-3 py-2">
         <Dropdown
@@ -213,10 +213,10 @@ export function ChatPanel() {
           </span>
         )}
         <div className="ml-auto flex items-center gap-3">
-          <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowActivity(true)} title="AI activity log">
+          <button data-tour="ai-activity-button" className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowActivity(true)} title="AI activity log">
             Activity
           </button>
-          <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowTools(true)} title="Tool permissions">
+          <button data-tour="ai-tools-button" className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowTools(true)} title="Tool permissions">
             Tools
           </button>
           <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowProfile(true)} title="Profile memory">
@@ -244,7 +244,7 @@ export function ChatPanel() {
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      <div ref={scrollRef} data-tour="ai-thread" className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {turns.length === 0 && (
           <div className="text-sm text-[var(--text-dim)]">
             Ask anything. The open note is sent as context. Tip: add notes or PDFs to Deep Work,
@@ -299,6 +299,7 @@ export function ChatPanel() {
           .map((p) => (
             <div
               key={p.id}
+              data-tour="ai-proposal"
               className={`zen-anim-rise rounded-[var(--radius)] border bg-[var(--bg-elev)] p-3 text-sm ${
                 p.danger ? "border-[var(--danger)]" : "border-[var(--border)]"
               }`}
@@ -370,6 +371,7 @@ export function ChatPanel() {
 
       <div className="border-t border-[var(--border)] p-2">
         <textarea
+          data-tour="ai-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {

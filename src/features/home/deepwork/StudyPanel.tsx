@@ -224,7 +224,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
           </button>
         )}
 
-        {quizList.length > 0 && <QuizHistory list={quizList} />}
+        {quizList.length > 0 && <div data-tour="study-mistake-bank"><QuizHistory list={quizList} /></div>}
 
         {backbone ? (
           <div className="space-y-2">
@@ -258,7 +258,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            <ul className="space-y-1.5">
+            <ul data-tour="study-mastery" className="space-y-1.5">
               {backbone.concepts.map((c) => {
                 const cColor = readinessColor(c.mastery);
                 const due = isConceptDue(c, now);
@@ -471,7 +471,7 @@ function PlanSection({ now }: { now: number }) {
 
   return (
     <div data-tour="study-plan" className="space-y-2">
-      <div className="rounded-[8px] border border-[var(--border)] px-2.5 py-2">
+      <div data-tour="study-forecast" className="rounded-[8px] border border-[var(--border)] px-2.5 py-2">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Goal forecast</span>
           <span className="ml-auto text-[11px] font-medium" style={{ color: verdictColor(h) }}>
@@ -496,6 +496,7 @@ function PlanSection({ now }: { now: number }) {
 
       {h.drift && (
         <button
+          data-tour="study-replan"
           className="zen-pressable w-full rounded-[8px] border border-[#f5b14c] bg-[rgba(245,177,76,0.12)] px-2.5 py-1.5 text-left text-[11px] text-[var(--text)] disabled:opacity-50"
           onClick={() =>
             ask(
@@ -511,7 +512,7 @@ function PlanSection({ now }: { now: number }) {
       )}
 
       {upcoming.length ? (
-        <ul className="space-y-1">
+        <ul data-tour="study-next-actions" className="space-y-1">
           {upcoming.map((s) => (
             <PlanSessionRow key={s.id} s={s} now={now} disabled={aiActionsDisabled} ask={ask} />
           ))}

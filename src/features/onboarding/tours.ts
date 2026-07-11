@@ -11,6 +11,7 @@ import { useStudyLog } from "@/features/home/deepwork/studyLog";
 import { isFilterActive } from "@/features/filtering/filter";
 import { useSources } from "@/services/sources/store";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
+import { useAI } from "@/features/ai/store";
 import { loadAppearance } from "@/services/appearance";
 import { docToText } from "@/shared/lib/docText";
 import { docCountNodes, isSeededSample } from "./contentSignals";
@@ -187,6 +188,38 @@ function advanceOnDwItemAdded(advance: () => void): () => void {
   });
 }
 
+/** Auto-advance when the user sends another message to the assistant. */
+function advanceOnAiUserTurn(advance: () => void): () => void {
+  const count = () => useAI.getState().turns.filter((turn) => turn.role === "user").length;
+  const base = count();
+  return useAI.subscribe(() => {
+    if (count() > base) advance();
+  });
+}
+
+/** Open the assistant from the global header and follow the spotlight into it. */
+function openAssistantStep(prefix: string): TourStep {
+  return {
+    id: `${prefix}-open`,
+    title: "Open the AI panel",
+    body: "Open Zen's assistant from the header. It keeps the open note or Deep Work session as context.",
+    feedback: "The assistant is now beside your workspace, not in a separate app.",
+    anchor: '[data-tour="ai-toggle"]',
+    anchorWhenOpen: '[data-tour="ai-panel"]',
+    interactive: true,
+    beforeShow: goDashboard,
+    advanceWhen: (advance) => {
+      if (useAI.getState().open) {
+        advance();
+        return () => {};
+      }
+      return useAI.subscribe((s) => {
+        if (s.open) advance();
+      });
+    },
+  };
+}
+
 /** A single "get into Deep Work" step that self-skips if the user is already there. */
 function openDeepWorkStep(prefix: string, body: string): TourStep {
   return {
@@ -318,6 +351,183 @@ export function startCoreLoopTour() {
  * (`<group>-<phaseNumber>`, e.g. "material-2").
  */
 export const GROUP_TOURS: Record<string, TourStep[]> = {
+  "assistant-1": [
+    {
+      id: "ai1-intro",
+      title: "Ask with context",
+      body: "Zen can reason over what is open, cite the material it used, and keep a real conversation going.",
+      beforeShow: goDashboard,
+    },
+    openAssistantStep("ai1"),
+    {
+      id: "ai1-note",
+      title: "Ask about the open note",
+      body: "Open one of your notes, then ask a specific question about it. The note's text is included automatically.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      beforeShow: openNoteForTour,
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai1-session",
+      title: "Ask about the current Deep Work session",
+      body: "Open Deep Work and ask Zen to compare or explain the material on the current canvas. It can read the gathered notes and PDFs as one context.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Skip — needs AI",
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai1-reference",
+      title: "Inspect a source reference",
+      body: "Assistant answers can include clickable note, PDF-page, and connected-source chips. Click one to inspect the evidence in place.",
+      anchor: '[data-tour="ai-citation"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "No citation yet",
+    },
+    {
+      id: "ai1-continue",
+      title: "Continue the conversation",
+      body: "Ask a follow-up. Zen keeps the conversation and tool activity together, so you can refine an explanation without restating the context.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Skip — needs AI",
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai1-done",
+      title: "Context connected",
+      body: "Notes, canvas material, and cited sources now form one continuous academic conversation.",
+    },
+  ],
+  "assistant-2": [
+    {
+      id: "ai2-intro",
+      title: "Let Zen do work",
+      body: "The assistant can operate Zen's tools, while writes remain visible and governed by your permissions.",
+      beforeShow: () => {
+        goDashboard();
+        if (!useAI.getState().open) useAI.getState().toggle();
+      },
+    },
+    {
+      id: "ai2-create",
+      title: "Create a note with AI",
+      body: "Ask Zen to create a concise note on a topic. A tool activity line records the result and the new note remains yours to edit.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai2-improve",
+      title: "Improve an existing note",
+      body: "With a note open, ask Zen to restructure, expand, or correct it. Be explicit about what should stay unchanged.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Skip — needs AI",
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai2-find",
+      title: "Find material",
+      body: "Ask Zen to find a concept across your notes, PDFs, and connected sources, and to cite the strongest matches.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Skip — needs AI",
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai2-deepwork",
+      title: "Add material to Deep Work",
+      body: "Ask Zen to add a relevant note or PDF to the active Deep Work session. The canvas updates when the controlled action runs.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Skip — needs AI",
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai2-study",
+      title: "Generate a quiz, backbone, plan, or lesson",
+      body: "Ask for the study artifact you need next. Zen grounds it in the current session and places it in the Study workflow.",
+      anchor: '[data-tour="ai-input"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Skip — needs AI",
+      advanceWhen: advanceOnAiUserTurn,
+    },
+    {
+      id: "ai2-done",
+      title: "Workspace operated",
+      body: "The assistant is now a way to act on your academic workspace, not only talk about it.",
+    },
+  ],
+  "assistant-3": [
+    {
+      id: "ai3-intro",
+      title: "Control and verify",
+      body: "Every assistant action has a permission, a visible execution path, and a result you can inspect.",
+      beforeShow: () => {
+        goDashboard();
+        if (!useAI.getState().open) useAI.getState().toggle();
+      },
+    },
+    {
+      id: "ai3-tools",
+      title: "Review available tools",
+      body: "Open Tools to see every configurable action grouped by what it changes.",
+      anchor: '[data-tour="ai-tools-button"]',
+      anchorWhenOpen: '[data-tour="ai-tools"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        const id = setInterval(() => {
+          if (document.querySelector('[data-tour="ai-tools"]')) advance();
+        }, 200);
+        return () => clearInterval(id);
+      },
+    },
+    {
+      id: "ai3-permission",
+      title: "Change a tool permission",
+      body: "Set one action to Ask, Auto, or Off. Ask creates a confirmation card; Auto runs it immediately; Off prevents its use.",
+      anchor: '[data-tour="ai-tools"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        const base = JSON.stringify(useToolPolicy.getState().overrides);
+        return useToolPolicy.subscribe((s) => {
+          if (JSON.stringify(s.overrides) !== base) advance();
+        });
+      },
+    },
+    {
+      id: "ai3-run",
+      title: "Run a controlled action",
+      body: "Return to chat, ask Zen for an action whose permission is Ask, inspect its arguments, then choose Run or Dismiss.",
+    },
+    {
+      id: "ai3-result",
+      title: "Inspect the result or receipt",
+      body: "Open Activity to see what the assistant read, proposed, ran, and returned. Shared automation receipts also live in Settings → Data.",
+      anchor: '[data-tour="ai-activity-button"]',
+      anchorWhenOpen: '[data-tour="ai-activity"]',
+      interactive: true,
+    },
+    {
+      id: "ai3-correct",
+      title: "Undo or correct the action",
+      body: "If the result is wrong, say what to correct or use Zen's normal editing controls. Tool activity makes the changed target explicit so you can verify it.",
+    },
+    {
+      id: "ai3-done",
+      title: "Assistant under control",
+      body: "Permissions decide what may happen; proposals show what will happen; activity shows what did happen.",
+    },
+  ],
   "material-1": [
     {
       id: "m-intro",
@@ -524,6 +734,84 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       body: "Math you can trust, plus tables and constructions — your notes can hold real working now.",
     },
   ],
+  "material-4": [
+    {
+      id: "pdf-intro",
+      title: "PDF research",
+      body: "Move from importing a paper to searchable, cited, side-by-side research without leaving Zen.",
+      beforeShow: openNoteForTour,
+    },
+    {
+      id: "pdf-import",
+      title: "Import a PDF",
+      body: "Open PDFs on the note, then import a file or choose one already in your library.",
+      feedback: "The PDF is stored locally, indexed page by page, and attached to your note.",
+      anchor: '[data-tour="attach-pdf"]',
+      anchorWhenOpen: '[data-tour="pdf-popover"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Use an existing PDF",
+      advanceWhen: (advance) => {
+        const base = Object.keys(usePdfs.getState().pdfs).length;
+        return usePdfs.subscribe((s) => {
+          if (Object.keys(s.pdfs).length > base) advance();
+        });
+      },
+    },
+    {
+      id: "pdf-search",
+      title: "Search inside it",
+      body: "Use Find page to locate a term across the extracted text. Matches show a page and surrounding passage.",
+      anchor: '[data-tour="pdf-search"]',
+      interactive: true,
+    },
+    {
+      id: "pdf-outline",
+      title: "Open the outline",
+      body: "Use Contents to navigate the document's table of contents. PDFs without an embedded outline simply omit this section.",
+      anchor: '[data-tour="pdf-outline"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "No outline in this PDF",
+    },
+    {
+      id: "pdf-highlight",
+      title: "Highlight or bookmark a passage",
+      body: "Bookmark the current page. Zen saves a short passage; the assistant can create richer concept-tagged highlights.",
+      feedback: "Saved — the passage now stays in the PDF's research panel.",
+      anchor: '[data-tour="pdf-bookmark"]',
+      interactive: true,
+      advanceWhen: (advance) => {
+        const count = () => Object.values(usePdfs.getState().annotations).reduce((sum, list) => sum + list.length, 0);
+        const base = count();
+        return usePdfs.subscribe(() => {
+          if (count() > base) advance();
+        });
+      },
+    },
+    {
+      id: "pdf-cite",
+      title: "Cite a passage into a note",
+      body: "Open the assistant and ask it to cite this passage into the open note. PDF page references remain clickable in the conversation.",
+      anchor: '[data-tour="ai-toggle"]',
+      interactive: true,
+    },
+    {
+      id: "pdf-side-by-side",
+      title: "Open note and PDF side by side",
+      body: "Add the PDF to Deep Work, then place its window beside the note you are writing.",
+      anchor: '[data-tour="pdf-deep-work"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Do this later",
+      advanceWhen: advanceOnDwItemAdded,
+    },
+    {
+      id: "pdf-done",
+      title: "PDF ready for research",
+      body: "Search, outline, saved passages, citations, and side-by-side work turn a PDF into usable study material.",
+    },
+  ],
   "deepwork-1": [
     {
       id: "dw-intro",
@@ -651,7 +939,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     },
     {
       id: "dw2-zen",
-      title: "Try zen mode",
+      title: "Try Zen mode",
       body: "The ◑ button hides everything but the canvas. Click it — and click it again to bring the chrome back.",
       feedback: "That's zen mode. Toggle ◑ again whenever you want the chrome back.",
       anchor: '[data-tour="dw-zen"]',
@@ -846,6 +1134,62 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
   ],
   "study-3": [
     {
+      id: "mm-intro",
+      title: "Mistakes & mastery",
+      body: "Turn incorrect answers into a focused queue, then compare progress at both concept and sub-skill level.",
+      beforeShow: goDashboard,
+    },
+    {
+      id: "mm-bank",
+      title: "Open the mistake bank",
+      body: "Open Deep Work → Study. Your quiz history and Re-quiz my mistakes collect the evidence from graded answers for this session.",
+      anchor: '[data-tour="deep-work"]',
+      interactive: true,
+    },
+    {
+      id: "mm-answer",
+      title: "Review an incorrect answer",
+      body: "Open a graded quiz from the history and inspect the verdict, feedback, and cited page for an answer you missed.",
+      anchor: '[data-tour="study-mistake-bank"]',
+      interactive: true,
+    },
+    {
+      id: "mm-retest",
+      title: "Re-test missed concepts",
+      body: "Choose Re-quiz my mistakes. Zen generates fresh questions for the exact concepts you previously missed.",
+      anchor: '[data-tour="study-requiz"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "No mistakes yet",
+      advanceWhen: (advance) => {
+        const base = useQuiz.getState().order.length;
+        return useQuiz.subscribe((s) => {
+          if (s.order.length > base) advance();
+        });
+      },
+    },
+    {
+      id: "mm-compare",
+      title: "Compare concept and sub-skill mastery",
+      body: "Use the mastery bars to see whether a broad concept is hiding a weaker sub-skill. Click any concept to drill it directly.",
+      anchor: '[data-tour="study-mastery"]',
+      interactive: true,
+    },
+    {
+      id: "mm-overdue",
+      title: "Review an overdue concept",
+      body: "Review next prioritises overdue concepts before merely low-scoring ones, so stale knowledge returns to the front of the queue.",
+      anchor: '[data-tour="study-review-next"]',
+      interactive: true,
+    },
+    {
+      id: "mm-done",
+      title: "Mistakes converted into evidence",
+      body: "Missed answers now drive re-tests, sub-skill diagnosis, and spaced review instead of disappearing after a score.",
+    },
+  ],
+  "study-4": [
+    {
       id: "pl-intro",
       title: "Plan to the deadline",
       body: "Give Zen your exam date and it plans the runway: adaptive study sessions, an exam hero on the dashboard, and a daily goal.",
@@ -853,7 +1197,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     },
     {
       id: "pl-hero",
-      title: "The Exam-Focus hero",
+      title: "View the Exam-Focus hero",
       body: "Once a session has a plan with an exam date, this dashboard hero tracks the countdown, your readiness, and your weakest concept — with one-click Study now.",
       anchor: '[data-tour="exam-hero"]',
       beforeShow: goDashboard,
@@ -918,7 +1262,61 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       body: "Plan, hero, focus, goal — Zen now paces you to the exam and offers a re-plan whenever you drift.",
     },
   ],
-  "study-4": [
+  "study-5": [
+    {
+      id: "as-intro",
+      title: "Adaptive study strategy",
+      body: "Read the forecast as a decision tool: what is weak, how much time is missing, and what to do next.",
+      beforeShow: goDashboard,
+    },
+    {
+      id: "as-verdict",
+      title: "Read your readiness verdict",
+      body: "Open Deep Work → Study and read Goal forecast. The verdict combines deadline pressure, reliable mastery, evidence, and capacity.",
+      anchor: '[data-tour="study-forecast"]',
+    },
+    {
+      id: "as-weakest",
+      title: "Identify the weakest concept",
+      body: "Review next points to the weakest due concept, with its mastery beside it. This is the highest-value content target.",
+      anchor: '[data-tour="study-review-next"]',
+      interactive: true,
+    },
+    {
+      id: "as-deficit",
+      title: "Check the time deficit",
+      body: "Goal forecast shows any extra time needed to reach the readiness target before the deadline.",
+      anchor: '[data-tour="study-forecast"]',
+    },
+    {
+      id: "as-booked",
+      title: "Compare booked time with required time",
+      body: "Compare booked against estimated time. A healthy plan covers the required work without exceeding your available capacity.",
+      anchor: '[data-tour="study-forecast"]',
+    },
+    {
+      id: "as-replan",
+      title: "Re-plan after missed sessions",
+      body: "When the plan drifts, use re-plan. Zen reschedules missed time and shifts effort toward weak concepts instead of pretending the old plan still fits.",
+      anchor: '[data-tour="study-replan"]',
+      interactive: true,
+      optional: true,
+      skipLabel: "Plan is on track",
+    },
+    {
+      id: "as-next25",
+      title: "Choose the next best 25-minute action",
+      body: "Choose the next scheduled block, or start a 25-minute Study session focused on Review next. The best action joins urgency with the weakest evidence.",
+      anchor: '[data-tour="study-next-actions"]',
+      interactive: true,
+    },
+    {
+      id: "as-done",
+      title: "Strategy made actionable",
+      body: "You can now turn readiness, weakness, and calendar capacity into one concrete next block.",
+    },
+  ],
+  "study-6": [
     {
       id: "ls-intro",
       title: "Lessons & tutoring",
@@ -945,13 +1343,18 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       },
     },
     {
+      id: "ls-work",
+      title: "Work through the lesson",
+      body: "Step through the board with Next and answer the inline questions. The tutor adapts the explanation as you work.",
+    },
+    {
       id: "ls-finish",
-      title: "Work it, then finish",
-      body: "Step through the board with Next and answer the inline questions. Press End class when you're done — the time is credited and the board saved.",
+      title: "Finish the class",
+      body: "Press End class when you're done — the focus time is credited and the lesson board stays saved with the session.",
     },
     {
       id: "ls-modes",
-      title: "The deadline modes",
+      title: "Understand deadline modes",
       body: "Your plan's verdict shifts as the exam nears: Ahead → On track → At risk → Overcommitted. Zen tightens the plan accordingly — from deep learning toward survival — and nudges a re-plan when you drift.",
     },
   ],
@@ -1086,7 +1489,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     },
     {
       id: "cr-use",
-      title: "Refresh & study",
+      title: "Refresh and study",
       body: "Pick a category to connect it, then refresh to pull the latest. To study anything, right-click a source, note, event, or email → Add to Deep Work.",
     },
     {
@@ -1176,7 +1579,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     },
     {
       id: "cr2-real",
-      title: "Study real life",
+      title: "Add an event or email to Deep Work",
       body: "Right-click an event or email → “Add to Deep Work” and it becomes a source window like any note.",
       interactive: true,
       optional: true,
@@ -1223,7 +1626,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     },
     {
       id: "tc-rail",
-      title: "Your controls",
+      title: "Review your controls",
       body: "AI behavior lists every tool the AI may use — allow or block each. Data exports a full backup or copies diagnostics. Plan & usage shows your AI limits.",
       anchor: '[data-tour="settings-rail"]',
       interactive: true,
@@ -1279,9 +1682,23 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       },
     },
     {
-      id: "tc2-data",
-      title: "Backups, diagnostics & plan",
-      body: "In the rail: Data exports a full backup and copies diagnostics; Plan & usage shows your AI limits. Have a look, then tick those off on the checklist.",
+      id: "tc2-backups",
+      title: "Review backups",
+      body: "Open Data to export a full local backup or a settings-only copy.",
+      anchor: '[data-tour="settings-rail"]',
+      interactive: true,
+    },
+    {
+      id: "tc2-diagnostics",
+      title: "Inspect diagnostics",
+      body: "Data also exposes copyable diagnostics for troubleshooting without hiding what is included.",
+      anchor: '[data-tour="settings-rail"]',
+      interactive: true,
+    },
+    {
+      id: "tc2-plan",
+      title: "Check plan and usage limits",
+      body: "Open Plan & usage to see the AI models and limits available to your account.",
       anchor: '[data-tour="settings-rail"]',
       interactive: true,
     },
