@@ -18,6 +18,13 @@ import {
 } from "@/services/assistantTasks";
 import { loadAssistantRoutines, onAssistantRoutinesChange, type AssistantRoutine } from "@/services/assistantRoutines";
 import { loadAssistantReceipts, onAssistantReceiptsChange, type AssistantReceipt } from "@/services/assistantReceipts";
+import {
+  notificationsEnabled,
+  setNotificationsEnabled,
+  notificationPermission,
+  requestNotificationPermission,
+  sendTestNotification,
+} from "@/services/notifications";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { checkForUpdates, type UpdateCheckResult } from "@/services/update";
 import { useReleaseNotes } from "@/features/home/ReleaseNotes";
@@ -243,6 +250,8 @@ export function Data() {
         </button>
       </SettingsSection>
 
+      <NotificationSettings />
+
       <SettingsSection title="Assistant tasks" hint="Tasks created by Zen on phone or desktop. Changes sync with your Zen account.">
         {assistantTasks.length === 0 ? (
           <p className="text-sm text-[var(--text-dim)]">No assistant tasks yet.</p>
@@ -337,6 +346,50 @@ export function Data() {
         </div>
       </SettingsSection>
     </div>
+  );
+}
+
+/** Desktop notification controls: enable, permission status, and a test. Fires
+ *  when a phone routine finishes or a new task syncs in. */
+function NotificationSettings() {
+  const [enabled, setEnabled] = useState(() => notificationsEnabled());
+  const [perm, setPerm] = useState(() => notificationPermission());
+
+  async function toggle() {
+    const next = !enabled;
+    if (next) {
+      const result = await requestNotificationPermission();
+      setPerm(notificationPermission());
+      if (result === "unsupported") { notify.error("This device doesn't support system notifications."); return; }
+      if (result === "denied") { notify.error("Notifications are blocked. Enable them for Zen in your browser or OS settings."); return; }
+    }
+    setNotificationsEnabled(next);
+    setEnabled(next);
+    notify.success(next ? "Desktop notifications on" : "Desktop notifications off");
+  }
+
+  const status =
+    perm === "unsupported" ? "Not supported on this device"
+      : perm === "denied" ? "Blocked — enable Zen in your browser/OS settings"
+        : enabled ? (perm === "granted" ? "On — you'll be pinged for routine results and new tasks" : "On — allow the permission prompt to receive them")
+          : "Off";
+
+  return (
+    <SettingsSection title="Notifications" hint="Get a desktop notification when a phone routine finishes or a new task arrives from the assistant.">
+      <div className="flex flex-wrap items-center gap-2">
+        <button className={enabled ? "zen-btn" : "zen-btn-ghost"} onClick={() => void toggle()}>
+          {enabled ? "Turn off" : "Turn on"}
+        </button>
+        <button
+          className="zen-btn-ghost"
+          onClick={async () => { await sendTestNotification(); setPerm(notificationPermission()); }}
+          disabled={perm === "unsupported"}
+        >
+          Send test notification
+        </button>
+        <span className="text-xs text-[var(--text-dim)]">{status}</span>
+      </div>
+    </SettingsSection>
   );
 }
 

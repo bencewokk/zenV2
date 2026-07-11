@@ -24,6 +24,7 @@ import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
 import { checkForUpdates } from "@/services/update";
 import { startSync } from "@/services/sync/engine";
+import { startAssistantNotifications } from "@/services/assistantNotify";
 import { applyAppearance } from "@/services/appearance";
 import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
@@ -108,6 +109,8 @@ export function App() {
     const t = window.setTimeout(() => void checkForUpdates(), 4000);
     // Background cloud sync (no-op until enabled + signed in via Settings).
     startSync();
+    // Watch synced phone data → desktop notifications for new routine runs / tasks.
+    startAssistantNotifications();
     const stopVaultAuth = onAuthChange((signedIn) => {
       if (signedIn) void reconcileConnectionVault().catch(() => {});
       else clearLocalConnectionSecrets();

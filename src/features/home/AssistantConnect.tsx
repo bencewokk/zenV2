@@ -10,6 +10,11 @@ import {
   setAssistantTaskDone,
   type AssistantTask,
 } from "@/services/assistantTasks";
+import {
+  loadAssistantRoutines,
+  onAssistantRoutinesChange,
+  type AssistantRoutine,
+} from "@/services/assistantRoutines";
 
 /**
  * "Zen on your phone" dashboard tile. Two lives:
@@ -59,6 +64,47 @@ function fmtDue(dueISO: string): { label: string; overdue: boolean } {
   return { label: new Date(dueISO).toLocaleDateString(undefined, { month: "short", day: "numeric" }), overdue: false };
 }
 
+function fmtWhen(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Recent background-routine runs from the phone, with their result. This is the
+ *  output side of automation: routines you scheduled on the phone report back here. */
+function RoutineRuns({ routines }: { routines: AssistantRoutine[] }) {
+  const runs = routines
+    .filter((r) => r.lastRunAt)
+    .sort((a, b) => Date.parse(b.lastRunAt!) - Date.parse(a.lastRunAt!))
+    .slice(0, 2);
+  if (runs.length === 0) return null;
+  return (
+    <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-2">
+      <div className="zen-meta text-[11px]">Routine results</div>
+      {runs.map((r) => (
+        <div key={r.id} className="text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.lastStatus === "error" ? "bg-[var(--danger,#f06b62)]" : "bg-[var(--ok,#4caf72)]"}`} />
+            <span className="min-w-0 flex-1 truncate text-[var(--text)]">{r.title}</span>
+            <span className="shrink-0 text-[11px] text-[var(--text-dim)]">{fmtWhen(r.lastRunAt)}</span>
+          </div>
+          {(r.lastError || r.lastResult) && (
+            <div className={`zen-clamp-2 mt-0.5 pl-3 text-[11px] ${r.lastStatus === "error" ? "text-[var(--danger,#f06b62)]" : "text-[var(--text-dim)]"}`}>
+              {r.lastError || r.lastResult}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ConnectCard() {
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -92,7 +138,7 @@ function ConnectCard() {
 
 const FEED_LIMIT = 5;
 
-function PhoneFeed({ tasks, onShowQr }: { tasks: AssistantTask[]; onShowQr: () => void }) {
+function PhoneFeed({ tasks, routines, onShowQr }: { tasks: AssistantTask[]; routines: AssistantRoutine[]; onShowQr: () => void }) {
   // Tasks ticked in this view linger (struck through) so a mis-click is easy
   // to undo; fresh visits show only what's still open. New arrivals slot in.
   const [recentlyDone, setRecentlyDone] = useState<Set<string>>(() => new Set());
@@ -138,6 +184,7 @@ function PhoneFeed({ tasks, onShowQr }: { tasks: AssistantTask[]; onShowQr: () =
           })}
         </div>
       )}
+      <RoutineRuns routines={routines} />
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--border)] pt-2">
         <span className="zen-meta text-[11px]">
           {hiddenOpen > 0 ? `+${hiddenOpen} more in Settings → Data` : "Synced from your phone"}
@@ -159,20 +206,27 @@ function PhoneFeed({ tasks, onShowQr }: { tasks: AssistantTask[]; onShowQr: () =
 
 export function AssistantConnect() {
   const [tasks, setTasks] = useState<AssistantTask[]>(() => loadAssistantTasks());
-  const [linked, setLinked] = useState(() => loadAssistantTasks().length > 0 || loadAssistantCaptures().length > 0);
+  const [routines, setRoutines] = useState<AssistantRoutine[]>(() => loadAssistantRoutines());
+  const [linked, setLinked] = useState(
+    () => loadAssistantTasks().length > 0 || loadAssistantCaptures().length > 0 || loadAssistantRoutines().length > 0
+  );
   const [forceQr, setForceQr] = useState(false);
 
   useEffect(() => {
     const refresh = () => {
-      const next = loadAssistantTasks();
-      setTasks(next);
-      if (next.length > 0 || loadAssistantCaptures().length > 0) setLinked(true);
+      const nextTasks = loadAssistantTasks();
+      const nextRoutines = loadAssistantRoutines();
+      setTasks(nextTasks);
+      setRoutines(nextRoutines);
+      if (nextTasks.length > 0 || nextRoutines.length > 0 || loadAssistantCaptures().length > 0) setLinked(true);
     };
     const unsubTasks = onAssistantTasksChange(refresh);
     const unsubCaptures = onAssistantCapturesChange(refresh);
+    const unsubRoutines = onAssistantRoutinesChange(refresh);
     return () => {
       unsubTasks();
       unsubCaptures();
+      unsubRoutines();
     };
   }, []);
 
@@ -191,5 +245,5 @@ export function AssistantConnect() {
       </div>
     );
   }
-  return <PhoneFeed tasks={tasks} onShowQr={() => setForceQr(true)} />;
+  return <PhoneFeed tasks={tasks} routines={routines} onShowQr={() => setForceQr(true)} />;
 }
