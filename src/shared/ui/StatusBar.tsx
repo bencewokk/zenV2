@@ -154,8 +154,8 @@ export function StatusBar() {
               ◷ {todayH.toFixed(1)} / {goalHours}h
             </span>
           )}
-          <span className="tabular-nums opacity-55" title="Current release">
-            {APP_VERSION}
+          <span className="tabular-nums opacity-55" title={`Current release · commit ${__BUILD_COMMIT__}`}>
+            {APP_VERSION} · {__BUILD_COMMIT__}
           </span>
         </div>
       )}

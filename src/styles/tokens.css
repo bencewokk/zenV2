@@ -1380,16 +1380,14 @@ math-field:focus-within { border-color: var(--accent); }
    --------------------------------------------------------------------------- */
 .bento-masonry {
   display: grid;
-  grid-template-columns: 1fr;
+  /* Intrinsic columns: as many ~260px tracks as the ACTUAL container fits, not
+     the viewport — otherwise the notes sidebar's width isn't accounted for and
+     the tiles get crushed (a letter per line) on narrow main areas. min(100%, …)
+     lets a single column shrink below 260px rather than overflow. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   grid-auto-rows: 8px;
   gap: 12px;
   align-items: start;
-}
-@media (min-width: 768px) {
-  .bento-masonry { grid-template-columns: repeat(2, 1fr); }
-}
-@media (min-width: 1280px) {
-  .bento-masonry { grid-template-columns: repeat(3, 1fr); }
 }
 
 .bento-tile {

@@ -437,6 +437,8 @@ type TutorialItem = {
   label: string;
   done: boolean;
   manual?: boolean;
+  /** Shown on the checklist but does NOT block phase / group completion. */
+  optional?: boolean;
 };
 
 type TutorialPhase = {
@@ -459,15 +461,24 @@ type TutorialGroup = {
 /** The phase the group currently shows: the first with an unfinished item
  *  (falling back to the last once everything is done). */
 function currentPhaseIndex(group: TutorialGroup): number {
-  const idx = group.phases.findIndex((phase) => phase.items.some((item) => !item.done));
+  const idx = group.phases.findIndex((phase) => phase.items.some((item) => !item.done && !item.optional));
   return idx === -1 ? group.phases.length - 1 : idx;
 }
+
+// Name of the seeded demo Deep Work session (see onboarding/seedSession.ts). Its
+// presence is not a user action, so it's excluded from the "create a session" tick.
+const SAMPLE_SESSION_NAME = "Quadratics — sample";
 
 // These signals fire inside Deep Work / Calendar / Mail, while the dashboard
 // tutorial is unmounted — record the ticks straight to storage; the tutorial
 // re-reads on mount, so they appear when the user comes back to the dashboard.
 useLesson.subscribe((s, prev) => {
-  if (s.active && !prev.active) markTutorialItemDone("lesson-start");
+  if (s.active && !prev.active) {
+    markTutorialItemDone("lesson-start");
+    // Starting a lesson is also "Try a lesson/class" (study-1) — that item read a
+    // different key, so doing the lesson never ticked it.
+    markTutorialItemDone("lesson");
+  }
   if (!s.active && prev.active) markTutorialItemDone("class-finish");
 });
 useDeepWork.subscribe((s, prev) => {
@@ -499,6 +510,7 @@ function DashboardTutorial() {
   const [profileSaved, setProfileSaved] = useState(() => hasProfile());
   const goalHours = useStudyLog((s) => s.goalHours);
   const filterActive = useNotes((s) => isFilterActive(s.filter));
+  const searchOpened = useCommandPalette((s) => s.open);
   const customLabelCount = useHome((s) => s.customLabels.length);
   const toolOverrideCount = useToolPolicy((s) => Object.keys(s.overrides).length);
   const hasProviderSource = useSources((s) => Object.values(s.sources).some((source) => source.provider !== "web"));
@@ -567,7 +579,7 @@ function DashboardTutorial() {
         group.key,
         {
           idx: currentPhaseIndex(group),
-          done: group.phases.every((phase) => phase.items.every((item) => item.done)),
+          done: group.phases.every((phase) => phase.items.every((item) => item.done || item.optional)),
         },
       ])
     );
@@ -603,13 +615,33 @@ function DashboardTutorial() {
     if (filterActive) setManualDone("filter");
   }, [filterActive, setManualDone]);
 
+  // Opening the command palette (Ctrl/⌘+K) satisfies "Try search" — otherwise the
+  // item only ticked from the tile's own button, so actually searching left it
+  // unchecked and blocked the phase from completing.
+  useEffect(() => {
+    if (searchOpened) setManualDone("search");
+  }, [searchOpened, setManualDone]);
+
   if (manual.hidden) return null;
 
   const allSessions = sessionList({ sessions, order }).filter((session) => !session.archived);
-  const hasSession = allSessions.length > 0;
+  // The seeded demo session (see onboarding/seedSession.ts) exists on every fresh
+  // install, so its mere presence must NOT tick "create a session" — only a
+  // session the user made (or renamed) counts. Default new sessions are "Session N".
+  const isSampleSession = (name: string) => name.trim() === SAMPLE_SESSION_NAME;
+  const isUserNamed = (name: string) => {
+    const n = name.trim();
+    return !!n && !isSampleSession(n) && !/^Session \d+$/.test(n);
+  };
+  const hasSession = allSessions.some((session) => !isSampleSession(session.name));
   const activeSession = allSessions.find((session) => session.id === useDeepWork.getState().activeId) ?? allSessions[0] ?? null;
-  const hasDeepWorkItem = allSessions.some((session) => session.items.length > 0);
-  const hasIntent = allSessions.some((session) => session.intent.trim());
+  // The sample session ships with 2 sources, so — like hasSession — it must not
+  // auto-tick "add a source" / "gather a second source"; only the user's own
+  // sessions count.
+  const hasDeepWorkItem = allSessions.some((session) => !isSampleSession(session.name) && session.items.length > 0);
+  // "Name the session or set intent" — renaming sets `name` (not `intent`), so a
+  // real, user-chosen name must satisfy this too, not just the intent field.
+  const hasIntent = allSessions.some((session) => !!session.intent.trim() || isUserNamed(session.name));
   const hasBackbone = allSessions.some((session) => !!session.backbone?.concepts.length);
   const hasFocus = allSessions.some((session) => session.focusSessions > 0 || session.focusMs > 0);
   const hasGradedQuiz = allSessions.some((session) =>
@@ -623,12 +655,14 @@ function DashboardTutorial() {
   const hasPlannedBlockDone = allSessions.some((session) =>
     !!session.plan?.sessions.some((planned) => planned.status === "done")
   );
-  const hasSecondSource = allSessions.some((session) => session.items.length >= 2);
+  const hasSecondSource = allSessions.some((session) => !isSampleSession(session.name) && session.items.length >= 2);
   const hasSecondSession = allSessions.length >= 2;
   const hasRealItem = allSessions.some((session) =>
     session.items.some((item) => item.type === "event" || item.type === "mail")
   );
-  const noteCount = Object.keys(notes).length;
+  // Seeded sample notes ship on every install — only a note the user made counts
+  // toward "create a note" (matches contentSignals / the tour's create signal).
+  const ownNoteCount = Object.values(notes).filter((note) => !isSeededSample(note)).length;
   const setupDone = !isSparkFirstRun();
   const manualDone = manual.done ?? {};
   const markManual = (key: string) => {
@@ -685,9 +719,9 @@ function DashboardTutorial() {
       key: "material",
       title: "Collect Material",
       body: "Open or create the material Zen will help you study.",
-      action: noteCount ? "Try search" : "Create note",
+      action: ownNoteCount ? "Try search" : "Create note",
       run: () => {
-        if (noteCount) {
+        if (ownNoteCount) {
           setManualDone("search");
           useCommandPalette.getState().setOpen(true);
           return;
@@ -702,8 +736,8 @@ function DashboardTutorial() {
           key: "material-1",
           label: "Capture",
           items: [
-            { key: "note", label: "Create or open a note", done: noteCount > 0 },
-            { key: "pdf", label: "Open the sample PDF or add one", done: pdfCount > 0 },
+            { key: "note", label: "Create a note", done: ownNoteCount > 0 },
+            { key: "pdf", label: "Open the sample PDF or add one", done: pdfCount > 0, optional: true },
             { key: "search", label: "Try Ctrl/Cmd+K search", done: !!manualDone.search, manual: true },
           ],
         },
@@ -817,7 +851,10 @@ function DashboardTutorial() {
           items: [
             { key: "google", label: "Connect Google or stay local", done: setupDone || signedIn },
             { key: "sources", label: "Refresh or import a connected source", done: sourcesCount > 0 },
-            { key: "phone-link", label: "Link your phone via the QR tile", done: phoneLinked },
+            // Auto-ticks once any phone task/capture syncs; but a phone that paired
+            // and captured nothing yet is invisible to the desktop (blob sync has no
+            // presence signal), so allow a manual tick too — you know you linked it.
+            { key: "phone-link", label: "Link your phone via the QR tile", done: phoneLinked || !!manualDone["phone-link"], manual: true },
             { key: "add-real", label: "Add a source/event/email to Deep Work", done: !!manualDone["add-real"], manual: true },
           ],
         },
@@ -872,14 +909,16 @@ function DashboardTutorial() {
     (acc, group) => {
       for (const phase of group.phases.slice(0, currentPhaseIndex(group) + 1)) {
         acc.total += phase.items.length;
-        acc.done += phase.items.filter((item) => item.done).length;
+        // Optional items never block completion, so count them as satisfied for
+        // the bar — otherwise a skipped optional keeps it below 100% forever.
+        acc.done += phase.items.filter((item) => item.done || item.optional).length;
       }
       return acc;
     },
     { total: 0, done: 0 }
   );
   const nextGroup =
-    groups.find((group) => group.phases.some((phase) => phase.items.some((item) => !item.done))) ??
+    groups.find((group) => group.phases.some((phase) => phase.items.some((item) => !item.done && !item.optional))) ??
     groups[groups.length - 1];
 
   return (

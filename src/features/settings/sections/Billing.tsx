@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { loadAIUsageStatus, type AIUsageStatus } from "@/services/ai/usage";
 import { accountTypeLabel, canAccessPaidFeatures, loadAccountStatus, type AccountStatus } from "@/services/account";
+import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 import { SettingsSection } from "../ui";
 
 export function Billing() {
@@ -21,7 +22,11 @@ export function Billing() {
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    // First Run Path: opening this section is "Review Plan & usage".
+    markTutorialItemDone("plan-usage");
+  }, []);
   const subscription = account?.user?.subscription;
   const paid = canAccessPaidFeatures(account);
   const spent = finite(usage?.spentUsd);

@@ -62,6 +62,12 @@ export function App() {
   const select = useNotes((s) => s.select);
   const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
   const sidebarCollapsed = useWorkspace((s) => s.sidebarCollapsed);
+  const [winWidth, setWinWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  useEffect(() => {
+    const onResize = () => setWinWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const setWs = useWorkspace((s) => s.set);
   const manualDeepWork = useHome((s) => s.manualDeepWork);
   const setManualDeepWork = useHome((s) => s.setManualDeepWork);
@@ -165,7 +171,15 @@ export function App() {
   const deepWork = showHome && manualDeepWork;
   const zen = deepWork && zenMode;
   const sidebarApplicable = !showAdmin && !showSources && !showSettings && !deepWork;
-  const sidebarVisible = sidebarApplicable && !sidebarCollapsed;
+  // Responsive guard: the notes sidebar is a fixed width, so on a narrow window it
+  // would crush the main column (the dashboard text wraps a letter per line). Keep
+  // main at least MIN_MAIN wide — shrink the sidebar to fit, and drop it entirely
+  // once there isn't even room for a usable one.
+  const MIN_MAIN = 420;
+  const MIN_SIDEBAR = 200;
+  const roomForSidebar = winWidth - MIN_MAIN >= MIN_SIDEBAR;
+  const effectiveSidebarWidth = Math.min(sidebarWidth, Math.max(MIN_SIDEBAR, winWidth - MIN_MAIN));
+  const sidebarVisible = sidebarApplicable && !sidebarCollapsed && roomForSidebar;
   const noteList = Object.values(notes);
   const inboxCount = noteList.filter((item) => item.inbox).length;
   const weeklyActivity = noteList.filter((item) => Date.now() - item.updatedAt < 7 * 24 * 60 * 60 * 1000).length;
@@ -372,12 +386,12 @@ export function App() {
         <aside
           className="overflow-hidden border-r border-[var(--border)] transition-[width,opacity,transform] duration-300"
           style={{
-            width: sidebarVisible ? sidebarWidth : 0,
+            width: sidebarVisible ? effectiveSidebarWidth : 0,
             opacity: sidebarVisible ? 1 : 0,
             transform: sidebarVisible ? "translateX(0)" : "translateX(-32px)",
           }}
         >
-          <div className="flex h-full flex-col" style={{ width: sidebarWidth }}>
+          <div className="flex h-full flex-col" style={{ width: effectiveSidebarWidth }}>
             <FilterBar />
             <Sidebar />
           </div>
