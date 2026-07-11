@@ -13,7 +13,7 @@ import {
   reconcilePlan as reconcilePlanPure, nextSession, planHealth,
   fmtPlanDay, fmtStartMin, verdictColor, verdictLabel, mostUrgentExam, KIND_META,
 } from "@/features/home/deepwork/studyPlan";
-import { useQuote } from "@/features/home/quote";
+import { useStudyLog, dayKey, HOUR_MS, computeStreak } from "@/features/home/deepwork/studyLog";
 import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { WhatsNew } from "@/features/home/ReleaseNotes";
@@ -157,15 +157,8 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
             <DashboardTutorial />
 
             <Masonry>
-              {/* Clock + daily quote */}
-              <div className="bento-tile">
-                <SectionLabel>Daily Focus</SectionLabel>
-                <div className="mt-2 text-3xl font-semibold tracking-tight text-[var(--text)]">{focusTime}</div>
-                <div className="zen-meta text-sm">{focusDate}</div>
-                <div className="mt-4 border-t border-[var(--border)] pt-3">
-                  <DailyQuote />
-                </div>
-              </div>
+              {/* Clock + weekly study chart */}
+              <DailyFocusTile focusTime={focusTime} focusDate={focusDate} />
 
               {/* Most urgent exam — self-styled, renders nothing when no plan */}
               <ExamFocusHero now={now.getTime()} className="bento-item" />
@@ -1069,39 +1062,174 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--text-dim)]">{children}</div>;
 }
 
-/** AI-generated daily quote, shown in the empty space beside the clock. */
-function DailyQuote() {
-  const quote = useQuote((s) => s.current);
-  const loading = useQuote((s) => s.loading);
-  const refresh = useQuote((s) => s.refresh);
+/**
+ * Clock + date + streak + weekly study chart, combined so the streak/summary row
+ * sits between the date and the divider — the quick "how am I doing?" answer
+ * before the detailed chart.
+ */
+function DailyFocusTile({ focusTime, focusDate }: { focusTime: string; focusDate: string }) {
+  const days = useStudyLog((s) => s.days);
+  const goalHours = useStudyLog((s) => s.goalHours);
+  const goalMs = goalHours * HOUR_MS;
+  const streak = computeStreak(days, goalMs);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  // Weekly totals from the same 7-day window the chart renders.
+  const weekTotal = useMemo(() => {
+    const now = new Date();
+    let total = 0;
+    let daysMet = 0;
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const ms = days[dayKey(d)] ?? 0;
+      total += ms;
+      if (ms >= goalMs) daysMet++;
+    }
+    return { total, daysMet };
+  }, [days, goalMs]);
 
-  if (!quote) {
-    return loading ? (
-      <div className="max-w-md flex-1 text-right text-sm text-[var(--text-dim)]">Finding a quote…</div>
-    ) : null;
+  return (
+    <div className="bento-tile">
+      <SectionLabel>Daily Focus</SectionLabel>
+      <div className="mt-2 text-3xl font-semibold tracking-tight text-[var(--text)]">{focusTime}</div>
+      <div className="zen-meta text-sm">{focusDate}</div>
+
+      {/* Streak + weekly summary — the one-line answer before the chart */}
+      {weekTotal.total > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+          {streak > 0 && (
+            <span className="font-medium tabular-nums text-[var(--text)]" title={`${streak}-day study streak`}>
+              {streak}d streak
+            </span>
+          )}
+          <span className="tabular-nums text-[var(--text-dim)]">
+            {(weekTotal.total / HOUR_MS).toFixed(1)}h this week
+          </span>
+          <span className="tabular-nums text-[var(--text-dim)]">
+            · {weekTotal.daysMet}/7 days on track
+          </span>
+          {weekTotal.daysMet === 7 && <span className="text-[#4ade80]">All week</span>}
+        </div>
+      ) : (
+        <div className="mt-2 text-xs text-[var(--text-dim)] italic">
+          No study data yet — start a focus session.
+        </div>
+      )}
+
+      <div className="mt-3 border-t border-[var(--border)] pt-3">
+        <WeeklyStudyChart />
+      </div>
+    </div>
+  );
+}
+
+/** Last-7-days study-hours bar chart, replacing the daily quote. */
+function WeeklyStudyChart() {
+  const days = useStudyLog((s) => s.days);
+  const goalHours = useStudyLog((s) => s.goalHours);
+
+  const data = useMemo(() => {
+    const now = new Date();
+    const result: { label: string; hours: number; dateKey: string }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = dayKey(d);
+      const ms = days[key] ?? 0;
+      result.push({
+        label: d.toLocaleDateString([], { weekday: "short" }),
+        hours: ms / HOUR_MS,
+        dateKey: key,
+      });
+    }
+    return result;
+  }, [days]);
+
+  const maxH = Math.max(goalHours, ...data.map((d) => d.hours), 0.5);
+  const anyData = data.some((d) => d.hours > 0);
+
+  /* ── chart geometry (px) ── */
+  const padLeft = 0;
+  const padBottom = 18;
+  const padTop = 4;
+  const chartH = 64;
+  const svgH = chartH + padTop + padBottom;
+  const barW = 12;
+  const gap = (): number => {
+    const avail = 100 - data.length * barW;
+    return Math.max(avail / (data.length + 1), 4);
+  };
+
+  if (!anyData) {
+    return (
+      <div className="mt-3 text-xs text-[var(--text-dim)] italic">
+        No study data yet — start a focus session.
+      </div>
+    );
   }
 
   return (
-    <div className="group max-w-md flex-1 text-right">
-      <blockquote className="zen-primary-copy text-[15px] italic leading-snug text-[var(--text)]">
-        “{quote.text}”
-      </blockquote>
-      <div className="zen-meta mt-1 text-xs">
-        — {quote.author}
-        <button
-          className="ml-2 inline-block align-middle text-[var(--text-dim)] opacity-0 transition hover:text-[var(--text)] group-hover:opacity-100 disabled:opacity-40"
-          onClick={() => void refresh(true)}
-          disabled={loading}
-          title="New quote"
-          aria-label="New quote"
-        >
-          <span className={loading ? "zen-spin" : ""}>↻</span>
-        </button>
-      </div>
+    <div className="mt-3">
+      <svg
+        viewBox={`0 0 100 ${svgH}`}
+        className="w-full"
+        style={{ maxHeight: svgH }}
+        role="img"
+        aria-label="Last 7 days study hours"
+      >
+        {/* goal reference line */}
+        <line
+          x1={0}
+          y1={padTop + chartH - (goalHours / maxH) * chartH}
+          x2={100}
+          y2={padTop + chartH - (goalHours / maxH) * chartH}
+          stroke="var(--border)"
+          strokeDasharray="2 2"
+          strokeWidth={0.5}
+        />
+
+        {data.map((d, i) => {
+          const x = gap() + i * (barW + gap());
+          const barH = (d.hours / maxH) * chartH;
+          const y = padTop + chartH - barH;
+          const met = d.hours >= goalHours;
+          const fill = met ? "#4ade80" : "var(--accent)";
+          const todayKey = dayKey();
+          const isToday = d.dateKey === todayKey;
+
+          return (
+            <g key={d.dateKey}>
+              {/* bar */}
+              <rect
+                x={x}
+                y={y}
+                width={barW}
+                height={Math.max(barH, isToday ? 1.5 : 0)}
+                rx={3}
+                fill={fill}
+                opacity={isToday ? 1 : 0.72}
+              >
+                <title>
+                  {d.label}: {d.hours.toFixed(1)}h
+                  {met ? " ✓" : ""}
+                </title>
+              </rect>
+              {/* day label */}
+              <text
+                x={x + barW / 2}
+                y={svgH - 2}
+                textAnchor="middle"
+                className="select-none"
+                fill={isToday ? "var(--text)" : "var(--text-dim)"}
+                fontSize={isToday ? 8 : 7}
+                fontWeight={isToday ? 600 : 400}
+              >
+                {d.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
