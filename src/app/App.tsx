@@ -19,7 +19,6 @@ import { CommandPalette, useCommandPalette } from "@/features/search/CommandPale
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { SparkIntro } from "@/features/onboarding/SparkIntro";
 import { GuidedTour } from "@/features/onboarding/GuidedTour";
-import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 import CardNav from "@/shared/ui/reactbits/CardNav";
 import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
@@ -280,7 +279,6 @@ export function App() {
                         data-tour="dw-study"
                         className={`${HEADER_BTN} ${showStudy ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
                         onClick={() => setShowStudy((visible) => {
-                          if (!visible) markTutorialItemDone("study-open");
                           return !visible;
                         })}
                         title="Study panel — backbone, mastery & daily goal"

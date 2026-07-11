@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   buildActionGroups,
   parseBriefItems,
@@ -9,7 +9,6 @@ import {
 import { DeepWorkV2 } from "@/features/home/deepwork/DeepWorkV2";
 import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
 import { fmtClock, nextToReview, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
-import { sessionQuizzes, useQuiz } from "@/features/home/deepwork/quizStore";
 import {
   reconcilePlan as reconcilePlanPure, nextSession, planHealth,
   fmtPlanDay, fmtStartMin, verdictColor, verdictLabel, mostUrgentExam, KIND_META,
@@ -19,28 +18,17 @@ import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { WhatsNew } from "@/features/home/ReleaseNotes";
 import { useNotes } from "@/features/notes/store";
-import { usePdfs } from "@/features/pdfs/store";
 import { useCommandPalette } from "@/features/search/CommandPalette";
-import { isSignedIn, onAuthChange } from "@/services/google/auth";
-import { loadProfile } from "@/services/memory";
 import { useSources } from "@/services/sources/store";
-import { loadSyncSettings } from "@/services/sync/settings";
-import { isSparkFirstRun, useSparkIntro } from "@/features/onboarding/sparkStore";
+import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { docToText } from "@/shared/lib/docText";
 import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
-import { markTutorialItemDone, onTutorialStateChange, readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
-import { useLesson } from "@/features/home/deepwork/lessonStore";
-import { DEFAULT_GOAL_HOURS, useStudyLog } from "@/features/home/deepwork/studyLog";
-import { isFilterActive } from "@/features/filtering/filter";
-import { docHasDerivation, docHasNode, isSeededSample } from "@/features/onboarding/contentSignals";
-import { loadAppearance } from "@/services/appearance";
-import { useToolPolicy } from "@/services/ai/toolPolicy";
+import { onTutorialStateChange, readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
+import { isSeededSample } from "@/features/onboarding/contentSignals";
 import { notify } from "@/shared/ui/notify";
 import { Masonry } from "@/shared/ui/Masonry";
 import { AssistantConnect } from "@/features/home/AssistantConnect";
-import { loadAssistantCaptures, onAssistantCapturesChange } from "@/services/assistantCaptures";
-import { loadAssistantTasks, onAssistantTasksChange } from "@/services/assistantTasks";
-import { startCoreLoopTour, startGroupTour, GROUP_TOURS } from "@/features/onboarding/tours";
+import { startCoreLoopTour, startGroupTour, GROUP_TOURS, isChecklistTourStep } from "@/features/onboarding/tours";
 
 type AdminFocus = "calendar" | "mail";
 
@@ -465,107 +453,21 @@ function currentPhaseIndex(group: TutorialGroup): number {
   return idx === -1 ? group.phases.length - 1 : idx;
 }
 
-// Name of the seeded demo Deep Work session (see onboarding/seedSession.ts). Its
-// presence is not a user action, so it's excluded from the "create a session" tick.
-const SAMPLE_SESSION_NAME = "Quadratics — sample";
-
-// These signals fire inside Deep Work / Calendar / Mail, while the dashboard
-// tutorial is unmounted — record the ticks straight to storage; the tutorial
-// re-reads on mount, so they appear when the user comes back to the dashboard.
-useLesson.subscribe((s, prev) => {
-  if (s.active && !prev.active) {
-    markTutorialItemDone("lesson-start");
-    // Starting a lesson is also "Try a lesson/class" (study-1) — that item read a
-    // different key, so doing the lesson never ticked it.
-    markTutorialItemDone("lesson");
-  }
-  if (!s.active && prev.active) markTutorialItemDone("class-finish");
-});
-useDeepWork.subscribe((s, prev) => {
-  if (s.zenMode && !prev.zenMode) markTutorialItemDone("zen-mode");
-});
-useWorkspace.subscribe((s, prev) => {
-  if (s.surface === "admin" && prev.surface !== "admin") markTutorialItemDone("open-admin");
-  if (s.surface === "settings" && prev.surface !== "settings") markTutorialItemDone("settings");
-});
-
 function DashboardTutorial() {
   const notes = useNotes((s) => s.notes);
   const createNote = useNotes((s) => s.create);
   const renameNote = useNotes((s) => s.rename);
   const selectNote = useNotes((s) => s.select);
-  const pdfCount = usePdfs((s) => Object.keys(s.pdfs).length);
   const sourcesCount = useSources((s) => Object.keys(s.sources).length);
   const sessions = useDeepWork((s) => s.sessions);
   const order = useDeepWork((s) => s.order);
   const switchSession = useDeepWork((s) => s.switchSession);
-  const quizzes = useQuiz((s) => s.quizzes);
-  const quizOrder = useQuiz((s) => s.order);
   const setManualDeepWork = useHome((s) => s.setManualDeepWork);
   const setWorkspace = useWorkspace((s) => s.set);
   const startSpark = useSparkIntro((s) => s.start);
-  const [signedIn, setSignedIn] = useState(() => isSignedIn());
   const [manual, setManual] = useState<TutorialManualState>(() => readTutorialState());
-  const [syncEnabled, setSyncEnabled] = useState(() => loadSyncSettings().enabled);
-  const [profileSaved, setProfileSaved] = useState(() => hasProfile());
-  const goalHours = useStudyLog((s) => s.goalHours);
-  const filterActive = useNotes((s) => isFilterActive(s.filter));
-  const searchOpened = useCommandPalette((s) => s.open);
-  const customLabelCount = useHome((s) => s.customLabels.length);
-  const toolOverrideCount = useToolPolicy((s) => Object.keys(s.overrides).length);
-  const hasProviderSource = useSources((s) => Object.values(s.sources).some((source) => source.provider !== "web"));
-  const hasWebCapture = useSources((s) => Object.values(s.sources).some((source) => source.provider === "web"));
-  // Phone link: any assistant data having synced proves a phone signed in.
-  const [phoneLinked, setPhoneLinked] = useState(
-    () => loadAssistantTasks().length > 0 || loadAssistantCaptures().length > 0
-  );
-  useEffect(() => {
-    const refresh = () => setPhoneLinked(loadAssistantTasks().length > 0 || loadAssistantCaptures().length > 0);
-    const unsubTasks = onAssistantTasksChange(refresh);
-    const unsubCaptures = onAssistantCapturesChange(refresh);
-    return () => {
-      unsubTasks();
-      unsubCaptures();
-    };
-  }, []);
-  // Plain localStorage settings — re-read per render; the dashboard remounts when
-  // the user navigates back from Settings, so changes show up then.
-  const appearance = loadAppearance();
-
-  // Content-derived goals (metadata, wiki-links, MOCs, math, tables) — scanned
-  // from the in-memory notes; seeded sample notes don't count as the user's own
-  // organising/authoring work.
-  const contentSignals = useMemo(() => {
-    const own = Object.values(notes).filter((n) => !isSeededSample(n));
-    return {
-      hasMeta: own.some((n) => n.tags.length > 0 || n.space || n.subject || n.unit),
-      hasWikiLink: own.some((n) => docHasNode(n.content, ["wikiLink"])),
-      hasMoc: own.some((n) => n.moc),
-      hasMath: own.some((n) => docHasNode(n.content, ["mathBlock", "mathInline"])),
-      hasCheckedMath: own.some((n) => !!n.mathCheck && docHasDerivation(n.content)),
-      hasBlock: own.some((n) => docHasNode(n.content, ["table", "geometry"])),
-    };
-  }, [notes]);
-
-  useEffect(() => onAuthChange(setSignedIn), []);
-  useEffect(() => {
-    const refresh = () => {
-      setSyncEnabled(loadSyncSettings().enabled);
-      setProfileSaved(hasProfile());
-    };
-    window.addEventListener("storage", refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      window.removeEventListener("storage", refresh);
-      window.removeEventListener("focus", refresh);
-    };
-  }, []);
   useEffect(() => writeTutorialState(manual), [manual]);
   useEffect(() => onTutorialStateChange(setManual), []);
-
-  const setManualDone = useCallback((key: string) => {
-    setManual((current) => (current.done?.[key] ? current : { ...current, done: { ...current.done, [key]: true } }));
-  }, []);
 
   // "New goals unlocked" shows only the FIRST time a deeper phase is seen. The
   // snapshot is frozen for this mount so the cue doesn't vanish mid-visit; the
@@ -609,65 +511,14 @@ function DashboardTutorial() {
     }
   });
 
-  // Sidebar filtering is transient store state — persist the achievement the
-  // moment it's observed so the tick survives restarts.
-  useEffect(() => {
-    if (filterActive) setManualDone("filter");
-  }, [filterActive, setManualDone]);
-
-  // Opening the command palette (Ctrl/⌘+K) satisfies "Try search" — otherwise the
-  // item only ticked from the tile's own button, so actually searching left it
-  // unchecked and blocked the phase from completing.
-  useEffect(() => {
-    if (searchOpened) setManualDone("search");
-  }, [searchOpened, setManualDone]);
-
   if (manual.hidden) return null;
 
   const allSessions = sessionList({ sessions, order }).filter((session) => !session.archived);
-  // The seeded demo session (see onboarding/seedSession.ts) exists on every fresh
-  // install, so its mere presence must NOT tick "create a session" — only a
-  // session the user made (or renamed) counts. Default new sessions are "Session N".
-  const isSampleSession = (name: string) => name.trim() === SAMPLE_SESSION_NAME;
-  const isUserNamed = (name: string) => {
-    const n = name.trim();
-    return !!n && !isSampleSession(n) && !/^Session \d+$/.test(n);
-  };
-  const hasSession = allSessions.some((session) => !isSampleSession(session.name));
   const activeSession = allSessions.find((session) => session.id === useDeepWork.getState().activeId) ?? allSessions[0] ?? null;
-  // The sample session ships with 2 sources, so — like hasSession — it must not
-  // auto-tick "add a source" / "gather a second source"; only the user's own
-  // sessions count.
-  const hasDeepWorkItem = allSessions.some((session) => !isSampleSession(session.name) && session.items.length > 0);
-  // "Name the session or set intent" — renaming sets `name` (not `intent`), so a
-  // real, user-chosen name must satisfy this too, not just the intent field.
-  const hasIntent = allSessions.some((session) => !!session.intent.trim() || isUserNamed(session.name));
-  const hasBackbone = allSessions.some((session) => !!session.backbone?.concepts.length);
-  const hasFocus = allSessions.some((session) => session.focusSessions > 0 || session.focusMs > 0);
-  const hasGradedQuiz = allSessions.some((session) =>
-    sessionQuizzes({ quizzes, order: quizOrder }, session.id).some((quiz) => quiz.status === "graded")
-  );
-  const hasAnyQuiz = quizOrder.length > 0;
-  const hasReviewedWeak = allSessions.some((session) =>
-    (session.backbone?.concepts ?? []).some((concept) => (concept.reviewCount ?? 0) > 0)
-  );
-  const hasPlan = allSessions.some((session) => !!session.plan);
-  const hasPlannedBlockDone = allSessions.some((session) =>
-    !!session.plan?.sessions.some((planned) => planned.status === "done")
-  );
-  const hasSecondSource = allSessions.some((session) => !isSampleSession(session.name) && session.items.length >= 2);
-  const hasSecondSession = allSessions.length >= 2;
-  const hasRealItem = allSessions.some((session) =>
-    session.items.some((item) => item.type === "event" || item.type === "mail")
-  );
   // Seeded sample notes ship on every install — only a note the user made counts
   // toward "create a note" (matches contentSignals / the tour's create signal).
   const ownNoteCount = Object.values(notes).filter((note) => !isSeededSample(note)).length;
-  const setupDone = !isSparkFirstRun();
   const manualDone = manual.done ?? {};
-  const markManual = (key: string) => {
-    setManual((current) => ({ ...current, done: { ...current.done, [key]: !current.done?.[key] } }));
-  };
   const openDeepWork = () => {
     if (activeSession) switchSession(activeSession.id);
     selectNote(null);
@@ -675,7 +526,6 @@ function DashboardTutorial() {
     setManualDeepWork(true);
   };
   const openSettings = () => {
-    setManualDone("settings");
     selectNote(null);
     setManualDeepWork(false);
     setWorkspace({ surface: "settings", adminMailId: null });
@@ -686,7 +536,7 @@ function DashboardTutorial() {
     setWorkspace({ surface: "sources", adminMailId: null });
   };
 
-  const groups: TutorialGroup[] = [
+  const configuredGroups: TutorialGroup[] = [
     {
       key: "setup",
       title: "Set Up Zen",
@@ -697,21 +547,12 @@ function DashboardTutorial() {
         {
           key: "setup-1",
           label: "Foundation",
-          items: [
-            { key: "spark", label: "Finish Spark setup", done: setupDone },
-            { key: "identity", label: signedIn ? "Google connected" : "Google or local-only chosen", done: setupDone || signedIn },
-            { key: "sync", label: syncEnabled ? "Sync enabled" : "Sync or local-only chosen", done: setupDone || syncEnabled },
-            { key: "profile", label: "Private profile saved or skipped", done: setupDone || profileSaved },
-          ],
+          items: [],
         },
         {
           key: "setup-2",
           label: "Make it yours",
-          items: [
-            { key: "look", label: "Pick an app look", done: appearance.appLook !== "zen" || !!manualDone.look, manual: true },
-            { key: "font", label: "Choose a UI font", done: appearance.uiFont !== "system" || !!manualDone.font, manual: true },
-            { key: "ai-label", label: "Add an AI email label", done: customLabelCount > 0 },
-          ],
+          items: [],
         },
       ],
     },
@@ -722,7 +563,6 @@ function DashboardTutorial() {
       action: ownNoteCount ? "Try search" : "Create note",
       run: () => {
         if (ownNoteCount) {
-          setManualDone("search");
           useCommandPalette.getState().setOpen(true);
           return;
         }
@@ -735,30 +575,17 @@ function DashboardTutorial() {
         {
           key: "material-1",
           label: "Capture",
-          items: [
-            { key: "note", label: "Create a note", done: ownNoteCount > 0 },
-            { key: "pdf", label: "Open the sample PDF or add one", done: pdfCount > 0, optional: true },
-            { key: "search", label: "Try Ctrl/Cmd+K search", done: !!manualDone.search, manual: true },
-          ],
+          items: [],
         },
         {
           key: "material-2",
           label: "Organise & link",
-          items: [
-            { key: "meta", label: "Tag a note (space, subject, unit, or tags)", done: contentSignals.hasMeta },
-            { key: "filter", label: "Filter the sidebar", done: !!manualDone.filter, manual: true },
-            { key: "wikilink", label: "Link notes with [[ ]]", done: contentSignals.hasWikiLink },
-            { key: "moc", label: "Turn a note into a Map of Content", done: contentSignals.hasMoc },
-          ],
+          items: [],
         },
         {
           key: "material-3",
           label: "Author & solve",
-          items: [
-            { key: "math", label: "Insert a math block with /", done: contentSignals.hasMath },
-            { key: "math-check", label: "Check a derivation with Math check", done: contentSignals.hasCheckedMath },
-            { key: "block", label: "Insert a table or geometry block", done: contentSignals.hasBlock },
-          ],
+          items: [],
         },
       ],
     },
@@ -772,22 +599,12 @@ function DashboardTutorial() {
         {
           key: "deepwork-1",
           label: "Build a workspace",
-          items: [
-            { key: "session", label: "Create or open a session", done: hasSession },
-            { key: "session-item", label: "Add a note, PDF, event, or email", done: hasDeepWorkItem },
-            { key: "session-intent", label: "Name the session or set intent", done: hasIntent },
-            { key: "arrange", label: "Move or resize one source window", done: !!manualDone.arrange, manual: true },
-          ],
+          items: [],
         },
         {
           key: "deepwork-2",
           label: "Work the canvas",
-          items: [
-            { key: "second-source", label: "Gather a second source", done: hasSecondSource },
-            { key: "add-related", label: "Right-click something → Add to Deep Work", done: !!manualDone["add-related"], manual: true },
-            { key: "zen-mode", label: "Try zen mode", done: !!manualDone["zen-mode"], manual: true },
-            { key: "second-session", label: "Open a second session", done: hasSecondSession },
-          ],
+          items: [],
         },
       ],
     },
@@ -801,40 +618,22 @@ function DashboardTutorial() {
         {
           key: "study-1",
           label: "The loop",
-          items: [
-            { key: "study-open", label: "Open the Study panel", done: !!manualDone["study-open"], manual: true },
-            { key: "focus", label: "Start one focus session", done: hasFocus },
-            { key: "quiz", label: "Take a quiz", done: hasAnyQuiz },
-          ],
+          items: [],
         },
         {
           key: "study-2",
           label: "Evidence & mastery",
-          items: [
-            { key: "backbone", label: "Generate a study backbone", done: hasBackbone },
-            { key: "review-weak", label: "Review your weakest concept", done: hasReviewedWeak },
-            { key: "quiz-graded", label: "Grade a quiz into mastery", done: hasGradedQuiz },
-            { key: "requiz", label: "Re-quiz a mistake", done: !!manualDone.requiz, manual: true },
-          ],
+          items: [],
         },
         {
           key: "study-3",
           label: "Plan to the deadline",
-          items: [
-            { key: "plan", label: "Set a study plan + exam date", done: hasPlan },
-            { key: "hero", label: "Read the Exam-Focus hero", done: !!manualDone.hero, manual: true },
-            { key: "planned-block", label: "Finish a planned session", done: hasPlannedBlockDone },
-            { key: "daily-goal", label: "Set your daily goal", done: goalHours !== DEFAULT_GOAL_HOURS || !!manualDone["daily-goal"], manual: true },
-          ],
+          items: [],
         },
         {
           key: "study-4",
           label: "Lessons & tutoring",
-          items: [
-            { key: "lesson-start", label: "Start a guided lesson", done: !!manualDone["lesson-start"], manual: true },
-            { key: "class-finish", label: "Finish a class", done: !!manualDone["class-finish"], manual: true },
-            { key: "deadline-modes", label: "Learn the deadline modes", done: !!manualDone["deadline-modes"], manual: true },
-          ],
+          items: [],
         },
       ],
     },
@@ -848,25 +647,12 @@ function DashboardTutorial() {
         {
           key: "connect-1",
           label: "Bring it in",
-          items: [
-            { key: "google", label: "Connect Google or stay local", done: setupDone || signedIn },
-            { key: "sources", label: "Refresh or import a connected source", done: sourcesCount > 0 },
-            // Auto-ticks once any phone task/capture syncs; but a phone that paired
-            // and captured nothing yet is invisible to the desktop (blob sync has no
-            // presence signal), so allow a manual tick too — you know you linked it.
-            { key: "phone-link", label: "Link your phone via the QR tile", done: phoneLinked || !!manualDone["phone-link"], manual: true },
-            { key: "add-real", label: "Add a source/event/email to Deep Work", done: !!manualDone["add-real"], manual: true },
-          ],
+          items: [],
         },
         {
           key: "connect-2",
           label: "Wire it up",
-          items: [
-            { key: "provider", label: "Connect Canvas, Drive, Zotero, or GitHub", done: hasProviderSource },
-            { key: "web-capture", label: "Capture a web page", done: hasWebCapture },
-            { key: "open-admin", label: "Open Calendar or Mail", done: !!manualDone["open-admin"], manual: true },
-            { key: "real-to-dw", label: "Add an event or email to Deep Work", done: hasRealItem },
-          ],
+          items: [],
         },
       ],
     },
@@ -880,25 +666,29 @@ function DashboardTutorial() {
         {
           key: "trust-1",
           label: "Where things live",
-          items: [
-            { key: "settings", label: "Open Settings", done: !!manualDone.settings, manual: true },
-            { key: "tools", label: "Review AI tool permissions", done: !!manualDone.tools, manual: true },
-            { key: "backup", label: "Export backup or copy diagnostics", done: !!manualDone.backup, manual: true },
-          ],
+          items: [],
         },
         {
           key: "trust-2",
           label: "Own your data",
-          items: [
-            { key: "tool-toggle", label: "Adjust an AI tool permission", done: toolOverrideCount > 0 },
-            { key: "export-backup", label: "Export a backup", done: !!manualDone["export-backup"], manual: true },
-            { key: "diagnostics", label: "Copy diagnostics", done: !!manualDone.diagnostics, manual: true },
-            { key: "plan-usage", label: "Review Plan & usage", done: !!manualDone["plan-usage"], manual: true },
-          ],
+          items: [],
         },
       ],
     },
   ];
+
+  // The checklist is generated from the walkthrough itself: one visible tick
+  // for every substantive step, and no orphan goals for state detection to
+  // guess at. Intro and completion cards intentionally have no tick.
+  const groups: TutorialGroup[] = configuredGroups.map((group) => ({
+    ...group,
+    phases: group.phases.map((phase) => ({
+      ...phase,
+      items: (GROUP_TOURS[phase.key] ?? [])
+        .filter(isChecklistTourStep)
+        .map((step) => ({ key: step.id, label: step.title, done: !!manualDone[step.id] })),
+    })),
+  }));
 
   // Let the transition-watching effect see this render's group state.
   groupsRef.current = groups;
@@ -959,7 +749,7 @@ function DashboardTutorial() {
           const phaseIdx = currentPhaseIndex(group);
           const phase = group.phases[phaseIdx];
           const phaseDoneCount = phase.items.filter((item) => item.done).length;
-          const groupDone = group.phases.every((p) => p.items.every((item) => item.done));
+          const groupDone = group.phases.every((p) => p.items.every((item) => item.done || item.optional));
           const justUnlocked = phaseIdx > 0 && !groupDone && !seenAtMount[phase.key];
           return (
             <details key={group.key} className="group rounded-[12px] border border-[rgba(255,255,255,0.07)] bg-[rgba(255,255,255,0.02)] px-3 py-2" open={group.key === nextGroup.key && !groupDone}>
@@ -995,18 +785,17 @@ function DashboardTutorial() {
                     </div>
                   )}
                   {phase.items.map((item) => {
-                    // Every unfinished goal is a live entry point: manual ticks
-                    // toggle, everything else jumps into the phase's guided
-                    // walkthrough so "click what you want to learn" always works.
-                    const launchesTour = !item.manual && !item.done && !!GROUP_TOURS[phase.key];
-                    const clickable = item.manual || launchesTour;
+                    // The checklist is read-only progress. Every unfinished item
+                    // enters its phase walkthrough; advancing through that
+                    // walkthrough is the only thing that can tick it.
+                    const launchesTour = !item.done && !!GROUP_TOURS[phase.key];
                     return (
                       <button
                         key={item.key}
                         className="group/tick flex w-full items-start gap-2 text-left text-xs"
-                        disabled={!clickable}
-                        onClick={() => (item.manual ? markManual(item.key) : startGroupTour(phase.key))}
-                        title={item.manual ? "Toggle this tick manually" : launchesTour ? "Show me how — guided walkthrough" : undefined}
+                        disabled={!launchesTour}
+                        onClick={() => startGroupTour(phase.key)}
+                        title={launchesTour ? "Show me how — guided walkthrough" : undefined}
                       >
                         <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border text-[10px] ${item.done ? "border-transparent bg-[var(--text-dim)] text-black" : "border-[var(--border)] text-transparent"}`}>
                           ✓
@@ -1200,11 +989,6 @@ function LabelRow({ name, hint, onRemove }: { name: string; hint: string; onRemo
       />
     </div>
   );
-}
-
-function hasProfile(): boolean {
-  const profile = loadProfile();
-  return !!(profile.name.trim() || profile.about.trim() || profile.stack.trim() || profile.preferences.trim());
 }
 
 function FocusWorkspace({

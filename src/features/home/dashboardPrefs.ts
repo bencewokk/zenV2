@@ -1,7 +1,7 @@
 /**
  * Dashboard tutorial ("First Run Path") preferences. Shared by the dashboard
  * (which renders / hides the tutorial) and Settings (which exposes a toggle).
- * Persisted to localStorage; `done` tracks manually-ticked tutorial items.
+ * Persisted to localStorage; `done` tracks walkthrough steps the user passed.
  */
 
 const TUTORIAL_KEY = "zen.dashboard-tutorial.v1";
@@ -49,10 +49,8 @@ export function onTutorialStateChange(listener: (state: TutorialManualState) => 
 }
 
 /**
- * Tick a tutorial item straight in storage — for signals that fire while the
- * dashboard (and its tutorial state) is unmounted, e.g. lesson lifecycle inside
- * Deep Work. The tutorial re-reads storage on mount, so the tick shows up when
- * the user returns to the dashboard.
+ * Persist a walkthrough step after the user advances past it. This is the only
+ * completion source; app state is deliberately not inspected or inferred.
  */
 export function markTutorialItemDone(key: string): void {
   const state = readTutorialState();

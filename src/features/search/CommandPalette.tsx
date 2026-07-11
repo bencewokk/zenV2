@@ -7,7 +7,6 @@ import { useHome } from "@/features/home/store";
 import { sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { useWorkspace } from "@/shared/stores/workspace";
 import { docToText } from "@/shared/lib/docText";
-import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 
 /**
  * Global search / command palette (Ctrl+K). Searches everything the stores
@@ -321,7 +320,6 @@ export function CommandPalette() {
 
   function runResult(result: Result | undefined) {
     if (!result) return;
-    markTutorialItemDone("search");
     result.run();
   }
 

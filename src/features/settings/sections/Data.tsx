@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { CURRENT_VERSION } from "@/data/releaseNotes";
-import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 import { collectBackup, parseBackup, applyBackup } from "@/services/backup";
 import { buildDiagnosticsReport } from "@/services/diagnostics";
 import { loadMemories, deleteMemory } from "@/services/memory";
@@ -109,8 +108,6 @@ export function Data() {
     downloadJson(JSON.stringify(backup, null, 2), `zen-backup-${date}.json`);
     notify.success(`Backup saved — ${backup.notes.length} notes`);
     // First Run Path: "Export backup or copy diagnostics" / "Export a backup".
-    markTutorialItemDone("backup");
-    markTutorialItemDone("export-backup");
   }
 
   function restoreBackup(file: File) {
@@ -238,8 +235,6 @@ export function Data() {
               .then(() => {
                 notify.success("Diagnostics copied to clipboard");
                 // First Run Path: "Export backup or copy diagnostics" / "Copy diagnostics".
-                markTutorialItemDone("backup");
-                markTutorialItemDone("diagnostics");
               })
               .catch(() => notify.error("Couldn't access the clipboard"));
           }}

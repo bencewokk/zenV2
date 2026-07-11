@@ -13,7 +13,8 @@ import { useSources } from "@/services/sources/store";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { loadAppearance } from "@/services/appearance";
 import { docToText } from "@/shared/lib/docText";
-import { docCountNodes } from "./contentSignals";
+import { docCountNodes, isSeededSample } from "./contentSignals";
+import { markTutorialItemDone } from "@/features/home/dashboardPrefs";
 import { useTour, type TourStep } from "./tourStore";
 
 /** Put the app on the plain home dashboard so the tour's tile anchors exist. */
@@ -23,14 +24,60 @@ function goDashboard() {
   useWorkspace.getState().set({ surface: "home", adminMailId: null });
 }
 
-/** Put a note on screen for the editor-centric tours: keep the open one, else
- *  open the most recently touched, else create a fresh one. */
+const SAMPLE_SESSION_NAME = "Quadratics — sample";
+
+function isSampleSession(name: string): boolean {
+  return name.trim() === SAMPLE_SESSION_NAME;
+}
+
+function completeTutorialGoals(...keys: string[]): void {
+  for (const key of keys) markTutorialItemDone(key);
+}
+
+/** Checklist progress belongs to the walkthrough cursor, never inferred app
+ * state. Decorate every phase step once so all forward paths (Next, an
+ * auto-advance, or Skip step) persist the same deterministic result. */
+export function isChecklistTourStep(step: TourStep): boolean {
+  return !step.id.endsWith("-intro") && !step.id.endsWith("-done") && step.id !== "welcome" && step.id !== "done";
+}
+
+const CORE_LOOP_CHECKLIST_ALIASES: Record<string, string> = {
+  "new-note": "m-note",
+  "name-note": "m-rename",
+  write: "m-write",
+  search: "m-search",
+  "core-open": "dw-open",
+  "add-note": "dw-add",
+};
+
+function withWalkthroughCompletion(steps: TourStep[]): TourStep[] {
+  return steps.map((step) => {
+    const completes = step.completes ?? (isChecklistTourStep(step) ? [CORE_LOOP_CHECKLIST_ALIASES[step.id] ?? step.id] : undefined);
+    if (!completes?.length) return step;
+    return {
+      ...step,
+      completes,
+      onPass: () => {
+        step.onPass?.();
+        completeTutorialGoals(...completes);
+      },
+    };
+  });
+}
+
+/** Put a user-owned note on screen for the editor-centric tours: keep the open
+ *  one only when it is not seeded demo content, else pick the most recently
+ *  touched user note, else create a fresh one. The checklist deliberately
+ *  excludes seeded notes, so the walkthrough must never ask the user to edit
+ *  one and then advance without ticking the matching goal. */
 function openNoteForTour() {
   useHome.getState().setManualDeepWork(false);
   useWorkspace.getState().set({ surface: "home", adminMailId: null, sidebarCollapsed: false });
   const st = useNotes.getState();
-  if (st.selectedId && st.notes[st.selectedId]) return;
-  const pick = Object.values(st.notes).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (st.selectedId && st.notes[st.selectedId] && !isSeededSample(st.notes[st.selectedId])) return;
+  const pick = Object.values(st.notes)
+    .filter((note) => !isSeededSample(note))
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
   if (pick) st.select(pick.id);
   else void st.create(null);
 }
@@ -261,7 +308,7 @@ export const CORE_LOOP_TOUR: TourStep[] = [
 
 /** Start the core-loop walkthrough. */
 export function startCoreLoopTour() {
-  useTour.getState().start(CORE_LOOP_TOUR);
+  useTour.getState().start(withWalkthroughCompletion(CORE_LOOP_TOUR));
 }
 
 /**
@@ -585,7 +632,8 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       advanceWhen: (advance) => {
         const count = () => {
           const s = useDeepWork.getState();
-          return s.activeId ? s.sessions[s.activeId]?.items.length ?? 0 : 0;
+          const active = s.activeId ? s.sessions[s.activeId] : null;
+          return active && !isSampleSession(active.name) ? active.items.length : 0;
         };
         if (count() >= 2) {
           advance();
@@ -626,7 +674,8 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       anchor: '[data-tour="dw-new-session"]',
       interactive: true,
       advanceWhen: (advance) => {
-        const count = () => Object.values(useDeepWork.getState().sessions).filter((s) => !s.archived).length;
+        const count = () => Object.values(useDeepWork.getState().sessions)
+          .filter((s) => !s.archived && !isSampleSession(s.name)).length;
         if (count() >= 2) {
           advance();
           return () => {};
@@ -819,31 +868,33 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       optional: true,
       skipLabel: "Skip — needs AI",
       advanceWhen: (advance) => {
-        if (useDeepWork.getState().plan) {
+        if (useDeepWork.getState().plan?.examDate) {
           advance();
           return () => {};
         }
         return useDeepWork.subscribe((s) => {
-          if (s.plan) advance();
+          if (s.plan?.examDate) advance();
         });
       },
     },
     {
       id: "pl-next25",
-      title: "Do the next 25 minutes",
-      body: "Each planned session has ▶ Start — it runs the focus timer and credits the time to your plan. Start one (or use the timer up top).",
-      feedback: "Timer's running — this block counts toward the plan and your daily goal.",
+      title: "Finish a planned session",
+      body: "Start a planned session, work through it, then click its ✓ control. The checklist completes only when that planned block is actually marked done.",
+      feedback: "Planned block complete — your plan and readiness now reflect the work.",
       anchor: '[data-tour="study-plan"]',
       interactive: true,
       optional: true,
       skipLabel: "Skip for now",
       advanceWhen: (advance) => {
-        if (useFocusStore.getState().session) {
+        const done = () => Object.values(useDeepWork.getState().sessions)
+          .some((session) => session.plan?.sessions.some((planned) => planned.status === "done"));
+        if (done()) {
           advance();
           return () => {};
         }
-        return useFocusStore.subscribe((s) => {
-          if (s.session) advance();
+        return useDeepWork.subscribe(() => {
+          if (done()) advance();
         });
       },
     },
@@ -971,11 +1022,17 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       optional: true,
       skipLabel: "Keep the defaults",
       advanceWhen: (advance) => {
-        // Appearance is plain localStorage (no store to subscribe to) — poll for
-        // any change from the values at step start.
-        const base = JSON.stringify(loadAppearance());
+        // Appearance is plain localStorage (no store to subscribe to). Require
+        // each still-default choice to change; advancing after only the look or
+        // only the font left the other checklist item stranded.
+        const base = loadAppearance();
+        const needLook = base.appLook === "zen";
+        const needFont = base.uiFont === "system";
         const id = setInterval(() => {
-          if (JSON.stringify(loadAppearance()) !== base) advance();
+          const current = loadAppearance();
+          const lookDone = !needLook || current.appLook !== base.appLook;
+          const fontDone = !needFont || current.uiFont !== base.uiFont;
+          if (lookDone && fontDone) advance();
         }, 300);
         return () => clearInterval(id);
       },
@@ -987,6 +1044,8 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       feedback: "Saved — matching mail gets grouped under that label automatically.",
       anchor: '[data-tour="ai-labels"]',
       interactive: true,
+      optional: true,
+      skipLabel: "Skip — no mail connection",
       beforeShow: goDashboard,
       advanceWhen: (advance) => {
         const count = () => useHome.getState().customLabels.length;
@@ -1238,6 +1297,6 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
 export function startGroupTour(groupKey: string): boolean {
   const steps = GROUP_TOURS[groupKey];
   if (!steps) return false;
-  useTour.getState().start(steps);
+  useTour.getState().start(withWalkthroughCompletion(steps));
   return true;
 }

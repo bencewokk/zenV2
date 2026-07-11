@@ -51,6 +51,10 @@ export interface TourStep {
    */
   optional?: boolean;
   skipLabel?: string;
+  /** Checklist goals completed when the user advances past this step. */
+  completes?: string[];
+  /** Called exactly when the user advances past this step. */
+  onPass?: () => void;
 }
 
 interface TourState {
@@ -70,6 +74,7 @@ export const useTour = create<TourState>((set, get) => ({
   start: (steps) => set({ active: steps.length > 0, index: 0, steps }),
   next: () => {
     const { index, steps } = get();
+    steps[index]?.onPass?.();
     if (index + 1 >= steps.length) set({ active: false });
     else set({ index: index + 1 });
   },
