@@ -1149,7 +1149,6 @@ function WeeklyStudyChart() {
   const anyData = data.some((d) => d.hours > 0);
 
   /* ── chart geometry (px) ── */
-  const padLeft = 0;
   const padBottom = 18;
   const padTop = 4;
   const chartH = 64;
