@@ -36,6 +36,8 @@ import { ensureSourcesLoaded } from "@/services/sources/store";
 import { startSourceRefresh } from "@/services/sources/refresh";
 import { isSignedIn, onAuthChange } from "@/services/google/auth";
 import { clearLocalConnectionSecrets, reconcileConnectionVault } from "@/services/connections/vault";
+import { ErrorBoundary } from "@/shared/ui/ErrorBoundary";
+import { notify } from "@/shared/ui/notify";
 
 const ChatPanel = lazy(() => import("@/features/ai/ChatPanel").then((module) => ({ default: module.ChatPanel })));
 const CalendarPanel = lazy(() => import("@/features/google/CalendarPanel").then((module) => ({ default: module.CalendarPanel })));
@@ -44,6 +46,22 @@ const SettingsView = lazy(() => import("@/features/settings/SettingsView").then(
 const SourcesPanel = lazy(() => import("@/features/sources/SourcesPanel").then((module) => ({ default: module.SourcesPanel })));
 const QuizView = lazy(() => import("@/features/home/deepwork/QuizView").then((module) => ({ default: module.QuizView })));
 const LessonMode = lazy(() => import("@/features/home/deepwork/LessonMode").then((module) => ({ default: module.LessonMode })));
+
+/**
+ * Crash containment for the fullscreen study surfaces. The quiz's activeId is
+ * persisted, so a render crash in QuizView would otherwise loop forever: crash →
+ * root error screen → reload → the same quiz re-opens → crash. Rendered as an
+ * ErrorBoundary fallback, this closes the surface (clearing that persisted
+ * state), tells the user, and lets the rest of the app live on.
+ */
+function CloseCrashedSurface({ label, close }: { label: string; close: () => void }) {
+  useEffect(() => {
+    notify.error(`The ${label} hit an error and was closed. You can start a new one.`);
+    close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
 
 /**
  * Phase 1 shell — a thin composer of feature modules (the anti-ui.py).
@@ -446,7 +464,11 @@ export function App() {
         {deepWork && showStudy && <StudyPanel onClose={() => setShowStudy(false)} />}
 
         {/* During a lesson the ChatPanel is rendered inside LessonMode instead (one instance). */}
-        {!lessonActive && aiOpen && <Suspense fallback={null}><ChatPanel /></Suspense>}
+        {!lessonActive && aiOpen && (
+          <ErrorBoundary fallback={<CloseCrashedSurface label="AI panel" close={() => useAI.setState({ open: false })} />}>
+            <Suspense fallback={null}><ChatPanel /></Suspense>
+          </ErrorBoundary>
+        )}
       </div>
 
       {!zen && !lessonActive && (
@@ -455,8 +477,16 @@ export function App() {
         </div>
       )}
       <AddToSessionPicker />
-      {quizActive && <Suspense fallback={null}><QuizView /></Suspense>}
-      {lessonActive && <Suspense fallback={null}><LessonMode /></Suspense>}
+      {quizActive && (
+        <ErrorBoundary fallback={<CloseCrashedSurface label="quiz" close={() => useQuiz.getState().closeView()} />}>
+          <Suspense fallback={null}><QuizView /></Suspense>
+        </ErrorBoundary>
+      )}
+      {lessonActive && (
+        <ErrorBoundary fallback={<CloseCrashedSurface label="lesson" close={() => useLesson.setState({ active: false })} />}>
+          <Suspense fallback={null}><LessonMode /></Suspense>
+        </ErrorBoundary>
+      )}
       <SparkIntro />
       <GuidedTour />
       <CommandPalette />

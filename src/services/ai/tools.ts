@@ -2167,22 +2167,31 @@ function categoryOf(name: string): string {
   return "Other";
 }
 
-/** Metadata for every tool, for the settings UI and policy resolution. */
-export const TOOL_CATALOG: ToolMeta[] = TOOLS.map((t) => {
-  const name = t.def.function.name;
-  const danger = !!t.confirm;
-  // Reads, ask_user and local study writes always auto-run and aren't gated.
-  const configurable = name !== "ask_user" && !READ_TOOLS.has(name) && !STUDY_AUTO.has(name);
-  const defaultPolicy: ToolPolicy = !configurable ? "auto" : danger ? "ask" : "auto";
-  return {
-    name,
-    label: describeToolCall(name, {}).title,
-    category: categoryOf(name),
-    danger,
-    configurable,
-    defaultPolicy,
-  };
-});
+/** Metadata for every tool, for the settings UI and policy resolution.
+ *  Built lazily on first access: `describeToolCall` resolves ids through the
+ *  feature stores, and this module sits in an import cycle with them
+ *  (home/store → ai/store → tools). Computing the catalog at module-eval time
+ *  crashes with a TDZ ReferenceError ("Cannot access 'useHome' before
+ *  initialization") whenever evaluation enters the cycle store-first — which
+ *  is chunk-order dependent, so it only bit some builds/surfaces. */
+let _catalog: ToolMeta[] | null = null;
+export function toolCatalog(): ToolMeta[] {
+  return (_catalog ??= TOOLS.map((t) => {
+    const name = t.def.function.name;
+    const danger = !!t.confirm;
+    // Reads, ask_user and local study writes always auto-run and aren't gated.
+    const configurable = name !== "ask_user" && !READ_TOOLS.has(name) && !STUDY_AUTO.has(name);
+    const defaultPolicy: ToolPolicy = !configurable ? "auto" : danger ? "ask" : "auto";
+    return {
+      name,
+      label: describeToolCall(name, {}).title,
+      category: categoryOf(name),
+      danger,
+      configurable,
+      defaultPolicy,
+    };
+  }));
+}
 
 // ── Human-readable descriptions for proposal / confirm cards ──────────────────
 

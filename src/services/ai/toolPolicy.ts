@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { markBlobDirty } from "@/services/sync/cursor";
-import { TOOL_CATALOG, type ToolPolicy } from "./tools";
+import { toolCatalog, type ToolPolicy } from "./tools";
 
 const KEY = "zen.ai.toolPolicy.v1";
 export const TOOL_POLICY_KEY = KEY;
@@ -51,7 +51,7 @@ export function hydrateToolPolicy(): void {
 
 /** Resolve the effective policy for a tool (user override → catalog default → "auto"). */
 export function policyFor(name: string): ToolPolicy {
-  const meta = TOOL_CATALOG.find((t) => t.name === name);
+  const meta = toolCatalog().find((t) => t.name === name);
   if (meta && !meta.configurable) return "auto"; // reads / ask_user / study writes
   return useToolPolicy.getState().overrides[name] ?? meta?.defaultPolicy ?? "auto";
 }

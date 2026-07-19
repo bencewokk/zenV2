@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { TOOL_CATALOG, type ToolPolicy } from "@/services/ai/tools";
+import { toolCatalog, type ToolMeta, type ToolPolicy } from "@/services/ai/tools";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
 
 const LEVELS: Array<{ value: ToolPolicy; label: string; hint: string }> = [
@@ -16,8 +16,8 @@ export function ToolSettings({ onClose }: { onClose: () => void }) {
 
   // Group the configurable tools by category, preserving catalog order.
   const groups = useMemo(() => {
-    const map = new Map<string, typeof TOOL_CATALOG>();
-    for (const t of TOOL_CATALOG) {
+    const map = new Map<string, ToolMeta[]>();
+    for (const t of toolCatalog()) {
       if (!t.configurable) continue;
       const list = map.get(t.category) ?? [];
       list.push(t);
