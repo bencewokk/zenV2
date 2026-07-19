@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { linkifyCitations } from "@/features/ai/citations";
 import { useAI, type ToolTone, type ChatTurn } from "@/features/ai/store";
@@ -43,6 +43,55 @@ function UsageBadge({ promptTokens, completionTokens }: { promptTokens?: number;
   );
 }
 
+/** Historical turns keep the same object identity while the live answer grows,
+ * so memoization avoids re-running Markdown, KaTeX, and sanitization for the
+ * entire conversation on every streamed chunk. */
+const TurnBubble = memo(function TurnBubble({ turn }: { turn: ChatTurn }) {
+  if (turn.role === "tool") {
+    return (
+      <div className="zen-anim-rise flex flex-col gap-0.5 text-xs">
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${turn.tone === "run" ? "zen-glow" : ""}`}
+            style={{ background: toneColor(turn.tone), "--zen-glow-color": "rgba(110, 168, 254, 0.45)" } as React.CSSProperties}
+          />
+          <span className="min-w-0 flex-1 truncate text-[var(--text-dim)]" title={`${turn.content}${turn.detail ? " · " + turn.detail : ""}`}>
+            <span className="text-[var(--text)]">{turn.content}</span>
+            {turn.detail && <span> · {turn.detail}</span>}
+          </span>
+        </div>
+        {turn.result && (
+          <div
+            className={`truncate pl-3.5 ${turn.tone === "error" ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}
+            title={turn.result}
+          >
+            {turn.result}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`zen-anim-rise ${turn.role === "user" ? "text-right" : ""}`}>
+      <div
+        className={`inline-block max-w-full rounded-[var(--radius)] px-3 py-2 text-sm ${
+          turn.role === "user" ? "bg-[var(--accent-dim)] text-left" : "bg-[var(--bg-elev)]"
+        }`}
+      >
+        {turn.role === "assistant" ? (
+          <div
+            className="zen-md"
+            dangerouslySetInnerHTML={{ __html: linkifyCitations(renderMarkdown(turn.content || "…")) }}
+          />
+        ) : (
+          <span className="whitespace-pre-wrap">{turn.content}</span>
+        )}
+      </div>
+    </div>
+  );
+});
+
 export function ChatPanel() {
   const open = useAI((s) => s.open);
   const turns = useAI((s) => s.turns);
@@ -67,12 +116,14 @@ export function ChatPanel() {
   const setModelPref = useAI((s) => s.setModelPref);
   const blocked = aiBlocked(aiAccess);
   const models = availableModels(tier);
+  const conversationBusy = streaming || proposals.some((p) => p.conversationId === activeId && p.status === "running");
 
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
 
   // True once the in-flight assistant turn has visible text — at that point the
   // streaming bubble itself is the live indicator, so the "Thinking" dots below
@@ -81,7 +132,16 @@ export function ChatPanel() {
   const hasLiveContent = !!lastTurn && lastTurn.role === "assistant" && !!lastTurn.content;
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    stickToBottom.current = true;
+  }, [activeId]);
+
+  useEffect(() => {
+    if (!stickToBottom.current) return;
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTo({ top: el.scrollHeight });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [turns, proposals, pendingQuestion]);
 
   // Clickable citations: open the cited note, or the cited PDF page on the canvas.
@@ -115,8 +175,10 @@ export function ChatPanel() {
   const animClass = state === "exit" ? "zen-exit-slide-right" : "zen-anim-slide-right";
 
   function submit() {
+    if (streaming) return;
     const text = input.trim();
     if (!text) return;
+    stickToBottom.current = true;
     setInput("");
     const sel = useNotes.getState();
     const note = sel.selectedId ? sel.notes[sel.selectedId] : null;
@@ -153,18 +215,19 @@ export function ChatPanel() {
       <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-3 py-2">
         <Dropdown
           value={activeId}
-          onChange={switchConversation}
-          title="Conversation"
-          className="min-w-0 flex-1 text-sm font-medium"
+          onChange={(id) => { if (!conversationBusy) switchConversation(id); }}
+          title={conversationBusy ? "Stop or wait for the current action before switching conversations" : "Conversation"}
+          className={`min-w-0 flex-1 text-sm font-medium ${conversationBusy ? "pointer-events-none opacity-60" : ""}`}
           options={conversations
             .slice()
             .sort((a, b) => b.updatedAt - a.updatedAt)
             .map((c) => ({ value: c.id, label: c.title || "New chat" }))}
         />
         <button
-          className="zen-pressable shrink-0 rounded px-1.5 text-base leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
+          className="zen-pressable shrink-0 rounded px-1.5 text-base leading-none text-[var(--text-dim)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-40"
           onClick={newConversation}
-          title="New conversation"
+          disabled={conversationBusy}
+          title={conversationBusy ? "Stop or wait for the current action before starting a new conversation" : "New conversation"}
         >
           ＋
         </button>
@@ -222,7 +285,12 @@ export function ChatPanel() {
           <button className="zen-pressable hover:text-[var(--text)]" onClick={() => setShowProfile(true)} title="Profile memory">
             Profile
           </button>
-          <button className="zen-pressable hover:text-[var(--danger)]" onClick={() => deleteConversation(activeId)} title="Delete this conversation">
+          <button
+            className="zen-pressable hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => deleteConversation(activeId)}
+            disabled={conversationBusy}
+            title={conversationBusy ? "Stop or wait for the current action before deleting this conversation" : "Delete this conversation"}
+          >
             Delete
           </button>
         </div>
@@ -244,58 +312,26 @@ export function ChatPanel() {
         </div>
       )}
 
-      <div ref={scrollRef} data-tour="ai-thread" className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      <div
+        ref={scrollRef}
+        data-tour="ai-thread"
+        className="flex-1 space-y-3 overflow-y-auto px-3 py-3"
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        }}
+      >
         {turns.length === 0 && (
           <div className="text-sm text-[var(--text-dim)]">
             Ask anything. The open note is sent as context. Tip: add notes or PDFs to Deep Work,
             then ask me to study your Deep Work material.
           </div>
         )}
-        {turns.map((t, i) =>
-          t.role === "tool" ? (
-            <div key={i} className="zen-anim-rise flex flex-col gap-0.5 text-xs">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${t.tone === "run" ? "zen-glow" : ""}`}
-                  style={{ background: toneColor(t.tone), "--zen-glow-color": "rgba(110, 168, 254, 0.45)" } as React.CSSProperties}
-                />
-                <span className="min-w-0 flex-1 truncate text-[var(--text-dim)]" title={`${t.content}${t.detail ? " · " + t.detail : ""}`}>
-                  <span className="text-[var(--text)]">{t.content}</span>
-                  {t.detail && <span> · {t.detail}</span>}
-                </span>
-              </div>
-              {t.result && (
-                <div
-                  className={`truncate pl-3.5 ${t.tone === "error" ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}
-                  title={t.result}
-                >
-                  {t.result}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div key={i} className={`zen-anim-rise ${t.role === "user" ? "text-right" : ""}`}>
-              <div
-                className={`inline-block max-w-full rounded-[var(--radius)] px-3 py-2 text-sm ${
-                  t.role === "user" ? "bg-[var(--accent-dim)] text-left" : "bg-[var(--bg-elev)]"
-                }`}
-              >
-                {t.role === "assistant" ? (
-                  <div
-                    className="zen-md"
-                    dangerouslySetInnerHTML={{ __html: linkifyCitations(renderMarkdown(t.content || "…")) }}
-                  />
-                ) : (
-                  <span className="whitespace-pre-wrap">{t.content}</span>
-                )}
-              </div>
-            </div>
-          )
-        )}
+        {turns.map((turn, i) => <TurnBubble key={i} turn={turn} />)}
         {proposals
           // Resolved cards (done/error) become inline tool turns, so only the
           // still-actionable ones live here at the bottom of the chat.
-          .filter((p) => p.status === "pending" || p.status === "running")
+          .filter((p) => p.conversationId === activeId && (p.status === "pending" || p.status === "running"))
           .map((p) => (
             <div
               key={p.id}

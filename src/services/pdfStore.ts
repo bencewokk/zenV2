@@ -1,8 +1,13 @@
 import type { PdfDoc, PdfAnnotation, PdfOutlineItem } from "@/shared/lib/types";
-import { markDirty } from "@/services/sync/cursor";
+import { getDirty, markDirty } from "@/services/sync/cursor";
 
 const COLLECTION = "pdfs";
 const TOMB_KEY = "zen.pdfs.tombstones.v1";
+type CanApplyDirty = (id: string) => boolean;
+
+function canApplyRemote(id: string, canApplyDirty?: CanApplyDirty): boolean {
+  return !getDirty(COLLECTION).has(id) || canApplyDirty?.(id) === true;
+}
 
 /** Metadata-only view of a record for sync (no blob, no heavy page text). */
 export interface PdfSyncMeta {
@@ -106,8 +111,9 @@ function get<T>(store: IDBObjectStore, id: string): Promise<T | undefined> {
 
 export const pdfStore = {
   async put(rec: PdfRecord): Promise<void> {
-    const db = await openDb();
     if (rec.updatedAt === undefined) touch(rec);
+    else markDirty(COLLECTION, rec.id);
+    const db = await openDb();
     await new Promise<void>((resolve, reject) => {
       const r = tx(db, "readwrite").put(rec);
       r.onsuccess = () => resolve();
@@ -233,13 +239,15 @@ export const pdfStore = {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
       const r = tx(db, "readwrite").delete(id);
-      r.onsuccess = () => resolve();
+      r.onsuccess = () => {
+        const t = readPdfTombstones();
+        t[id] = Date.now();
+        writePdfTombstones(t);
+        markDirty(COLLECTION, id);
+        resolve();
+      };
       r.onerror = () => reject(r.error);
     });
-    const t = readPdfTombstones();
-    t[id] = Date.now();
-    writePdfTombstones(t);
-    markDirty(COLLECTION, id);
   },
 
   // ── Sync helpers ──────────────────────────────────────────────────────────
@@ -304,51 +312,114 @@ export const pdfStore = {
     return id in t ? t[id] : -Infinity;
   },
 
-  /** Apply remote metadata without re-flagging it dirty. Preserves a valid local blob. */
-  async applyRemoteMeta(meta: PdfSyncMeta, blob: Blob | null): Promise<void> {
+  /** Attach downloaded bytes without replacing metadata that changed meanwhile. */
+  async attachRemoteBlob(id: string, size: number, blob: Blob): Promise<boolean> {
+    if (blob.size !== size) return false;
     const db = await openDb();
-    const existing = await get<PdfRecord>(tx(db, "readonly"), meta.id);
-    const rec: PdfRecord = {
-      ...(existing ?? {}),
-      id: meta.id,
-      name: meta.name,
-      tags: meta.tags,
-      size: meta.size,
-      addedAt: meta.addedAt,
-      pageCount: meta.pageCount,
-      annotations: meta.annotations,
-      outline: meta.outline,
-      updatedAt: meta.updatedAt,
-    };
-    const incoming = blob && blob.size === meta.size ? blob : null;
-    const local = existing?.blob && existing.blob.size === meta.size ? existing.blob : null;
-    if (incoming ?? local) rec.blob = (incoming ?? local)!;
-    else delete rec.blob;
-    const dbw = await openDb();
-    await new Promise<void>((resolve, reject) => {
-      const r = tx(dbw, "readwrite").put(rec);
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
+    return new Promise<boolean>((resolve, reject) => {
+      const transaction = db.transaction(STORE, "readwrite");
+      const store = transaction.objectStore(STORE);
+      let wrote = false;
+      transaction.oncomplete = () => resolve(wrote);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+      const read = store.get(id);
+      read.onsuccess = () => {
+        const existing = read.result as PdfRecord | undefined;
+        if (!existing || existing.size !== size) {
+          return;
+        }
+        store.put({ ...existing, blob });
+        wrote = true;
+      };
+    });
+  },
+
+  /** Atomically apply remote metadata if no newer local dirty generation appeared. */
+  async applyRemoteMeta(
+    meta: PdfSyncMeta,
+    blob: Blob | null,
+    canApplyDirty?: CanApplyDirty,
+  ): Promise<boolean> {
+    const db = await openDb();
+    const applied = await new Promise<boolean>((resolve, reject) => {
+      const transaction = db.transaction(STORE, "readwrite");
+      const store = transaction.objectStore(STORE);
+      let wrote = false;
+      transaction.oncomplete = () => resolve(wrote);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+      const read = store.get(meta.id);
+      read.onsuccess = () => {
+        const existing = read.result as PdfRecord | undefined;
+        const tombstone = readPdfTombstones()[meta.id] ?? -Infinity;
+        const localUpdatedAt = existing?.updatedAt ?? existing?.addedAt ?? tombstone;
+        if (!canApplyRemote(meta.id, canApplyDirty) || meta.updatedAt < localUpdatedAt) {
+          return;
+        }
+        const rec: PdfRecord = {
+          ...(existing ?? {}),
+          id: meta.id,
+          name: meta.name,
+          tags: meta.tags,
+          size: meta.size,
+          addedAt: meta.addedAt,
+          pageCount: meta.pageCount,
+          annotations: meta.annotations,
+          outline: meta.outline,
+          updatedAt: meta.updatedAt,
+        };
+        const incoming = blob && blob.size === meta.size ? blob : null;
+        const local = existing?.blob && existing.blob.size === meta.size ? existing.blob : null;
+        if (incoming ?? local) rec.blob = (incoming ?? local)!;
+        else delete rec.blob;
+        store.put(rec);
+        wrote = true;
+      };
     });
     // A blob arrived → re-extract page text lazily elsewhere; clear any tombstone.
-    const t = readPdfTombstones();
-    if (meta.id in t) {
-      delete t[meta.id];
-      writePdfTombstones(t);
+    if (applied) {
+      const t = readPdfTombstones();
+      if (meta.id in t) {
+        delete t[meta.id];
+        writePdfTombstones(t);
+      }
     }
+    return applied;
   },
 
   /** Apply a remote delete without re-flagging dirty. */
-  async applyRemoteDelete(id: string, at: number): Promise<void> {
+  async applyRemoteDelete(
+    id: string,
+    at: number,
+    canApplyDirty?: CanApplyDirty,
+  ): Promise<boolean> {
     const db = await openDb();
-    await new Promise<void>((resolve, reject) => {
-      const r = tx(db, "readwrite").delete(id);
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
+    const applied = await new Promise<boolean>((resolve, reject) => {
+      const transaction = db.transaction(STORE, "readwrite");
+      const store = transaction.objectStore(STORE);
+      let removed = false;
+      transaction.oncomplete = () => resolve(removed);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+      const read = store.get(id);
+      read.onsuccess = () => {
+        const existing = read.result as PdfRecord | undefined;
+        const tombstone = readPdfTombstones()[id] ?? -Infinity;
+        const localUpdatedAt = existing?.updatedAt ?? existing?.addedAt ?? tombstone;
+        if (!canApplyRemote(id, canApplyDirty) || at < localUpdatedAt) {
+          return;
+        }
+        store.delete(id);
+        removed = true;
+      };
     });
-    const t = readPdfTombstones();
-    t[id] = at;
-    writePdfTombstones(t);
+    if (applied) {
+      const t = readPdfTombstones();
+      t[id] = at;
+      writePdfTombstones(t);
+    }
+    return applied;
   },
 };
 

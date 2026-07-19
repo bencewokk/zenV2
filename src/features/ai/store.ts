@@ -4,13 +4,14 @@ import { deepseek, streamChatWithTools, chatOnce, type AssistantReply, type Usag
 import { TOOL_DEFS, runTool, isReadTool, isAutoTool, isToolAvailable, studyModeActive, describeToolCall, parseToolArgs } from "@/services/ai/tools";
 import { policyFor } from "@/services/ai/toolPolicy";
 import { loadSettings } from "@/services/ai/settings";
-import { memoryContext, recordActivity, recall, formatRecall } from "@/services/memory";
+import { memoryContext, recordActivity, recallProgressive, formatRecall, type ProgressiveRecall, type RecallHit } from "@/services/memory";
 import { useNotes } from "@/features/notes/store";
 import { useStatus } from "@/shared/stores/status";
 import { useAiAccess, availableModels, MODEL_ID, type AiModel } from "@/features/ai/access";
 import { notify } from "@/shared/ui/notify";
 import { markBlobDirty } from "@/services/sync/cursor";
 import { ensureSourcesLoaded, searchConnectedSources } from "@/services/sources/store";
+import type { ConnectedSource } from "@/services/sources/types";
 
 /** Visual tone for a tool-activity turn (drives the chip's dot colour). */
 export type ToolTone = "read" | "run" | "done" | "error" | "info" | "blocked";
@@ -28,6 +29,8 @@ export interface ChatTurn {
 /** A mutating tool call the assistant suggests; the user runs or dismisses it. */
 export interface Proposal {
   id: string;
+  /** Conversation that owns this proposal and any eventual tool result. */
+  conversationId: string;
   name: string;
   args: Record<string, unknown>;
   title: string;
@@ -53,15 +56,23 @@ export interface Conversation {
   completionTokens?: number;
 }
 
+function cancelledRequestError(): Error {
+  return Object.assign(new Error("AI request cancelled"), { name: "AbortError" });
+}
+
 /** One retry on a thrown tool call, then surface the failure as a tool result
- *  (instead of aborting the whole agent loop) so the model can adapt. */
-async function runToolSafe(name: string, args: Record<string, unknown>): Promise<string> {
+ *  (instead of aborting the whole agent loop) so the model can adapt. The guard
+ *  prevents a retry from being newly dispatched after this request loses ownership. */
+async function runToolSafe(name: string, args: Record<string, unknown>, canContinue = () => true): Promise<string> {
+  if (!canContinue()) throw cancelledRequestError();
   try {
     return await runTool(name, args);
   } catch {
+    if (!canContinue()) throw cancelledRequestError();
     try {
       return await runTool(name, args);
     } catch (e2) {
+      if (!canContinue()) throw cancelledRequestError();
       return `Tool "${name}" failed twice: ${(e2 as Error).message || "unknown error"}. Try a different approach or ask the user.`;
     }
   }
@@ -69,6 +80,7 @@ async function runToolSafe(name: string, args: Record<string, unknown>): Promise
 
 const CONV_KEY = "zen.ai.conversations.v1";
 const OPEN_KEY = "zen.ai.open.v1";
+const CONTEXT_PREFLIGHT_MS = 120;
 
 // Guard against oversized requests (e.g. after reading a big PDF) — a too-large
 // body fails the fetch outright ("failed to fetch"). Cap each tool result and the
@@ -133,13 +145,30 @@ function describeAIError(e: unknown): string {
   return msg || "AI request failed";
 }
 
+/** Let cached retrieval enrich a request, but never let a cold embedding model
+ * hold the provider request hostage. Timed-out work keeps running off-thread so
+ * the index is warm for the next turn. */
+async function withinLatencyBudget<T>(work: Promise<T>, fallback: T, waitMs = CONTEXT_PREFLIGHT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), waitMs); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function readOpen(): boolean {
   try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; }
 }
 
 const MODEL_PREF_KEY = "zen.ai.model-pref.v1";
 function readModelPref(): AiModel {
-  try { return localStorage.getItem(MODEL_PREF_KEY) === "flash" ? "flash" : "pro"; } catch { return "pro"; }
+  // Missing or unrecognised preferences default to Flash for lower latency;
+  // an explicit saved Pro choice remains Pro.
+  try { return localStorage.getItem(MODEL_PREF_KEY) === "pro" ? "pro" : "flash"; } catch { return "flash"; }
 }
 
 /** The DeepSeek model id to request: the user's preference, clamped to what their
@@ -409,15 +438,43 @@ export const useAI = create<AIState>((set, get) => {
    * → repeat. Shared by send() and the post-proposal continuation. Owns the
    * streaming/usage/status lifecycle (resets `streaming` in finally).
    */
-  async function runAgent(messages: AIMessage[], controller: AbortController): Promise<void> {
+  async function runAgent(messages: AIMessage[], controller: AbortController, conversationId: string): Promise<void> {
+    const ownsRequest = () =>
+      !controller.signal.aborted &&
+      get().controller === controller &&
+      get().activeId === conversationId;
+    const requireOwnership = () => {
+      if (!ownsRequest()) throw cancelledRequestError();
+    };
+    const setOwned = (update: (state: AIState) => Partial<AIState>) => {
+      set((state) => {
+        if (
+          controller.signal.aborted ||
+          state.controller !== controller ||
+          state.activeId !== conversationId
+        ) return {};
+        return update(state);
+      });
+    };
+    if (!ownsRequest()) return;
     const maxToolSteps = Math.max(1, loadSettings().maxToolSteps);
     const usage: Usage = { promptTokens: 0, completionTokens: 0 };
     // Cache read-tool results for this turn keyed by name+args — identical reads
     // (across steps) reuse the result instead of re-running, saving the depth budget.
     const readCache = new Map<string, Promise<string>>();
     const readKey = (name: string, args: Record<string, unknown>) => `${name}:${JSON.stringify(args)}`;
+    const startRead = (key: string, name: string, args: Record<string, unknown>) => {
+      requireOwnership();
+      const pending = runToolSafe(name, args, ownsRequest);
+      // Reads are prefetched concurrently, so Stop may exit the loop before every
+      // promise is awaited. Observe rejection immediately to avoid an unhandled
+      // AbortError while retaining the original rejecting promise for its consumer.
+      void pending.catch(() => {});
+      readCache.set(key, pending);
+    };
     try {
       for (let step = 0; step < maxToolSteps; step++) {
+        requireOwnership();
         // Recomputed each step so entering Deep Work mid-turn (open_view) makes the
         // study tools + instructions available on the very next step. Skips disabled
         // tools AND tools whose integration isn't connected (Google, Canvas) — their
@@ -428,7 +485,7 @@ export const useAI = create<AIState>((set, get) => {
           const name = d.function.name;
           return policyFor(name) !== "off" && isToolAvailable(name);
         });
-        set((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
+        setOwned((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
         const turnIndex = get().turns.length - 1;
         let acc = "";
         boundContext(messages);
@@ -437,13 +494,20 @@ export const useAI = create<AIState>((set, get) => {
         // Flush streamed text to the store at most every ~40ms — a per-delta set()
         // re-renders the whole chat for every SSE chunk, which visibly lags long replies.
         let lastFlush = 0;
-        const flushAcc = () => set((s) => {
-          const t = [...s.turns];
-          if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: acc };
-          return { turns: t };
-        });
+        const flushAcc = () => {
+          // Stop clears controller ownership synchronously. Never let a late stream
+          // chunk from the cancelled request overwrite the current conversation.
+          if (!ownsRequest()) return;
+          setOwned((s) => {
+            const t = [...s.turns];
+            if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: acc };
+            return { turns: t };
+          });
+        };
         for (;;) {
+          requireOwnership();
           const next = await gen.next();
+          requireOwnership();
           if (next.done) {
             reply = next.value;
             if (reply.usage) {
@@ -461,21 +525,26 @@ export const useAI = create<AIState>((set, get) => {
           }
         }
 
+        requireOwnership();
         if (reply.tool_calls?.length) {
-          if (!acc.trim()) set((s) => ({ turns: s.turns.filter((_, i) => i !== turnIndex) }));
+          if (!acc.trim()) setOwned((s) => ({ turns: s.turns.filter((_, i) => i !== turnIndex) }));
           messages.push({ role: "assistant", content: reply.content ?? "", tool_calls: reply.tool_calls });
 
           // Kick off this step's reads concurrently, deduped against the turn cache.
+          // A dispatched integration call cannot always be undone; ownership checks
+          // below discard its late result and prevent any subsequent call/retry.
           for (const call of reply.tool_calls) {
-            const n = call.function.name;
-            if (n !== "ask_user" && isReadTool(n)) {
-              const args = parseToolArgs(call.function.arguments);
-              const key = readKey(n, args);
-              if (!readCache.has(key)) readCache.set(key, runToolSafe(n, args));
-            }
+            requireOwnership();
+              const n = call.function.name;
+              if (n !== "ask_user" && isReadTool(n)) {
+                const args = parseToolArgs(call.function.arguments);
+                const key = readKey(n, args);
+                if (!readCache.has(key)) startRead(key, n, args);
+              }
           }
 
           for (const call of reply.tool_calls) {
+            requireOwnership();
             const name = call.function.name;
             const args = parseToolArgs(call.function.arguments);
 
@@ -490,67 +559,79 @@ export const useAI = create<AIState>((set, get) => {
               } else {
                 const choice = await new Promise<string>((resolve) => {
                   questionResolver = resolve;
-                  set({ pendingQuestion: { question: question || "Pick one:", options: options.length ? options : ["OK"] } });
+                  setOwned(() => ({ pendingQuestion: { question: question || "Pick one:", options: options.length ? options : ["OK"] } }));
                 });
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${question || "Pick one:"} → ${choice}`, tone: "info" }] }));
+                requireOwnership();
+                setOwned((s) => ({ turns: [...s.turns, { role: "tool", content: `${question || "Pick one:"} → ${choice}`, tone: "info" }] }));
                 result = `The user chose: ${choice}`;
               }
             } else if (isReadTool(name)) {
               const desc = describeToolCall(name, args);
               let idx = 0;
-              set((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "read" }] }; });
+              setOwned((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "read" }] }; });
               const key = readKey(name, args);
-              if (!readCache.has(key)) readCache.set(key, runToolSafe(name, args));
+              if (!readCache.has(key)) startRead(key, name, args);
               result = await readCache.get(key)!;
-              set((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "read", result: summarizeResult(result) }));
+              requireOwnership();
+              setOwned((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "read", result: summarizeResult(result) }));
             } else if (isAutoTool(name)) {
               const desc = describeToolCall(name, args);
               let idx = 0;
-              set((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "run" }] }; });
-              result = await runToolSafe(name, args);
-              set((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "done", result: summarizeResult(result) }));
+              setOwned((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "run" }] }; });
+              result = await runToolSafe(name, args, ownsRequest);
+              requireOwnership();
+              setOwned((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "done", result: summarizeResult(result) }));
             } else {
               const policy = policyFor(name);
               const desc = describeToolCall(name, args);
               if (policy === "off") {
-                set((s) => ({ turns: [...s.turns, { role: "tool", content: `${desc.title} (disabled)`, detail: desc.detail, tone: "blocked", result: "Turned off in tool settings" }] }));
+                setOwned((s) => ({ turns: [...s.turns, { role: "tool", content: `${desc.title} (disabled)`, detail: desc.detail, tone: "blocked", result: "Turned off in tool settings" }] }));
                 result = `The user has disabled the "${name}" tool. Do not use it; tell the user it's turned off or find another way.`;
               } else if (policy === "auto") {
                 let idx = 0;
-                set((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "run" }] }; });
-                result = await runToolSafe(name, args);
-                set((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "done", result: summarizeResult(result) }));
+                setOwned((s) => { idx = s.turns.length; return { turns: [...s.turns, { role: "tool", content: desc.title, detail: desc.detail, tone: "run" }] }; });
+                result = await runToolSafe(name, args, ownsRequest);
+                requireOwnership();
+                setOwned((s) => updateTurn(s, idx, { tone: isErrorResult(result) ? "error" : "done", result: summarizeResult(result) }));
               } else {
                 const id = crypto.randomUUID();
-                set((s) => ({ proposals: [...s.proposals, { id, name, args, ...desc, status: "pending" }] }));
+                setOwned((s) => ({ proposals: [...s.proposals, { id, conversationId, name, args, ...desc, status: "pending" }] }));
                 result = `Proposed "${desc.title}: ${desc.detail}" to the user; awaiting their action. Do not assume it ran — you'll be told the outcome once they act.`;
               }
             }
+            requireOwnership();
             messages.push({ role: "tool", tool_call_id: call.id, content: clampToolResult(result) });
           }
           continue;
         }
 
-        set((s) => {
+        requireOwnership();
+        setOwned((s) => {
           const t = [...s.turns];
           if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: reply.content ?? acc };
           return { turns: t };
         });
         break;
       }
-      useStatus.getState().set({ ai: "idle" });
+      if (ownsRequest()) useStatus.getState().set({ ai: "idle" });
     } catch (e) {
       if ((e as Error).name === "AbortError") {
-        useStatus.getState().set({ ai: "idle" });
+        if (get().controller === controller) useStatus.getState().set({ ai: "idle" });
       } else {
-        useStatus.getState().set({ ai: "error" });
-        notify.error(describeAIError(e));
+        if (get().controller === controller) {
+          useStatus.getState().set({ ai: "error" });
+          notify.error(describeAIError(e));
+        }
       }
     } finally {
-      set({ streaming: false, controller: null });
-      if (usage.promptTokens || usage.completionTokens) addUsageToActive(usage);
-      syncActive();
-      void nameConversation(get().activeId);
+      // A stopped request may finish after a newer one has started. Only the
+      // controller that still owns the store may clear or persist its lifecycle.
+      if (get().controller === controller) {
+        set({ streaming: false, controller: null });
+        if (usage.promptTokens || usage.completionTokens) addUsageToConversation(conversationId, usage);
+        syncConversation(conversationId);
+        void nameConversation(conversationId);
+      }
     }
   }
 
@@ -559,9 +640,10 @@ export const useAI = create<AIState>((set, get) => {
    * back to the model and let it continue — use returned ids, take the next step,
    * or confirm. This is what lets a gated tool's result reach the AI at all.
    */
-  async function resumeAfterProposals(): Promise<void> {
+  async function resumeAfterProposals(conversationId: string): Promise<void> {
+    if (get().activeId !== conversationId) return;
     if (get().streaming) return;
-    if (get().proposals.some((p) => p.status === "pending" || p.status === "running")) return;
+    if (get().proposals.some((p) => p.conversationId === conversationId && (p.status === "pending" || p.status === "running"))) return;
     const controller = new AbortController();
     set({ streaming: true, controller });
     useStatus.getState().set({ ai: "busy" });
@@ -573,7 +655,7 @@ export const useAI = create<AIState>((set, get) => {
         "some may have run, some may have been dismissed). Continue accordingly: use any returned ids/results to " +
         "take the next step, or briefly confirm what's done. Do not re-propose an action the user just ran or dismissed.",
     });
-    await runAgent(messages, controller);
+    await runAgent(messages, controller, conversationId);
   }
 
   return {
@@ -617,7 +699,11 @@ export const useAI = create<AIState>((set, get) => {
     if (get().streaming || !userText.trim()) return;
 
     const controller = new AbortController();
+    const conversationId = get().activeId;
     recordActivity(`asked AI: "${userText.slice(0, 80)}"`);
+    // Build before appending the visible turn. Zustand updates synchronously, so
+    // doing this after set() duplicated the newest user message in every payload.
+    const messages = buildMessages(noteContext, userText);
     set((s) => ({
       turns: [...s.turns, { role: "user", content: userText }],
       streaming: true,
@@ -625,18 +711,28 @@ export const useAI = create<AIState>((set, get) => {
     }));
     useStatus.getState().set({ ai: "busy" });
 
-    const messages = buildMessages(noteContext, userText);
-
     // Auto-inject relevant notes from memory (RAG) and connected sources before
     // the model runs, so it has context without needing to call recall itself.
-    // Both lookups are independent — run them concurrently so they don't stack
-    // latency onto time-to-first-token.
-    const [hits, sources] = await Promise.all([
-      recall(userText, useNotes.getState().notes, 5).catch(() => []),
-      ensureSourcesLoaded()
-        .then(() => searchConnectedSources(userText, 5))
-        .catch(() => []),
-    ]);
+    // Both lookups start concurrently. Cached results usually win; on a cold
+    // embedding model we proceed with instant graph/source matches after 120ms.
+    const notes = useNotes.getState().notes;
+    let recall: ProgressiveRecall = { immediate: [], complete: Promise.resolve([]) };
+    let sourcesNow: ConnectedSource[] = [];
+    try { recall = recallProgressive(userText, notes, 5); } catch { /* proceed without memory context */ }
+    try { sourcesNow = searchConnectedSources(userText, 5); } catch { /* proceed without source context */ }
+    let hits: RecallHit[] = recall.immediate;
+    let sources: ConnectedSource[] = sourcesNow;
+    try {
+      [hits, sources] = await withinLatencyBudget(
+        Promise.all([
+          recall.complete.catch(() => recall.immediate),
+          ensureSourcesLoaded()
+            .then(() => searchConnectedSources(userText, 5))
+            .catch(() => sourcesNow),
+        ]),
+        [recall.immediate, sourcesNow],
+      );
+    } catch { /* keep the instant fallbacks */ }
     // Insert just before the final user message (not at index 1): keeping the
     // start of the message list untouched preserves the cached history prefix.
     if (hits.length) {
@@ -653,21 +749,45 @@ export const useAI = create<AIState>((set, get) => {
       ).join("\n"),
     });
 
-    await runAgent(messages, controller);
+    if (!controller.signal.aborted && get().controller === controller && get().activeId === conversationId) {
+      await runAgent(messages, controller, conversationId);
+    }
   },
 
   stop() {
     get().controller?.abort();
     if (questionResolver) { questionResolver("(cancelled)"); questionResolver = null; }
-    set({ streaming: false, pendingQuestion: null });
+    set((state) => ({
+      turns: state.turns.map((turn) => {
+        if (turn.role !== "tool" || turn.result !== undefined) return turn;
+        if (turn.tone === "run") {
+          return {
+            ...turn,
+            tone: "info",
+            result: "Action was already dispatched; completion is unknown. Check its target before retrying.",
+          };
+        }
+        if (turn.tone === "read") {
+          return { ...turn, tone: "info", result: "Stopped before this result returned." };
+        }
+        return turn;
+      }),
+      streaming: false,
+      controller: null,
+      pendingQuestion: null,
+    }));
+    useStatus.getState().set({ ai: "idle" });
+    syncActive();
   },
 
   clear() {
+    if (get().streaming || get().proposals.some((p) => p.status === "running")) return;
     set({ turns: [], proposals: [] });
     syncActive();
   },
 
   newConversation() {
+    if (get().streaming || get().proposals.some((p) => p.status === "running")) return;
     syncActive();
     const conv = newConv();
     set((s) => ({ conversations: [...s.conversations, conv], activeId: conv.id, turns: [], proposals: [] }));
@@ -675,6 +795,7 @@ export const useAI = create<AIState>((set, get) => {
   },
 
   switchConversation(id) {
+    if (get().streaming || get().proposals.some((p) => p.status === "running")) return;
     syncActive();
     const target = get().conversations.find((c) => c.id === id);
     if (!target) return;
@@ -683,6 +804,7 @@ export const useAI = create<AIState>((set, get) => {
   },
 
   deleteConversation(id) {
+    if (get().streaming || get().proposals.some((p) => p.status === "running")) return;
     let { conversations } = get();
     conversations = conversations.filter((c) => c.id !== id);
     if (!conversations.length) conversations = [newConv()];
@@ -694,41 +816,48 @@ export const useAI = create<AIState>((set, get) => {
 
   async runProposal(id) {
     const p = get().proposals.find((x) => x.id === id);
-    if (!p || p.status !== "pending") return;
+    if (!p || p.status !== "pending" || p.conversationId !== get().activeId || get().streaming) return;
+    const conversationId = p.conversationId;
     set((s) => ({ proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "running" } : x)) }));
     try {
       const result = await runTool(p.name, p.args);
       set((s) => ({
         proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "done", result } : x)),
         // Record the outcome so later turns have context.
-        turns: [...s.turns, { role: "tool", content: p.title, detail: p.detail, result: summarizeResult(result), tone: isErrorResult(result) ? "error" : "done" }],
+        ...(s.activeId === conversationId
+          ? { turns: [...s.turns, { role: "tool" as const, content: p.title, detail: p.detail, result: summarizeResult(result), tone: isErrorResult(result) ? "error" as const : "done" as const }] }
+          : { conversations: appendTurnToConversation(s.conversations, conversationId, { role: "tool", content: p.title, detail: p.detail, result: summarizeResult(result), tone: isErrorResult(result) ? "error" : "done" }) }),
       }));
-      syncActive();
+      syncConversation(conversationId);
     } catch (e) {
       const result = (e as Error).message || "failed";
       set((s) => ({
         proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "error", result } : x)),
         // Record the failure inline so the card can leave the bottom of the chat.
-        turns: [...s.turns, { role: "tool", content: p.title, detail: p.detail, result: summarizeResult(result), tone: "error" }],
+        ...(s.activeId === conversationId
+          ? { turns: [...s.turns, { role: "tool" as const, content: p.title, detail: p.detail, result: summarizeResult(result), tone: "error" as const }] }
+          : { conversations: appendTurnToConversation(s.conversations, conversationId, { role: "tool", content: p.title, detail: p.detail, result: summarizeResult(result), tone: "error" }) }),
       }));
-      syncActive();
+      syncConversation(conversationId);
       notify.error(`${p.title} failed: ${result}`);
     }
     // Feed the outcome back to the model so it can take the next step / confirm.
-    await resumeAfterProposals();
+    await resumeAfterProposals(conversationId);
   },
 
   async dismissProposal(id) {
     const p = get().proposals.find((x) => x.id === id);
+    if (!p || p.status !== "pending" || p.conversationId !== get().activeId) return;
+    const conversationId = p.conversationId;
     set((s) => ({
       proposals: s.proposals.map((x) => (x.id === id ? { ...x, status: "dismissed" } : x)),
       // Record the decline so the model knows it was declined.
-      turns: p ? [...s.turns, { role: "tool", content: p.title, detail: p.detail, result: "Dismissed by user", tone: "blocked" }] : s.turns,
+      turns: [...s.turns, { role: "tool", content: p.title, detail: p.detail, result: "Dismissed by user", tone: "blocked" }],
     }));
-    if (p) syncActive();
+    syncConversation(conversationId);
     // Continue once nothing is left pending — so a "ran A, dismissed B" batch still
     // gets a single follow-up where the model reacts to both.
-    await resumeAfterProposals();
+    await resumeAfterProposals(conversationId);
   },
 
   async complete(instruction, text) {
@@ -771,6 +900,14 @@ function persistConversations(conversations: Conversation[], activeId: string): 
 
 export const AI_CONV_KEY = CONV_KEY;
 
+function appendTurnToConversation(conversations: Conversation[], conversationId: string, turn: ChatTurn): Conversation[] {
+  return conversations.map((conversation) =>
+    conversation.id === conversationId
+      ? { ...conversation, turns: [...conversation.turns, turn], updatedAt: Date.now() }
+      : conversation
+  );
+}
+
 /** Re-read persisted conversations into the live store (used by sync apply).
  *  Skipped mid-stream so an inbound merge never disrupts an in-flight reply. */
 export function hydrateAI(): void {
@@ -781,25 +918,31 @@ export function hydrateAI(): void {
   useAI.setState({ conversations, activeId, turns });
 }
 
-/** Add to the active conversation's cumulative token usage. */
-function addUsageToActive(usage: Usage): void {
+/** Attribute usage to the conversation that dispatched the request. */
+function addUsageToConversation(conversationId: string, usage: Usage): void {
   const s = useAI.getState();
   const conversations = s.conversations.map((c) =>
-    c.id === s.activeId
+    c.id === conversationId
       ? { ...c, promptTokens: (c.promptTokens ?? 0) + usage.promptTokens, completionTokens: (c.completionTokens ?? 0) + usage.completionTokens }
       : c
   );
   useAI.setState({ conversations });
 }
 
-/** Fold the live `turns` back into the active conversation and persist. */
-function syncActive(): void {
+/** Fold live turns into their owning conversation (when active), then persist. */
+function syncConversation(conversationId: string): void {
   const s = useAI.getState();
   const conversations = s.conversations.map((c) =>
-    c.id === s.activeId ? { ...c, turns: s.turns, updatedAt: Date.now() } : c
+    c.id === conversationId && s.activeId === conversationId
+      ? { ...c, turns: s.turns, updatedAt: Date.now() }
+      : c
   );
   useAI.setState({ conversations });
   persistConversations(conversations, s.activeId);
+}
+
+function syncActive(): void {
+  syncConversation(useAI.getState().activeId);
 }
 
 /** Have the model name a still-unnamed conversation from its first exchange. */

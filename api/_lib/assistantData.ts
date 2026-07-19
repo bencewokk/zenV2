@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { nextSeq, syncCollection, type SyncRecord } from "./db.js";
+import { nextSeq, syncCollection, withMongoTransaction, type SyncRecord } from "./db.js";
+import { positiveEnvInt } from "./limits.js";
+import { writeSyncDoc } from "./syncWrite.js";
 import type {
   AssistantActionReceipt,
   AssistantAuditEvent,
@@ -72,22 +74,46 @@ export async function writeSyncRecord(
   options: { deleted?: boolean; updatedAt?: number } = {},
 ): Promise<number> {
   const collection = await syncCollection(collectionName);
-  const serverSeq = await nextSeq(userId, 1);
   const updatedAt = options.updatedAt ?? Date.now();
-  await collection.updateOne(
-    { userId, id },
-    {
-      $set: {
-        userId,
-        id,
-        updatedAt,
-        deleted: !!options.deleted,
-        data: options.deleted ? null : data,
-        serverSeq,
-      },
-    },
-    { upsert: true },
-  );
+  const deleted = !!options.deleted;
+  const syncData = deleted ? null : data;
+  const maxRecords = positiveEnvInt("SYNC_MAX_RECORDS_PER_COLLECTION", 25_000);
+  await withMongoTransaction(async (_db, session) => {
+    const existing = await collection.findOne(
+      { userId, id },
+      { projection: { _id: 1 }, session },
+    );
+    if (existing === null) {
+      // Deleting an absent id is idempotent and must not manufacture tombstones
+      // that bypass the collection cap.
+      if (deleted) return true;
+      const currentCount = await collection.countDocuments(
+        { userId },
+        { limit: maxRecords + 1, session },
+      );
+      if (currentCount >= maxRecords) {
+        throw Object.assign(
+          new Error(`sync collection limit reached (${maxRecords})`),
+          { code: "sync_collection_limit", status: 413 },
+        );
+      }
+    }
+    const serverSeq = await nextSeq(userId, 1, session);
+    const won = await writeSyncDoc(
+      collection,
+      userId,
+      { id, updatedAt, deleted, data: syncData },
+      serverSeq,
+      { session, upsert: existing === null },
+    );
+    if (!won) {
+      throw Object.assign(
+        new Error(`Sync conflict: ${collectionName}/${id} changed on another device. Refresh and try again.`),
+        { code: "sync_conflict", status: 409 },
+      );
+    }
+    return true;
+  });
   return updatedAt;
 }
 

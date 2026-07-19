@@ -2,7 +2,15 @@ import { useStatus } from "@/shared/stores/status";
 import { isSignedIn, onAuthChange } from "@/services/google/auth";
 import { loadSyncSettings } from "./settings";
 import { pull, push } from "./client";
-import { getCursor, setCursor, onDirty, resetSyncState } from "./cursor";
+import {
+  getCursor,
+  getDirty,
+  setCursor,
+  onDirty,
+  resetSyncState,
+  snapshotDirtyGenerations,
+  unchangedDirtyIds,
+} from "./cursor";
 import { notesAdapter } from "./adapters/notes";
 import { pdfsAdapter } from "./adapters/pdfs";
 import { assistantCapturesAdapter } from "./adapters/assistantCaptures";
@@ -24,7 +32,7 @@ import { AI_SETTINGS_KEY, AI_SETTINGS_SECRET_FIELDS, hydrateAiSettings } from "@
 import { GOOGLE_SETTINGS_KEY, GOOGLE_SETTINGS_SECRET_FIELDS, hydrateGoogleSettings } from "@/services/google/settings";
 import { CANVAS_SETTINGS_KEY, CANVAS_SETTINGS_SECRET_FIELDS, hydrateCanvasSettings } from "@/services/canvas/settings";
 import { EXTERNAL_CONNECTIONS_KEY, EXTERNAL_CONNECTIONS_SECRET_FIELDS, hydrateExternalConnectionSettings } from "@/services/connections/settings";
-import type { SyncAdapter } from "./types";
+import type { SyncAdapter, WireDoc } from "./types";
 
 /** Registered adapters. Notes sync per-record; the rest are singleton blobs (Part 4). */
 const adapters: SyncAdapter[] = [
@@ -67,22 +75,132 @@ function canSync(): boolean {
 /** Pull then push one adapter, advancing its cursor. Returns false on failure. */
 async function syncAdapter(a: SyncAdapter, onError: (e: unknown) => void): Promise<boolean> {
   try {
-    // Pull (drain pages) so inbound changes land before we push ours.
-    let cursor = getCursor(a.collection);
+    // Pull and drain pages, but hold back records that still have local edits.
+    // Persisting the cursor waits until those conflicts are resolved so any
+    // failed pass can safely replay the same server changes.
+    let pulledCursor = getCursor(a.collection);
+    const deferred = new Map<string, WireDoc>();
     for (;;) {
-      const res = await pull(a.collection, cursor);
-      if (res.docs.length) await a.apply(res.docs);
-      cursor = res.cursor;
-      setCursor(a.collection, cursor);
+      const res = await pull(a.collection, pulledCursor);
+      const dirtyNow = getDirty(a.collection);
+      const ready: WireDoc[] = [];
+      for (const doc of res.docs) {
+        if (dirtyNow.has(doc.id)) deferred.set(doc.id, doc);
+        else ready.push(doc);
+      }
+      if (ready.length) {
+        await a.apply(ready);
+        // An edit can begin while an IndexedDB adapter is awaiting storage. The
+        // adapter leaves that id untouched; move its pulled copy into the same
+        // deferred path used for ids that were already dirty at classification.
+        const dirtyAfterApply = getDirty(a.collection);
+        for (const doc of ready) {
+          if (dirtyAfterApply.has(doc.id)) deferred.set(doc.id, doc);
+        }
+      }
+      pulledCursor = res.cursor;
       if (!res.hasMore) break;
     }
-    // Push local changes.
+
+    // Snapshot before listDirty(): materializing a document may await storage or
+    // a PDF upload, and an edit during that work must survive this sync pass.
+    const generations = snapshotDirtyGenerations(a.collection, getDirty(a.collection));
     const dirty = await a.listDirty();
+    const clearCandidates = new Set<string>();
+    const winnerDocs = new Map<string, WireDoc>();
+    const deferredThatMustStayUnchanged = new Set<string>();
+    let canCommitPullCursor = true;
+    let resetPullCursor = false;
+
     if (dirty.length) {
+      const pushedIds = new Set(dirty.map((doc) => doc.id));
       const res = await push(a.collection, dirty);
-      a.markPushed([...res.accepted, ...res.rejected]); // rejected = server already newer
-      if (res.cursor > getCursor(a.collection)) setCursor(a.collection, res.cursor);
+      const accepted = new Set(res.accepted.filter((id) => pushedIds.has(id)));
+      const rejected = new Set(res.rejected.filter((id) => pushedIds.has(id)));
+      const unchangedAfterPush = new Set(
+        unchangedDirtyIds(a.collection, generations, pushedIds),
+      );
+      const conflicts = new Map<string, WireDoc>();
+      for (const doc of res.conflicts ?? []) {
+        if (rejected.has(doc.id)) conflicts.set(doc.id, doc);
+      }
+
+      // Accepted local candidates are now authoritative, so any older pulled
+      // version for the same id can be discarded even if another edit followed.
+      for (const id of accepted) {
+        clearCandidates.add(id);
+        deferred.delete(id);
+      }
+
+      for (const id of rejected) {
+        const deferredWinner = deferred.get(id);
+        deferred.delete(id);
+        const conflict = conflicts.get(id);
+
+        if (!unchangedAfterPush.has(id)) {
+          // Never apply a server winner over an edit made during materialization
+          // or the request. Replaying a deferred pull on the next pass is safe.
+          if (deferredWinner) canCommitPullCursor = false;
+          if (!conflict && !deferredWinner) resetPullCursor = true;
+          continue;
+        }
+
+        const winner = conflict ?? deferredWinner;
+        if (winner) {
+          winnerDocs.set(id, winner);
+          clearCandidates.add(id);
+          if (deferredWinner) deferredThatMustStayUnchanged.add(id);
+        } else {
+          // Older servers do not return conflict documents. Rewind so a winner
+          // whose serverSeq is behind our cursor is pulled on the next pass.
+          resetPullCursor = true;
+        }
+      }
+
+      // A malformed/older response that omits an outcome cannot resolve a
+      // deferred pull. Leave the cursor untouched so it replays.
+      for (const id of pushedIds) {
+        if (!accepted.has(id) && !rejected.has(id) && deferred.delete(id)) {
+          canCommitPullCursor = false;
+        }
+      }
     }
+
+    // A dirty marker can occasionally outlive its materialized record. If there
+    // is a pulled server copy and no POST candidate, it is the only usable value.
+    const dirtyAfterPush = getDirty(a.collection);
+    const unchangedDeferred = new Set(
+      unchangedDirtyIds(a.collection, generations, deferred.keys()),
+    );
+    for (const [id, doc] of deferred) {
+      if (!dirtyAfterPush.has(id)) {
+        winnerDocs.set(id, doc);
+      } else if (unchangedDeferred.has(id)) {
+        winnerDocs.set(id, doc);
+        clearCandidates.add(id);
+        deferredThatMustStayUnchanged.add(id);
+      } else {
+        canCommitPullCursor = false;
+      }
+    }
+
+    if (winnerDocs.size) {
+      await a.apply([...winnerDocs.values()], {
+        canApplyDirty: (id) => (
+          unchangedDirtyIds(a.collection, generations, [id]).length === 1
+        ),
+      });
+    }
+
+    const resolvedIds = unchangedDirtyIds(a.collection, generations, clearCandidates);
+    if (resolvedIds.length) a.markPushed(resolvedIds);
+    const resolved = new Set(resolvedIds);
+    for (const id of deferredThatMustStayUnchanged) {
+      if (!resolved.has(id) && getDirty(a.collection).has(id)) canCommitPullCursor = false;
+    }
+
+    if (resetPullCursor) setCursor(a.collection, 0);
+    else if (canCommitPullCursor) setCursor(a.collection, pulledCursor);
     return true;
   } catch (e) {
     console.warn(`[sync] ${a.collection} failed`, e);

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Collection, UpdateFilter } from "mongodb";
 import { getDb } from "./db.js";
 import {
   assistantContext,
@@ -66,14 +67,26 @@ type ToolDefinition = {
 };
 
 type UndoAction = { kind: string; payload: Record<string, unknown> };
+type ActionState = "running" | "completed" | "completion_unknown";
+type UndoState = "running" | "completed" | "completion_unknown";
 type ActionRecord = {
   userId: string;
   idempotencyKey: string;
   tool: string;
   args: Record<string, unknown>;
-  result: ToolResult;
+  state?: ActionState;
+  claimId?: string;
+  result?: ToolResult;
   receipt: AssistantActionReceipt;
   undo?: UndoAction;
+  undoState?: UndoState;
+  undoClaimId?: string;
+  undoResult?: ToolResult;
+  startedAt?: Date;
+  completedAt?: Date;
+  undoStartedAt?: Date;
+  undoCompletedAt?: Date;
+  completionError?: string;
   createdAt: Date;
 };
 
@@ -174,13 +187,32 @@ function list(args: Record<string, unknown>, key: string): string[] | undefined 
   return Array.isArray(args[key]) ? (args[key] as unknown[]).map(String).filter(Boolean) : undefined;
 }
 
-async function actionsCollection() {
-  const collection = (await getDb()).collection<ActionRecord>("assistant_actions");
+let actionIndexesPromise: Promise<void> | null = null;
+
+async function ensureActionIndexes(collection: Collection<ActionRecord>): Promise<void> {
+  let uniqueFailure: { error: unknown } | undefined;
   await Promise.all([
-    collection.createIndex({ userId: 1, idempotencyKey: 1 }, { unique: true }).catch(() => {}),
-    collection.createIndex({ userId: 1, "receipt.id": 1 }, { unique: true }).catch(() => {}),
+    // These indexes are the execution and receipt claim guards. Running without
+    // either one would make an external side effect possible more than once.
+    collection.createIndex({ userId: 1, idempotencyKey: 1 }, { unique: true })
+      .catch((error: unknown) => { uniqueFailure = { error }; }),
+    collection.createIndex({ userId: 1, "receipt.id": 1 }, { unique: true })
+      .catch((error: unknown) => { uniqueFailure ??= { error }; }),
+    // Retention affects storage only, so it must not take action execution down.
     collection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 }).catch(() => {}),
   ]);
+  if (uniqueFailure) throw uniqueFailure.error;
+}
+
+export async function actionsCollection() {
+  const collection = (await getDb()).collection<ActionRecord>("assistant_actions");
+  const indexes = actionIndexesPromise ??= ensureActionIndexes(collection);
+  try {
+    await indexes;
+  } catch (error) {
+    if (actionIndexesPromise === indexes) actionIndexesPromise = null;
+    throw error;
+  }
   return collection;
 }
 
@@ -189,57 +221,167 @@ function idempotencyKey(ctx: ToolExecutionContext, name: string, args: Record<st
   return `${ctx.requestId}:${name}:${digest}`;
 }
 
-function publicReceipt(toolName: string, summary: string, undoable: boolean, status: AssistantActionReceipt["status"] = "done"): AssistantActionReceipt {
+function publicReceipt(
+  toolName: string,
+  summary: string,
+  undoable: boolean,
+  status: AssistantActionReceipt["status"] = "done",
+  identity?: Pick<AssistantActionReceipt, "id" | "createdAt">,
+): AssistantActionReceipt {
   return {
-    id: randomUUID(),
+    id: identity?.id ?? randomUUID(),
     tool: toolName,
     label: summary,
     status,
-    createdAt: new Date().toISOString(),
+    createdAt: identity?.createdAt ?? new Date().toISOString(),
     undoable,
     result: summary,
   };
 }
 
+const ACTION_COMPLETION_UNKNOWN = "This action is already running or its completion is unknown. Zen will not run it again automatically.";
+const UNDO_COMPLETION_UNKNOWN = "This undo is already running or its completion is unknown. Zen will not run it again automatically.";
+
+function completionUnknown(prefix: string, error?: unknown): ToolResult {
+  const detail = error instanceof Error && error.message ? ` (${error.message})` : "";
+  return { ok: false, summary: `${prefix}${detail}` };
+}
+
+async function markActionCompletionUnknown(
+  collection: Collection<ActionRecord>,
+  record: ActionRecord,
+  claimId: string,
+  error?: unknown,
+): Promise<ToolResult> {
+  const result = completionUnknown(ACTION_COMPLETION_UNKNOWN, error);
+  try {
+    await collection.updateOne(
+      { userId: record.userId, idempotencyKey: record.idempotencyKey, state: "running", claimId },
+      {
+        $set: {
+          state: "completion_unknown",
+          result,
+          completionError: error instanceof Error ? error.message : String(error ?? "execution did not finalize"),
+          completedAt: new Date(),
+        },
+        $unset: { claimId: "" },
+      },
+    );
+  } catch {
+    // Leaving the durable claim in "running" is also fail-closed: a retry will
+    // report unknown completion instead of repeating the side effect.
+  }
+  return result;
+}
+
+async function markUndoCompletionUnknown(
+  collection: Collection<ActionRecord>,
+  record: ActionRecord,
+  undoClaimId: string,
+  error?: unknown,
+): Promise<ToolResult> {
+  const result = completionUnknown(UNDO_COMPLETION_UNKNOWN, error);
+  try {
+    await collection.updateOne(
+      {
+        userId: record.userId,
+        idempotencyKey: record.idempotencyKey,
+        undoState: "running",
+        undoClaimId,
+      },
+      {
+        $set: { undoState: "completion_unknown", undoResult: result, undoCompletedAt: new Date() },
+        $unset: { undoClaimId: "" },
+      },
+    );
+  } catch {
+    // As above, a stranded running claim deliberately blocks automatic retry.
+  }
+  return result;
+}
+
 async function undoAction(ctx: ToolExecutionContext, actionId: string): Promise<ToolResult> {
   const collection = await actionsCollection();
-  const record = await collection.findOne({ userId: ctx.userId, "receipt.id": actionId });
-  if (!record) return { ok: false, summary: "Action receipt not found." };
-  if (!record.undo || !record.receipt.undoable) return { ok: false, summary: "That action cannot be undone." };
-  if (record.receipt.status === "undone") return { ok: true, summary: "That action was already undone.", receipt: record.receipt };
+  const undoClaimId = randomUUID();
+  const record = await collection.findOneAndUpdate(
+    {
+      userId: ctx.userId,
+      "receipt.id": actionId,
+      undo: { $exists: true },
+      "receipt.undoable": true,
+      "receipt.status": { $ne: "undone" },
+      undoState: { $exists: false },
+    },
+    { $set: { undoState: "running", undoClaimId, undoStartedAt: new Date() } },
+    { returnDocument: "after" },
+  );
 
-  const payload = record.undo.payload;
+  if (!record) {
+    const existing = await collection.findOne({ userId: ctx.userId, "receipt.id": actionId });
+    if (!existing) return { ok: false, summary: "Action receipt not found." };
+    if (!existing.undo || !existing.receipt.undoable) return { ok: false, summary: "That action cannot be undone." };
+    if (existing.receipt.status === "undone" || existing.undoState === "completed") {
+      return { ok: true, summary: "That action was already undone.", receipt: existing.receipt };
+    }
+    if (existing.undoResult) return existing.undoResult;
+    return completionUnknown(UNDO_COMPLETION_UNKNOWN);
+  }
+
+  const payload = record.undo!.payload;
   const token = ctx.googleAccessToken ?? "";
-  switch (record.undo.kind) {
-    case "gmail_untrash": await gmailUntrash(token, String(payload.id)); break;
-    case "gmail_inbox": await gmailModify(token, String(payload.id), { addLabelIds: ["INBOX"] }); break;
-    case "gmail_read": await gmailModify(token, String(payload.id), bool(payload, "read") ? { removeLabelIds: ["UNREAD"] } : { addLabelIds: ["UNREAD"] }); break;
-    case "gmail_label": await gmailApplyLabel(token, String(payload.id), String(payload.label), bool(payload, "remove")); break;
-    case "calendar_delete": await calendarDelete(token, String(payload.id)); break;
-    case "calendar_restore": {
-      const event = payload.event as CalendarItem;
-      await calendarCreate(token, { summary: event.summary, startISO: event.start, endISO: event.end, location: event.location, description: event.description, attendees: event.attendees, recurrence: event.recurrence, timeZone: event.timeZone, allowConflict: true });
-      break;
+  try {
+    switch (record.undo!.kind) {
+      case "gmail_untrash": await gmailUntrash(token, String(payload.id)); break;
+      case "gmail_inbox": await gmailModify(token, String(payload.id), { addLabelIds: ["INBOX"] }); break;
+      case "gmail_read": await gmailModify(token, String(payload.id), bool(payload, "read") ? { removeLabelIds: ["UNREAD"] } : { addLabelIds: ["UNREAD"] }); break;
+      case "gmail_label": await gmailApplyLabel(token, String(payload.id), String(payload.label), bool(payload, "remove")); break;
+      case "calendar_delete": await calendarDelete(token, String(payload.id)); break;
+      case "calendar_restore": {
+        const event = payload.event as CalendarItem;
+        await calendarCreate(token, { summary: event.summary, startISO: event.start, endISO: event.end, location: event.location, description: event.description, attendees: event.attendees, recurrence: event.recurrence, timeZone: event.timeZone, allowConflict: true });
+        break;
+      }
+      case "calendar_update": {
+        const event = payload.event as CalendarItem;
+        await calendarUpdate(token, event.id, { summary: event.summary, startISO: event.start, endISO: event.end, location: event.location, description: event.description, attendees: event.attendees, recurrence: event.recurrence, timeZone: event.timeZone });
+        break;
+      }
+      case "note_delete": await deleteNote(ctx.userId, String(payload.id)); break;
+      case "note_restore": await updateNote(ctx.userId, String(payload.id), { title: String(payload.title), content: String(payload.content) }); break;
+      case "memory_restore": await restoreMemory(ctx.userId, String(payload.id), payload.previous as never); break;
+      case "task_delete": await deleteTask(ctx.userId, String(payload.id)); break;
+      case "task_restore": await writeSyncRecord("assistantTasks", ctx.userId, String(payload.id), payload.task); break;
+      case "routine_delete": await deleteRoutine(ctx.userId, String(payload.id)); break;
+      case "routine_restore": await writeSyncRecord("assistantRoutines", ctx.userId, String(payload.id), payload.routine); break;
+      default: throw new Error("Zen does not know how to undo that action.");
     }
-    case "calendar_update": {
-      const event = payload.event as CalendarItem;
-      await calendarUpdate(token, event.id, { summary: event.summary, startISO: event.start, endISO: event.end, location: event.location, description: event.description, attendees: event.attendees, recurrence: event.recurrence, timeZone: event.timeZone });
-      break;
-    }
-    case "note_delete": await deleteNote(ctx.userId, String(payload.id)); break;
-    case "note_restore": await updateNote(ctx.userId, String(payload.id), { title: String(payload.title), content: String(payload.content) }); break;
-    case "memory_restore": await restoreMemory(ctx.userId, String(payload.id), payload.previous as never); break;
-    case "task_delete": await deleteTask(ctx.userId, String(payload.id)); break;
-    case "task_restore": await writeSyncRecord("assistantTasks", ctx.userId, String(payload.id), payload.task); break;
-    case "routine_delete": await deleteRoutine(ctx.userId, String(payload.id)); break;
-    case "routine_restore": await writeSyncRecord("assistantRoutines", ctx.userId, String(payload.id), payload.routine); break;
-    default: return { ok: false, summary: "Zen does not know how to undo that action." };
+  } catch (error) {
+    return markUndoCompletionUnknown(collection, record, undoClaimId, error);
   }
 
   const receipt = { ...record.receipt, status: "undone" as const, label: `Undid: ${record.receipt.label}` };
-  await collection.updateOne({ userId: ctx.userId, idempotencyKey: record.idempotencyKey }, { $set: { receipt } });
-  await persistReceipt(ctx.userId, receipt);
-  return { ok: true, summary: receipt.label, receipt };
+  const result: ToolResult = { ok: true, summary: receipt.label, receipt };
+  try {
+    const finalized = await collection.updateOne(
+      {
+        userId: record.userId,
+        idempotencyKey: record.idempotencyKey,
+        undoState: "running",
+        undoClaimId,
+      },
+      {
+        $set: { receipt, undoState: "completed", undoResult: result, undoCompletedAt: new Date() },
+        $unset: { undoClaimId: "" },
+      },
+    );
+    if (finalized.matchedCount !== 1) return markUndoCompletionUnknown(collection, record, undoClaimId);
+  } catch (error) {
+    return markUndoCompletionUnknown(collection, record, undoClaimId, error);
+  }
+  // The durable action record is authoritative; the synced receipt is a
+  // secondary projection and must not turn a completed undo into a retry.
+  await persistReceipt(ctx.userId, receipt).catch(() => {});
+  return result;
 }
 
 async function runRaw(name: string, args: Record<string, unknown>, ctx: ToolExecutionContext): Promise<{ result: ToolResult; undo?: UndoAction }> {
@@ -411,29 +553,100 @@ export async function executeAssistantTool(call: ToolCall, ctx: ToolExecutionCon
   }
 
   const key = idempotencyKey(ctx, name, args);
-  if (definition.write && name !== "action_undo") {
-    const existing = await (await actionsCollection()).findOne({ userId: ctx.userId, idempotencyKey: key });
-    if (existing) {
-      ctx.receipts.push(existing.receipt);
-      ctx.audit.push({ type: existing.result.ok ? "tool_write" : "error", label: `${existing.receipt.label} (already applied)` });
-      ctx.emit?.({ type: "tool_result", tool: name, label: existing.receipt.label, ok: existing.result.ok });
-      return existing.result;
-    }
-  }
-
+  let actionClaim: { collection: Collection<ActionRecord>; record: ActionRecord; claimId: string } | undefined;
   try {
+    if (definition.write && name !== "action_undo") {
+      const collection = await actionsCollection();
+      const claimId = randomUUID();
+      const now = new Date();
+      // A provisional receipt gives every running claim a distinct value for
+      // the required receipt-id unique index. It is never projected to users.
+      const receipt = publicReceipt(name, `Pending: ${label}`, false, "error");
+      let record: ActionRecord | null;
+      try {
+        record = await collection.findOneAndUpdate(
+          { userId: ctx.userId, idempotencyKey: key },
+          {
+            $setOnInsert: {
+              userId: ctx.userId,
+              idempotencyKey: key,
+              tool: name,
+              args,
+              state: "running",
+              claimId,
+              receipt,
+              createdAt: now,
+              startedAt: now,
+            },
+          },
+          { upsert: true, returnDocument: "after" },
+        );
+      } catch (error) {
+        if (Number((error as { code?: number }).code) !== 11000) throw error;
+        // A simultaneous exact-key upsert can lose at the unique index. Read
+        // the winner and follow the same replay/unknown-completion path.
+        record = await collection.findOne({ userId: ctx.userId, idempotencyKey: key });
+      }
+      if (!record) throw new Error("Could not establish a durable action claim.");
+
+      if (record.claimId !== claimId) {
+        const replayable = record.state === "completed" || (!record.state && !!record.result);
+        if (replayable && record.result) {
+          ctx.receipts.push(record.result.receipt ?? record.receipt);
+          ctx.audit.push({ type: record.result.ok ? "tool_write" : "error", label: `${record.receipt.label} (already applied)` });
+          ctx.emit?.({ type: "tool_result", tool: name, label: record.receipt.label, ok: record.result.ok });
+          return record.result;
+        }
+        const pending = record.result ?? completionUnknown(ACTION_COMPLETION_UNKNOWN);
+        ctx.audit.push({ type: "error", label: pending.summary });
+        ctx.emit?.({ type: "tool_result", tool: name, label: pending.summary, ok: false });
+        return pending;
+      }
+      actionClaim = { collection, record, claimId };
+    }
+
     const raw = await runRaw(name, args, ctx);
     let result = raw.result;
-    if (definition.write && name !== "action_undo") {
-      const receipt = publicReceipt(name, result.summary, !!raw.undo, result.ok ? "done" : "error");
-      result = { ...result, receipt };
-      await (await actionsCollection()).updateOne(
-        { userId: ctx.userId, idempotencyKey: key },
-        { $setOnInsert: { userId: ctx.userId, idempotencyKey: key, tool: name, args, result, receipt, undo: raw.undo, createdAt: new Date() } },
-        { upsert: true },
+    if (actionClaim) {
+      const receipt = publicReceipt(
+        name,
+        result.summary,
+        !!raw.undo,
+        result.ok ? "done" : "error",
+        actionClaim.record.receipt,
       );
-      await persistReceipt(ctx.userId, receipt);
-      ctx.receipts.push(receipt);
+      result = { ...result, receipt };
+      const completedAt = new Date();
+      const update: UpdateFilter<ActionRecord> = raw.undo
+        ? {
+          $set: { state: "completed" as const, result, receipt, undo: raw.undo, completedAt },
+          $unset: { claimId: "", completionError: "" },
+        }
+        : {
+          $set: { state: "completed" as const, result, receipt, completedAt },
+          $unset: { claimId: "", completionError: "", undo: "" },
+        };
+      const finalized = await actionClaim.collection.updateOne(
+        {
+          userId: ctx.userId,
+          idempotencyKey: key,
+          state: "running",
+          claimId: actionClaim.claimId,
+        },
+        update,
+      );
+      if (finalized.matchedCount !== 1) {
+        result = await markActionCompletionUnknown(
+          actionClaim.collection,
+          actionClaim.record,
+          actionClaim.claimId,
+        );
+      } else {
+        // The action record is the idempotency authority. Receipt sync is a
+        // best-effort projection and cannot make the action safe to repeat.
+        await persistReceipt(ctx.userId, receipt).catch(() => {});
+        ctx.receipts.push(receipt);
+      }
     } else if (result.receipt) {
       ctx.receipts.push(result.receipt);
     }
@@ -441,10 +654,12 @@ export async function executeAssistantTool(call: ToolCall, ctx: ToolExecutionCon
     ctx.emit?.({ type: "tool_result", tool: name, label: result.summary, ok: result.ok });
     return result;
   } catch (error) {
-    const summary = error instanceof Error ? error.message : `Tool ${name} failed`;
-    ctx.audit.push({ type: "error", label: summary });
-    ctx.emit?.({ type: "tool_result", tool: name, label: summary, ok: false });
-    return { ok: false, summary };
+    const result = actionClaim
+      ? await markActionCompletionUnknown(actionClaim.collection, actionClaim.record, actionClaim.claimId, error)
+      : { ok: false, summary: error instanceof Error ? error.message : `Tool ${name} failed` };
+    ctx.audit.push({ type: "error", label: result.summary });
+    ctx.emit?.({ type: "tool_result", tool: name, label: result.summary, ok: false });
+    return result;
   }
 }
 

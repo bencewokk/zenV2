@@ -1,5 +1,5 @@
 import type { Note } from "@/shared/lib/types";
-import { markDirty } from "@/services/sync/cursor";
+import { getDirty, markDirty } from "@/services/sync/cursor";
 
 /**
  * Storage interface — UI never talks to a concrete backend.
@@ -21,6 +21,17 @@ export interface NoteStore {
 const KEY = "zen.notes.v1";
 const TOMB_KEY = "zen.notes.tombstones.v1";
 const COLLECTION = "notes";
+type CanApplyDirty = (id: string) => boolean;
+type CanApplyClean = (id: string) => boolean;
+
+function canApplyRemote(
+  id: string,
+  canApplyDirty?: CanApplyDirty,
+  canApplyClean?: CanApplyClean,
+): boolean {
+  if (canApplyClean?.(id) === false) return false;
+  return !getDirty(COLLECTION).has(id) || canApplyDirty?.(id) === true;
+}
 
 const DB_NAME = "zen-notes";
 const STORE = "notes";
@@ -117,6 +128,10 @@ export const localStore: NoteStore = {
     });
   },
   async put(note) {
+    // Signal before awaiting IndexedDB so a concurrent pull cannot classify this
+    // in-flight local edit as clean. Mark again after success so sync materialized
+    // during the write cannot clear a stale candidate.
+    markDirty(COLLECTION, note.id);
     const db = await database();
     await new Promise<void>((resolve, reject) => {
       const request = db.transaction(STORE, "readwrite").objectStore(STORE).put(note);
@@ -127,6 +142,7 @@ export const localStore: NoteStore = {
     markDirty(COLLECTION, note.id);
   },
   async remove(id) {
+    markDirty(COLLECTION, id);
     const db = await database();
     await new Promise<void>((resolve, reject) => {
       const request = db.transaction(STORE, "readwrite").objectStore(STORE).delete(id);
@@ -142,23 +158,62 @@ export const localStore: NoteStore = {
  * Apply a note that won a last-write-wins comparison against the server. Does not
  * mark dirty (the server already has it) and clears any local tombstone.
  */
-export async function applyRemoteNote(note: Note): Promise<void> {
+export async function applyRemoteNote(
+  note: Note,
+  canApplyDirty?: CanApplyDirty,
+  canApplyClean?: CanApplyClean,
+): Promise<boolean> {
   const db = await database();
-  await new Promise<void>((resolve, reject) => {
-    const request = db.transaction(STORE, "readwrite").objectStore(STORE).put(note);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+  const applied = await new Promise<boolean>((resolve, reject) => {
+    const transaction = db.transaction(STORE, "readwrite");
+    const store = transaction.objectStore(STORE);
+    let wrote = false;
+    transaction.oncomplete = () => resolve(wrote);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+    const read = store.get(note.id);
+    read.onsuccess = () => {
+      const existing = read.result as Note | undefined;
+      const tombstone = readTombstones()[note.id] ?? -Infinity;
+      const localUpdatedAt = existing?.updatedAt ?? tombstone;
+      if (!canApplyRemote(note.id, canApplyDirty, canApplyClean) || note.updatedAt < localUpdatedAt) {
+        return;
+      }
+      store.put(note);
+      wrote = true;
+    };
   });
-  clearTombstone(note.id);
+  if (applied) clearTombstone(note.id);
+  return applied;
 }
 
 /** Apply a remote delete (tombstone) without marking dirty. */
-export async function applyRemoteDelete(id: string, at: number): Promise<void> {
+export async function applyRemoteDelete(
+  id: string,
+  at: number,
+  canApplyDirty?: CanApplyDirty,
+  canApplyClean?: CanApplyClean,
+): Promise<boolean> {
   const db = await database();
-  await new Promise<void>((resolve, reject) => {
-    const request = db.transaction(STORE, "readwrite").objectStore(STORE).delete(id);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+  const applied = await new Promise<boolean>((resolve, reject) => {
+    const transaction = db.transaction(STORE, "readwrite");
+    const store = transaction.objectStore(STORE);
+    let removed = false;
+    transaction.oncomplete = () => resolve(removed);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+    const read = store.get(id);
+    read.onsuccess = () => {
+      const existing = read.result as Note | undefined;
+      const tombstone = readTombstones()[id] ?? -Infinity;
+      const localUpdatedAt = existing?.updatedAt ?? tombstone;
+      if (!canApplyRemote(id, canApplyDirty, canApplyClean) || at < localUpdatedAt) {
+        return;
+      }
+      store.delete(id);
+      removed = true;
+    };
   });
-  setTombstone(id, at);
+  if (applied) setTombstone(id, at);
+  return applied;
 }

@@ -165,8 +165,12 @@ export async function reserveAIRequest(userId: string, payload: Record<string, u
   const period = periodFor(subscription);
   const id = randomUUID();
   const now = Date.now();
-  await recoverStaleReservations(userId);
-  await enforceRateLimit(userId);
+  // These checks are independent and both must finish before reserving budget.
+  // Running them together removes one serial Mongo wait from the hot path.
+  await Promise.all([
+    recoverStaleReservations(userId),
+    enforceRateLimit(userId),
+  ]);
   const budgetLabel = subscription.tier === "trial" ? `$${budgetUsd} trial AI budget` : `$${budgetUsd} monthly AI budget`;
   const maxBeforeReserve = budgetPicoUsd - reservedPicoUsd;
   if (maxBeforeReserve < 0) throw Object.assign(new Error(`This request is larger than the remaining ${budgetLabel}.`), { code: "quota_exceeded", status: 429 });

@@ -2,22 +2,18 @@ import { useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { exit } from "@tauri-apps/plugin-process";
 import { CURRENT_VERSION } from "@/data/releaseNotes";
-import { collectBackup, parseBackup, applyBackup } from "@/services/backup";
+import {
+  collectBackup,
+  parseBackup,
+  applyBackup,
+  collectPortableSettings,
+  applyPortableSettings,
+} from "@/services/backup";
 import { loadMemories, deleteMemory } from "@/services/memory";
 import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { notify } from "@/shared/ui/notify";
 import { signOut } from "@/services/google/auth";
 import { SettingsSection } from "../ui";
-
-// Config-only keys safe to export/import (no note/PDF/deepwork content).
-const CONFIG_KEYS = [
-  "zen.ai.settings.v1",
-  "zen.google.settings.v1",
-  "zen.canvas.settings.v1",
-  "zen.externalConnections.v1",
-  "zen.ai.toolPolicy.v1",
-  "zen.appearance.v1",
-];
 
 const CONV_KEY = "zen.ai.conversations.v1";
 
@@ -104,13 +100,7 @@ export function Data() {
   }
 
   function exportSettings() {
-    const out: Record<string, unknown> = {};
-    for (const k of CONFIG_KEYS) {
-      const raw = localStorage.getItem(k);
-      if (raw != null) {
-        try { out[k] = JSON.parse(raw); } catch { out[k] = raw; }
-      }
-    }
+    const out = collectPortableSettings();
     downloadJson(JSON.stringify(out, null, 2), "zen-settings.json");
   }
 
@@ -118,14 +108,8 @@ export function Data() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result)) as Record<string, unknown>;
-        let n = 0;
-        for (const k of CONFIG_KEYS) {
-          if (k in parsed) {
-            localStorage.setItem(k, JSON.stringify(parsed[k]));
-            n++;
-          }
-        }
+        const parsed = JSON.parse(String(reader.result)) as unknown;
+        const n = applyPortableSettings(parsed);
         if (!n) { notify.error("No recognized settings in that file"); return; }
         notify.success(`Imported ${n} settings — reloading`);
         setTimeout(() => location.reload(), 600);
@@ -138,9 +122,9 @@ export function Data() {
 
   return (
     <div className="space-y-6">
-      <SettingsSection title="Backup" hint="Full backup covers notes, Deep Work, quizzes, memory, and settings (PDFs re-download via sync). Settings-only export carries no note content.">
+      <SettingsSection title="Backup" hint="Backup covers notes, Deep Work, quizzes, memory, and non-secret settings. PDF files and connected-source caches are excluded; keep originals or enable PDF sync. Settings-only export carries no note content or credentials.">
         <div className="flex flex-wrap gap-2">
-          <button className="zen-btn-ghost" onClick={() => void exportBackup()}>Export full backup…</button>
+          <button className="zen-btn-ghost" onClick={() => void exportBackup()}>Export backup…</button>
           <button className="zen-btn-ghost" onClick={() => backupRef.current?.click()}>Restore backup…</button>
           <input
             ref={backupRef}

@@ -27,6 +27,8 @@ export interface PullResult {
 export interface PushResult {
   accepted: string[];
   rejected: string[];
+  /** Server-winning documents for rejected ids (absent on older servers). */
+  conflicts?: WireDoc[];
   cursor: number;
 }
 

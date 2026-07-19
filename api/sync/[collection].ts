@@ -1,9 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import type { AnyBulkWriteOperation } from "mongodb";
+import type { ClientSession, Collection } from "mongodb";
 import { applyCors } from "../_lib/cors.js";
 import { userIdFromRequest } from "../_lib/auth.js";
-import { syncCollection, nextSeq, type SyncRecord } from "../_lib/db.js";
+import { syncCollection, nextSeq, withMongoTransaction, type SyncRecord } from "../_lib/db.js";
 import { enforceRequestRateLimit, positiveEnvInt } from "../_lib/limits.js";
+import { writeSyncDoc } from "../_lib/syncWrite.js";
 
 /** Logical collections clients may sync. Anything else is rejected. */
 const ALLOWED = new Set([
@@ -44,6 +45,60 @@ export function validateSyncDocs(value: unknown, now = Date.now()): WireDoc[] {
   }
   if (total > maxPushBytes) throw Object.assign(new Error("sync push exceeds the request size limit"), { status: 413 });
   return value as WireDoc[];
+}
+
+type SyncPushTransactionResult =
+  | { quotaExceeded: true; maxRecords: number }
+  | { quotaExceeded: false; accepted: string[]; rejected: string[]; conflicts: WireDoc[] };
+
+/**
+ * Runs against one transaction snapshot. The caller owns the transaction and
+ * supplies a sequence allocator bound to the same session.
+ */
+export async function applySyncPushInTransaction(
+  coll: Collection<SyncRecord>,
+  userId: string,
+  incoming: WireDoc[],
+  maxRecords: number,
+  session: ClientSession,
+  allocateSequence: (count: number, session: ClientSession) => Promise<number>,
+): Promise<SyncPushTransactionResult> {
+  const ids = incoming.map((doc) => doc.id);
+  const existing = await coll
+    .find({ userId, id: { $in: ids } }, { projection: { id: 1 }, session })
+    .toArray();
+  const existingIds = new Set(existing.map((record) => record.id));
+  const newCount = ids.length - existingIds.size;
+  if (newCount > 0) {
+    const currentCount = await coll.countDocuments(
+      { userId },
+      { limit: maxRecords + 1, session },
+    );
+    if (currentCount + newCount > maxRecords) return { quotaExceeded: true, maxRecords };
+  }
+
+  const first = await allocateSequence(incoming.length, session);
+  const accepted: string[] = [];
+  const rejected: string[] = [];
+  // The MongoDB driver requires transaction operations to be awaited in order.
+  for (let index = 0; index < incoming.length; index += 1) {
+    const doc = incoming[index]!;
+    const won = await writeSyncDoc(coll, userId, doc, first + index, {
+      session,
+      upsert: !existingIds.has(doc.id),
+    });
+    (won ? accepted : rejected).push(doc.id);
+  }
+
+  const conflictRecords = rejected.length > 0
+    ? await coll.find({ userId, id: { $in: rejected } }, { session }).toArray()
+    : [];
+  return {
+    quotaExceeded: false,
+    accepted,
+    rejected,
+    conflicts: conflictsForRejected(rejected, conflictRecords),
+  };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -89,55 +144,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     catch (error) { const typed = error as Error & { status?: number }; res.status(typed.status ?? 400).json({ error: typed.message }); return; }
     if (incoming.length === 0) {
       const cursor = await highWater(coll, userId);
-      res.status(200).json({ accepted: [], rejected: [], cursor });
+      res.status(200).json({ accepted: [], rejected: [], conflicts: [], cursor });
       return;
     }
 
-    // Fetch current updatedAt for the incoming ids to apply last-write-wins.
-    const ids = incoming.map((d) => d.id);
-    const existing = await coll
-      .find({ userId, id: { $in: ids } }, { projection: { id: 1, updatedAt: 1 } })
-      .toArray();
-    const newCount = ids.length - existing.length;
-    if (newCount > 0) {
-      const maxRecords = positiveEnvInt("SYNC_MAX_RECORDS_PER_COLLECTION", 25_000);
-      const currentCount = await coll.countDocuments({ userId }, { limit: maxRecords + 1 });
-      if (currentCount + newCount > maxRecords) { res.status(413).json({ error: `sync collection limit reached (${maxRecords})` }); return; }
+    const maxRecords = positiveEnvInt("SYNC_MAX_RECORDS_PER_COLLECTION", 25_000);
+    const result = await withMongoTransaction(async (db, session) => (
+      applySyncPushInTransaction(
+        db.collection<SyncRecord>(`sync_${name}`),
+        userId,
+        incoming,
+        maxRecords,
+        session,
+        (count, transactionSession) => nextSeq(userId, count, transactionSession),
+      )
+    ));
+    if (result.quotaExceeded) {
+      res.status(413).json({ error: `sync collection limit reached (${result.maxRecords})` });
+      return;
     }
-    const currentUpdatedAt = new Map(existing.map((e) => [e.id, e.updatedAt]));
+    const cursor = await highWater(coll, userId);
 
-    const accepted: WireDoc[] = [];
-    const rejected: string[] = [];
-    for (const d of incoming) {
-      const cur = currentUpdatedAt.get(d.id);
-      if (cur !== undefined && d.updatedAt < cur) rejected.push(d.id);
-      else accepted.push(d);
-    }
-
-    let cursor = await highWater(coll, userId);
-    if (accepted.length > 0) {
-      const first = await nextSeq(userId, accepted.length);
-      const ops: AnyBulkWriteOperation<SyncRecord>[] = accepted.map((d, i) => ({
-        updateOne: {
-          filter: { userId, id: d.id },
-          update: {
-            $set: {
-              userId,
-              id: d.id,
-              updatedAt: d.updatedAt,
-              deleted: !!d.deleted,
-              data: d.data ?? null,
-              serverSeq: first + i,
-            },
-          },
-          upsert: true,
-        },
-      }));
-      await coll.bulkWrite(ops, { ordered: false });
-      cursor = first + accepted.length - 1;
-    }
-
-    res.status(200).json({ accepted: accepted.map((d) => d.id), rejected, cursor });
+    res.status(200).json({
+      accepted: result.accepted,
+      rejected: result.rejected,
+      conflicts: result.conflicts,
+      cursor,
+    });
     return;
   }
 
@@ -147,6 +180,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 function toWire(r: SyncRecord): WireDoc {
   return { id: r.id, updatedAt: r.updatedAt, deleted: r.deleted, data: r.data };
+}
+
+export function conflictsForRejected(rejectedIds: string[], records: SyncRecord[]): WireDoc[] {
+  const byId = new Map(records.map((record) => [record.id, record]));
+  return rejectedIds.flatMap((id) => {
+    const record = byId.get(id);
+    return record ? [toWire(record)] : [];
+  });
 }
 
 async function highWater(

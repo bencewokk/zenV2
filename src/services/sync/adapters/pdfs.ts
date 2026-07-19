@@ -2,7 +2,7 @@ import { pdfStore, readPdfTombstones, type PdfSyncMeta } from "@/services/pdfSto
 import { usePdfs } from "@/features/pdfs/store";
 import { getDirty, clearDirty } from "../cursor";
 import { putPdfBlob, getPdfBlob } from "../client";
-import type { SyncAdapter, WireDoc } from "../types";
+import type { SyncAdapter, SyncApplyOptions, WireDoc } from "../types";
 
 const COLLECTION = "pdfs";
 // Tracks which blobs have been uploaded (id → size) so we upload a binary once,
@@ -51,7 +51,9 @@ async function repairBlobTransfers(): Promise<boolean> {
         `PDF "${meta.name}" is incomplete on the sync server (${remoteBlob.size}/${meta.size} bytes).`,
       );
     }
-    await pdfStore.applyRemoteMeta(meta, remoteBlob);
+    if (!(await pdfStore.attachRemoteBlob(meta.id, meta.size, remoteBlob))) {
+      throw new Error(`PDF "${meta.name}" changed while its file was downloading.`);
+    }
     setUploaded(meta.id, meta.size);
     downloaded = true;
   }
@@ -93,15 +95,16 @@ export const pdfsAdapter: SyncAdapter = {
     return out;
   },
 
-  async apply(remote: WireDoc[]): Promise<void> {
+  async apply(remote: WireDoc[], options?: SyncApplyOptions): Promise<void> {
     let changed = false;
     let transferError: unknown = null;
     for (const doc of remote) {
       const local = await pdfStore.localUpdatedAt(doc.id);
       if (doc.updatedAt < local) continue; // local is newer
       if (doc.deleted) {
-        await pdfStore.applyRemoteDelete(doc.id, doc.updatedAt);
-        changed = true;
+        if (await pdfStore.applyRemoteDelete(doc.id, doc.updatedAt, options?.canApplyDirty)) {
+          changed = true;
+        }
       } else if (doc.data) {
         const meta = doc.data as PdfSyncMeta;
         const hasBlob = await pdfStore.hasBlob(doc.id);
@@ -120,9 +123,10 @@ export const pdfsAdapter: SyncAdapter = {
             transferError ??= error;
           }
         }
-        await pdfStore.applyRemoteMeta(meta, blob);
-        if (blob) setUploaded(doc.id, meta.size); // already on the server
-        changed = true;
+        if (await pdfStore.applyRemoteMeta(meta, blob, options?.canApplyDirty)) {
+          if (blob) setUploaded(doc.id, meta.size); // already on the server
+          changed = true;
+        }
       }
     }
     if (changed) await usePdfs.getState().load();

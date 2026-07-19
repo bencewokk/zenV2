@@ -43,7 +43,7 @@ export async function* streamChatWithTools(
   const toolAcc = new Map<number, { id: string; name: string; args: string }>();
   let usage: Usage | undefined;
 
-  while (true) {
+  stream: while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -54,7 +54,10 @@ export async function* streamChatWithTools(
       const line = frame.split("\n").find((l) => l.startsWith("data:"));
       if (!line) continue;
       const data = line.slice(5).trim();
-      if (data === "[DONE]") break;
+      // The gateway may keep the HTTP response open briefly while it commits
+      // usage. DeepSeek's sentinel is the semantic end of the stream, so let the
+      // UI finish immediately instead of waiting on that bookkeeping.
+      if (data === "[DONE]") break stream;
       try {
         const json = JSON.parse(data) as {
           choices?: { delta?: { content?: string; tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[];

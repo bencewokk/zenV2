@@ -17,6 +17,11 @@ export interface WireDoc<T = unknown> {
   data?: T;
 }
 
+export interface SyncApplyOptions {
+  /** Allow an authoritative server winner to replace this exact dirty version. */
+  canApplyDirty?: (id: string) => boolean;
+}
+
 /**
  * Bridges one local store to the sync engine. Implementations live in
  * `adapters/` and own all knowledge of how their data is stored locally.
@@ -27,7 +32,7 @@ export interface SyncAdapter {
   /** Local docs changed since the last successful push. */
   listDirty(): Promise<WireDoc[]>;
   /** Merge docs pulled from the server into the local store (last-write-wins). */
-  apply(remote: WireDoc[]): Promise<void>;
+  apply(remote: WireDoc[], options?: SyncApplyOptions): Promise<void>;
   /** Clear the dirty flag for ids the server accepted. */
   markPushed(ids: string[]): void;
 }

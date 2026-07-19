@@ -4,6 +4,7 @@ import type { Note, NoteFilter } from "@/shared/lib/types";
 import { emptyFilter } from "@/shared/lib/types";
 import { localStore as store } from "@/services/storage";
 import { recordActivity } from "@/services/memory/episodic";
+import { markDirty } from "@/services/sync/cursor";
 
 function newNote(parentId: string | null, order: number): Note {
   const now = Date.now();
@@ -178,6 +179,7 @@ interface NotesState {
   selectedId: string | null;
   filter: NoteFilter;
   dirty: boolean; // unsaved edits to the open note
+  draftRevisions: Record<string, number>; // guards overlapping debounced saves
   loaded: boolean;
 
   load: () => Promise<void>;
@@ -203,6 +205,7 @@ export const useNotes = create<NotesState>((set, get) => ({
   selectedId: null,
   filter: emptyFilter,
   dirty: false,
+  draftRevisions: {},
   loaded: false,
 
   async load() {
@@ -243,15 +246,34 @@ export const useNotes = create<NotesState>((set, get) => ({
     const note = get().notes[id];
     if (!note) return;
     const updated = { ...note, ...fields, updatedAt: Date.now() };
-    set((s) => ({ notes: { ...s.notes, [id]: updated }, dirty: true }));
+    // The editor keeps content in memory for 700 ms before persisting it. Mark
+    // immediately so sync cannot treat the active draft as a clean disk record.
+    markDirty("notes", id);
+    set((s) => ({
+      notes: { ...s.notes, [id]: updated },
+      dirty: true,
+      draftRevisions: {
+        ...s.draftRevisions,
+        [id]: (s.draftRevisions[id] ?? 0) + 1,
+      },
+    }));
   },
 
   async saveContent(id, content) {
     const note = get().notes[id];
     if (!note) return;
+    const draftRevision = get().draftRevisions[id] ?? 0;
     const updated = { ...note, content, updatedAt: Date.now() };
     await store.put(updated);
-    set((s) => ({ notes: { ...s.notes, [id]: updated }, dirty: false }));
+    set((s) => {
+      const sameDraft = s.notes[id] === note
+        && (s.draftRevisions[id] ?? 0) === draftRevision;
+      if (!sameDraft) return {};
+      return {
+        notes: { ...s.notes, [id]: updated },
+        dirty: s.selectedId === id ? false : s.dirty,
+      };
+    });
   },
 
   async rename(id, title) {

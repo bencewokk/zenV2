@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Collection } from "mongodb";
 import { getDb, syncCollection, type SyncRecord } from "./db.js";
 import { persistReceipt, updateRoutine, type AssistantRoutine } from "./assistantData.js";
 import { googleAccessTokenForUser } from "./assistantGoogleOffline.js";
@@ -33,14 +34,32 @@ export type RoutineRunSummary = {
   failed: number;
 };
 
-async function runsCollection() {
-  const collection = (await getDb()).collection<RoutineRunRecord>("assistant_routine_runs");
+let runIndexesPromise: Promise<void> | null = null;
+
+async function ensureRunIndexes(collection: Collection<RoutineRunRecord>): Promise<void> {
+  let uniqueFailure: { error: unknown } | undefined;
   await Promise.all([
-    collection.createIndex({ key: 1 }, { unique: true }).catch(() => {}),
+    // This is the occurrence claim guard: without it, two schedulers can run
+    // the same routine occurrence concurrently.
+    collection.createIndex({ key: 1 }, { unique: true })
+      .catch((error: unknown) => { uniqueFailure = { error }; }),
+    // These only affect query cost and retention.
     collection.createIndex({ userId: 1, startedAt: -1 }).catch(() => {}),
     collection.createIndex({ status: 1, nextRetryAt: 1 }).catch(() => {}),
     collection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 180 }).catch(() => {}),
   ]);
+  if (uniqueFailure) throw uniqueFailure.error;
+}
+
+export async function runsCollection() {
+  const collection = (await getDb()).collection<RoutineRunRecord>("assistant_routine_runs");
+  const indexes = runIndexesPromise ??= ensureRunIndexes(collection);
+  try {
+    await indexes;
+  } catch (error) {
+    if (runIndexesPromise === indexes) runIndexesPromise = null;
+    throw error;
+  }
   return collection;
 }
 

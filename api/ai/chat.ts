@@ -161,7 +161,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   catch { res.status(401).json({ error: "unauthorized", code: "unauthorized" }); return; }
 
   let reservationId: string | null = null;
-  let acceptedHoldPicoUsd: number | null = null;
+  let acceptancePromise: Promise<void> | null = null;
+  let settlementOnFailure: Parameters<typeof settleReservation>[2] | undefined;
+  const upstreamController = new AbortController();
+  let clientDisconnected = req.aborted;
+  const abortUpstream = () => {
+    clientDisconnected = true;
+    if (!upstreamController.signal.aborted) upstreamController.abort();
+  };
+  const onResponseClose = () => {
+    // `close` also fires after a normal `end`; only abort an unfinished response.
+    if (!res.writableEnded) abortUpstream();
+  };
+  req.once("aborted", abortUpstream);
+  res.once("close", onResponseClose);
+  if (clientDisconnected) upstreamController.abort();
+
+  const awaitAcceptance = async () => {
+    const pending = acceptancePromise;
+    acceptancePromise = null;
+    if (!pending) return;
+    try {
+      await pending;
+    } catch (error) {
+      // Settlement also accepts an `active` reservation, so a transient status
+      // update failure must not discard usage or break an otherwise valid stream.
+      console.warn(JSON.stringify({
+        event: "ai_reservation_accept_failed",
+        userId: userId.slice(-8),
+        reservationId,
+        error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+      }));
+    }
+  };
+
   try {
     const body = (req.body ?? {}) as { provider?: string; model?: unknown; payload?: Record<string, unknown> };
     if (body.provider !== "deepseek") throw Object.assign(new Error("Only DeepSeek is supported."), { status: 400, code: "invalid_provider" });
@@ -171,25 +204,83 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // tier's allowed set, so an out-of-tier request is downgraded server-side.
     const reservation = await reserveAIRequest(userId, payload, body.model);
     reservationId = reservation.reservationId;
-    const upstream = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey()}` },
-      body: JSON.stringify({ ...payload, model: reservation.model, user_id: createHash("sha256").update(userId).digest("hex") }),
-    });
-    if (!upstream.ok || !upstream.body) {
-      await settleReservation(userId, reservationId, null); reservationId = null;
-      const detail = await upstream.text().catch(() => "");
-      res.status(upstream.status).json({ error: `DeepSeek rejected the request: ${detail.slice(0, 300)}`, code: "provider_error" }); return;
+    // Resolve configuration and a disconnect that happened during reservation
+    // before the provider can receive anything. Those failures can safely release
+    // the hold; once fetch is dispatched we must assume DeepSeek may have billed it.
+    const providerApiKey = apiKey();
+    if (upstreamController.signal.aborted) throw Object.assign(new Error("AI request cancelled"), { code: "request_cancelled" });
+    settlementOnFailure = { costPicoUsd: reservation.heldPicoUsd, estimated: true };
+    let upstream: Response;
+    try {
+      upstream = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${providerApiKey}` },
+        body: JSON.stringify({ ...payload, model: reservation.model, user_id: createHash("sha256").update(userId).digest("hex") }),
+        signal: upstreamController.signal,
+      });
+    } catch (error) {
+      if (clientDisconnected) throw error;
+      throw Object.assign(new Error(`DeepSeek request failed: ${error instanceof Error ? error.message : String(error)}`), {
+        status: 502,
+        code: "provider_error",
+      });
     }
-    acceptedHoldPicoUsd = reservation.heldPicoUsd;
-    await markReservationAccepted(userId, reservationId);
+    if (!upstream.ok) {
+      // A concrete non-success status means the provider rejected the request and
+      // did not generate a completion, so this is the one post-dispatch case that
+      // can release the hold. Keep that choice sticky if settlement needs a retry.
+      settlementOnFailure = null;
+      await settleReservation(userId, reservationId, null);
+      reservationId = null;
+      const detail = await upstream.text().catch(() => "");
+      if (!clientDisconnected && !res.destroyed && !res.writableEnded) {
+        res.status(upstream.status).json({ error: `DeepSeek rejected the request: ${detail.slice(0, 300)}`, code: "provider_error" });
+      }
+      return;
+    }
+    if (!upstream.body) {
+      throw Object.assign(new Error("DeepSeek returned an empty response."), { status: 502, code: "provider_empty_response" });
+    }
+    // Start bookkeeping now, but let it overlap upstream body delivery. We await
+    // it before settlement below to keep the reservation state transition ordered.
+    acceptancePromise = markReservationAccepted(userId, reservationId);
+    // Attach a rejection handler immediately; the full stream may finish before
+    // `awaitAcceptance` observes the same promise.
+    void acceptancePromise.catch(() => {});
 
-    res.status(upstream.status);
-    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
-    res.setHeader("X-Zen-AI-Model", reservation.model);
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
     let raw = "";
+    let firstChunk: Uint8Array | null = null;
+    try {
+      // Delay committing the success response until the provider produces an
+      // actual byte. A broken/empty stream can still become a useful JSON error.
+      while (!firstChunk) {
+        const first = await reader.read();
+        if (first.done) {
+          throw Object.assign(new Error("DeepSeek returned an empty response."), { status: 502, code: "provider_empty_response" });
+        }
+        if (first.value.byteLength) firstChunk = first.value;
+      }
+    } catch (error) {
+      if ((error as { status?: number }).status || clientDisconnected) throw error;
+      throw Object.assign(new Error(`DeepSeek stream failed before data arrived: ${error instanceof Error ? error.message : String(error)}`), {
+        status: 502,
+        code: "provider_stream_error",
+      });
+    }
+
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("X-Zen-AI-Model", reservation.model);
+    // Flush and forward together: this preserves first-token latency without
+    // committing a blank 200 while the first upstream read is still pending.
+    res.flushHeaders();
+    raw += decoder.decode(firstChunk, { stream: true });
+    res.write(Buffer.from(firstChunk));
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -199,14 +290,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     raw += decoder.decode();
     const usage = usageFromBody(raw);
     // Missing usage keeps the conservative pre-flight hold instead of underbilling.
-    await settleReservation(userId, reservationId, usage
+    settlementOnFailure = usage
       ? { costPicoUsd: Math.min(reservation.heldPicoUsd, costPicoUsd(reservation.model, usage)), usage }
-      : { costPicoUsd: reservation.heldPicoUsd, estimated: true });
+      : { costPicoUsd: reservation.heldPicoUsd, estimated: true };
+
+    // [DONE] has already reached streaming clients, so they can finish while the
+    // response remains open long enough to commit billing reliably.
+    await awaitAcceptance();
+    await settleReservation(userId, reservationId, settlementOnFailure);
     reservationId = null;
-    res.end();
+    if (!clientDisconnected && !res.destroyed && !res.writableEnded) res.end();
   } catch (error) {
-    if (reservationId) await settleReservation(userId, reservationId, acceptedHoldPicoUsd === null ? null : { costPicoUsd: acceptedHoldPicoUsd, estimated: true }).catch(() => {});
+    upstreamController.abort();
     const typed = error as Error & { status?: number; code?: string };
-    res.status(typed.status ?? 500).json({ error: typed.message || "AI request failed", code: typed.code ?? "ai_error" });
+    await awaitAcceptance();
+    if (reservationId) {
+      await settleReservation(
+        userId,
+        reservationId,
+        settlementOnFailure ?? null,
+      ).catch(() => {});
+      reservationId = null;
+    }
+    // Never write JSON over an already-started provider response.
+    if (!clientDisconnected && !res.destroyed && !res.writableEnded) {
+      if (res.headersSent) res.end();
+      else res.status(typed.status ?? 500).json({ error: typed.message || "AI request failed", code: typed.code ?? "ai_error" });
+    }
   }
 }

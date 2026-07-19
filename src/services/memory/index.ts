@@ -56,6 +56,34 @@ export interface RecallPdfs {
   getPages: (id: string) => Promise<string[] | null>;
 }
 
+export interface ProgressiveRecall {
+  /** Instant keyword/graph matches that never wait for the embedding model. */
+  immediate: RecallHit[];
+  /** Graph + semantic matches once the on-device index is ready. */
+  complete: Promise<RecallHit[]>;
+}
+
+/**
+ * Start semantic recall while making the cheap graph matches available
+ * immediately. Chat uses this to put a strict budget on retrieval latency; the
+ * explicit recall tool can still await `complete` when completeness matters.
+ */
+export function recallProgressive(
+  query: string,
+  notes: Record<string, Note>,
+  k = 6,
+  pdfSources?: RecallPdfs
+): ProgressiveRecall {
+  const immediate = relatedNotes(query, notes, k).map((g) => ({
+    kind: "note" as const,
+    id: g.id,
+    title: g.title,
+    snippet: snippetOf(notes[g.id]),
+    via: ["graph" as const],
+  }));
+  return { immediate, complete: enrichRecall(query, notes, k, immediate, pdfSources) };
+}
+
 /**
  * Retrieve the items most relevant to a query. Graph narrows notes fast; vector
  * adds semantic matches across notes and (when provided) PDF pages. Vector is
@@ -67,12 +95,20 @@ export async function recall(
   k = 6,
   pdfSources?: RecallPdfs
 ): Promise<RecallHit[]> {
+  return recallProgressive(query, notes, k, pdfSources).complete;
+}
+
+async function enrichRecall(
+  query: string,
+  notes: Record<string, Note>,
+  k: number,
+  graphHits: RecallHit[],
+  pdfSources?: RecallPdfs
+): Promise<RecallHit[]> {
   const merged = new Map<string, RecallHit>();
   const key = (kind: string, id: string, page?: number) => `${kind}:${id}:${page ?? 0}`;
 
-  for (const g of relatedNotes(query, notes, k)) {
-    merged.set(key("note", g.id), { kind: "note", id: g.id, title: g.title, snippet: snippetOf(notes[g.id]), via: ["graph"] });
-  }
+  for (const hit of graphHits) merged.set(key(hit.kind, hit.id, hit.page), { ...hit, via: [...hit.via] });
 
   try {
     await syncIndex(notes);
