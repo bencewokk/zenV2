@@ -36,6 +36,7 @@ import {
   listCanvasCourses, listCanvasFiles, listCanvasModules,
   type CanvasAssignment, type CanvasCourse,
 } from "@/services/canvas/client";
+import { loadCanvasSettings } from "@/services/canvas/settings";
 import { ensureSourcesLoaded, searchConnectedSources, useSources } from "@/services/sources/store";
 import { refreshAllSources } from "@/services/sources/refresh";
 import { createAssistantTask, loadAssistantTasks, setAssistantTaskDone } from "@/services/assistantTasks";
@@ -2063,6 +2064,48 @@ const TOOLS: ToolImpl[] = [
 ];
 
 export const TOOL_DEFS: ToolDef[] = TOOLS.map((t) => t.def);
+
+// Tool names whose backing integration may be disconnected. Sending their defs
+// anyway costs prompt tokens on EVERY agent step and invites calls that can only
+// fail — so the agent loop filters them out via isToolAvailable().
+const GOOGLE_TOOLS = new Set([
+  "list_events", "get_event", "create_event", "update_event", "delete_event", "find_free_slots",
+  "search_mail", "read_mail", "draft_email", "send_email", "reply_in_thread",
+  "archive_thread", "mark_read",
+]);
+const CANVAS_TOOLS = new Set([
+  "canvas_list_courses", "canvas_list_assignments", "canvas_get_assignment",
+  "canvas_list_modules", "canvas_list_announcements", "canvas_list_files",
+]);
+
+// Study tools only make sense inside Deep Work — outside it they'd cost prompt
+// tokens on every step for choreography that can't apply. The agent loop
+// re-checks per step, so open_view("deepwork") surfaces them mid-turn.
+const STUDY_TOOLS = new Set([
+  "deepwork_add", "deepwork_remove", "deepwork_set_intent", "deepwork_read_material",
+  "deepwork_set_backbone", "deepwork_set_mastery", "deepwork_start_quiz", "deepwork_grade_quiz",
+  "deepwork_weak_concepts", "deepwork_plan_status", "deepwork_set_plan", "deepwork_revise_plan",
+  "deepwork_start_lesson", "study_present", "deepwork_end_lesson",
+]);
+
+/** Is the user in a study context (Deep Work session, Deep Work surface, or a
+ *  running lesson/quiz)? Gates the study tools and the study system prompt. */
+export function studyModeActive(): boolean {
+  const dw = useDeepWork.getState();
+  if (dw.activeId) return true;
+  if (useHome.getState().manualDeepWork) return true;
+  if (useLesson.getState().active) return true;
+  return !!activeQuiz();
+}
+
+/** Whether a tool should be offered to the model right now (integration
+ *  connected, and study tools only inside Deep Work). */
+export function isToolAvailable(name: string): boolean {
+  if (GOOGLE_TOOLS.has(name)) return isSignedIn();
+  if (CANVAS_TOOLS.has(name)) return !!loadCanvasSettings().accessToken.trim();
+  if (STUDY_TOOLS.has(name)) return studyModeActive();
+  return true;
+}
 
 /** Tool names that require user confirmation before executing (destructive/outbound). */
 export const CONFIRM_TOOLS = new Set(TOOLS.filter((t) => t.confirm).map((t) => t.def.function.name));

@@ -1381,7 +1381,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     {
       id: "su-rail",
       title: "Connections & sync",
-      body: "Connections (open now) is where you link Google for Calendar & Mail and switch on Sync to back up across devices. All optional — skip it to stay fully local.",
+      body: "Open Connections & keys in the rail to link Google for Calendar & Mail and switch on Sync to back up across devices. All optional — skip it to stay fully local.",
       anchor: '[data-tour="settings-rail"]',
       interactive: true,
     },
@@ -1627,7 +1627,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     {
       id: "tc-rail",
       title: "Review your controls",
-      body: "AI behavior lists every tool the AI may use — allow or block each. Data exports a full backup or copies diagnostics. Plan & usage shows your AI limits.",
+      body: "AI behavior lists every tool the AI may use — allow or block each. Data & storage exports a full backup. Account & plan shows your AI limits.",
       anchor: '[data-tour="settings-rail"]',
       interactive: true,
     },
@@ -1684,21 +1684,21 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
     {
       id: "tc2-backups",
       title: "Review backups",
-      body: "Open Data to export a full local backup or a settings-only copy.",
+      body: "Open Data & storage to export a full local backup or a settings-only copy.",
       anchor: '[data-tour="settings-rail"]',
       interactive: true,
     },
     {
       id: "tc2-diagnostics",
       title: "Inspect diagnostics",
-      body: "Data also exposes copyable diagnostics for troubleshooting without hiding what is included.",
+      body: "About & updates exposes copyable diagnostics for troubleshooting without hiding what is included.",
       anchor: '[data-tour="settings-rail"]',
       interactive: true,
     },
     {
       id: "tc2-plan",
       title: "Check plan and usage limits",
-      body: "Open Plan & usage to see the AI models and limits available to your account.",
+      body: "Open Account & plan to see the AI models and limits available to your account.",
       anchor: '[data-tour="settings-rail"]',
       interactive: true,
     },

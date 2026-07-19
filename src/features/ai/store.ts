@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { AIMessage } from "@/services/ai/types";
 import { deepseek, streamChatWithTools, chatOnce, type AssistantReply, type Usage } from "@/services/ai/deepseek";
-import { TOOL_DEFS, runTool, isReadTool, isAutoTool, describeToolCall, parseToolArgs } from "@/services/ai/tools";
+import { TOOL_DEFS, runTool, isReadTool, isAutoTool, isToolAvailable, studyModeActive, describeToolCall, parseToolArgs } from "@/services/ai/tools";
 import { policyFor } from "@/services/ai/toolPolicy";
 import { loadSettings } from "@/services/ai/settings";
 import { memoryContext, recordActivity, recall, formatRecall } from "@/services/memory";
@@ -213,9 +213,14 @@ interface AIState {
   complete: (instruction: string, text: string) => Promise<string>;
 }
 
-const SYSTEM = (ctx?: string): AIMessage => ({
-  role: "system",
-  content:
+// ── System prompt ─────────────────────────────────────────────────────────────
+// Split into byte-stable blocks so DeepSeek's automatic prefix caching can reuse
+// the big instruction prefix across turns AND agent steps (cached input is ~10×
+// cheaper and prefills far faster). Message 0 (core + optional study block +
+// settings extra) must stay byte-identical between requests; everything that
+// changes (date, memory, note context, RAG) goes in a LATER message.
+
+const CORE_PROMPT =
     "You are Zen's built-in assistant. Always respond in English, even if the user writes " +
     "in another language. Be concise and helpful. Format replies in Markdown. " +
     "You can DRAW a diagram to explain something visually: emit a ```svg fenced code block " +
@@ -254,6 +259,24 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "again first. (4) Match each tool's required arguments and field names exactly; if a required value is " +
     "missing, fetch it (search/list/read) before calling. (5) On an error, change something and retry once or " +
     "switch approach — don't repeat the identical failing call, and don't silently give up. " +
+    "PDF SEARCH TYPES: search_pdf is KEYWORD/text match (works as soon as text is extracted — it says " +
+    "NOTHING about whether a PDF is semantically indexed). find_in_pdf is SEMANTIC and needs the embedding " +
+    "index built. To answer 'is this PDF indexed?', check the 'semantic: ready/not built' status from " +
+    "list_pdfs — never infer indexing from search_pdf returning hits. " +
+    "READING PDFs EFFICIENTLY: for a long PDF, call pdf_outline FIRST — use the table of contents " +
+    "to jump to the right chapter (pdf_goto) and read just that page range with read_pdf `pages` (e.g. \"120-145\"). " +
+    "Use find_in_pdf (semantic, uses the index) to locate topics when there's no useful outline. NEVER make many " +
+    "one-page read_pdf calls — always batch with a `pages` range. " +
+    "IMPORTANT: Whenever you would offer the user choices, present a numbered/bulleted list of " +
+    "options, ask which they'd prefer, or are unsure how to proceed, you MUST call the ask_user " +
+    "tool with concise options instead of writing the options as plain text. Use ask_user " +
+    "proactively for any 'which would you like / A or B / pick one' moment — never enumerate " +
+    "options in prose. ";
+
+// Tutoring / lesson / quiz / study-planning instructions — included only while
+// the user is actually in Deep Work (studyModeActive), so everyday chat turns
+// don't pay roughly half the prompt for instructions that can't apply.
+const STUDY_PROMPT =
     "STUDY/TUTOR MODE: When the user wants to study, learn, or prepare for an exam using their " +
     "Deep Work material, first call deepwork_read_material to read everything they've gathered " +
     "(notes, full PDF text, their highlights, events, emails). Synthesize the key concepts into a " +
@@ -319,29 +342,45 @@ const SYSTEM = (ctx?: string): AIMessage => ({
     "then deepwork_revise_plan — ADD sessions for newly-weak or missed concepts, REMOVE or shorten sessions " +
     "for concepts now mastered, and RESCHEDULE missed time into free slots. Revise (don't rebuild from " +
     "scratch) so the user's calendar stays stable. " +
-    "PDF SEARCH TYPES: search_pdf is KEYWORD/text match (works as soon as text is extracted — it says " +
-    "NOTHING about whether a PDF is semantically indexed). find_in_pdf is SEMANTIC and needs the embedding " +
-    "index built. To answer 'is this PDF indexed?', check the 'semantic: ready/not built' status from " +
-    "list_pdfs — never infer indexing from search_pdf returning hits. " +
-    "READING PDFs EFFICIENTLY: to study material already on the Deep Work canvas, call deepwork_read_material " +
-    "ONCE (it returns all of it). For a long/standalone PDF, call pdf_outline FIRST — use the table of contents " +
-    "to jump to the right chapter (pdf_goto) and read just that page range with read_pdf `pages` (e.g. \"120-145\"). " +
-    "Use find_in_pdf (semantic, uses the index) to locate topics when there's no useful outline. NEVER make many " +
-    "one-page read_pdf calls — always batch with a `pages` range. " +
+    "READING STUDY MATERIAL: to study material already on the Deep Work canvas, call deepwork_read_material " +
+    "ONCE (it returns all of it) instead of reading notes/PDFs one by one. " +
     "PDF TOOLING WHILE TEACHING: when you reference a PDF, call pdf_goto to scroll the user's viewer to " +
     "the exact page you're discussing. When a passage is important, highlight_pdf it and tag the `concept` " +
     "it supports plus a one-line `why` — these become concept→page links in the Study panel. When grading " +
-    "a quiz question that came from a PDF, include pdfId + page in its result so the user can jump back to review. " +
-    "IMPORTANT: Whenever you would offer the user choices, present a numbered/bulleted list of " +
-    "options, ask which they'd prefer, or are unsure how to proceed, you MUST call the ask_user " +
-    "tool with concise options instead of writing the options as plain text. Use ask_user " +
-    "proactively for any 'which would you like / A or B / pick one' moment — never enumerate " +
-    "options in prose. " +
-    "Today is " + new Date().toString() + "." +
-    memoryContext() +
-    (ctx ? `\n\nThe user's current note (for context):\n"""\n${ctx.slice(0, 6000)}\n"""` : "") +
-    (loadSettings().systemPromptExtra.trim() ? `\n\n${loadSettings().systemPromptExtra.trim()}` : ""),
-});
+    "a quiz question that came from a PDF, include pdfId + page in its result so the user can jump back to review. ";
+
+// Shown instead of STUDY_PROMPT outside Deep Work, so the model knows how to get
+// the study tools when the user asks to study from a plain chat.
+const STUDY_HINT =
+    "STUDY MODE (currently inactive): the Deep Work study tools (tutoring, lessons, quizzes, study " +
+    "planning) load only inside Deep Work. If the user wants to study, be tutored, take a quiz, or " +
+    "plan studying, call open_view with view \"deepwork\" first — the study tools become available " +
+    "immediately after. ";
+
+/** Message 0 — byte-identical between requests (per mode + settings), so DeepSeek's
+ *  prefix cache reuses it across turns and agent steps. */
+function staticSystem(): AIMessage {
+  const extra = loadSettings().systemPromptExtra.trim();
+  return {
+    role: "system",
+    content: CORE_PROMPT + (studyModeActive() ? STUDY_PROMPT : STUDY_HINT) + (extra ? `\n\n${extra}` : ""),
+  };
+}
+
+/** Everything that changes between requests (date, memory, note context). Appended
+ *  AFTER the conversation history so history tokens extend the cached prefix. */
+function dynamicContext(ctx?: string): AIMessage {
+  // Hour granularity: precise enough for dates/scheduling, stable enough that the
+  // message doesn't change (and bust the cache) on every single turn.
+  const now = new Date();
+  return {
+    role: "system",
+    content:
+      `Today is ${now.toDateString()}, around ${now.getHours()}:00 local time.` +
+      memoryContext() +
+      (ctx ? `\n\nThe user's current note (for context):\n"""\n${ctx.slice(0, 6000)}\n"""` : ""),
+  };
+}
 
 const initialConv = readConversations();
 
@@ -353,11 +392,14 @@ export const useAI = create<AIState>((set, get) => {
    * otherwise it can't act on a tool it called earlier.
    */
   function buildMessages(noteContext?: string, userText?: string): AIMessage[] {
-    const msgs: AIMessage[] = [SYSTEM(noteContext)];
+    const msgs: AIMessage[] = [staticSystem()];
     for (const t of get().turns) {
       if (t.role === "tool") msgs.push({ role: "system", content: `[Tool activity] ${t.content}` });
       else msgs.push({ role: t.role as "user" | "assistant", content: t.content });
     }
+    // Dynamic context goes AFTER history: message 0 + history form a stable,
+    // append-only prefix across turns, so the whole conversation stays cache-hot.
+    msgs.push(dynamicContext(noteContext));
     if (userText) msgs.push({ role: "user", content: userText });
     return msgs;
   }
@@ -368,7 +410,6 @@ export const useAI = create<AIState>((set, get) => {
    * streaming/usage/status lifecycle (resets `streaming` in finally).
    */
   async function runAgent(messages: AIMessage[], controller: AbortController): Promise<void> {
-    const activeTools = TOOL_DEFS.filter((d) => policyFor(d.function.name) !== "off");
     const maxToolSteps = Math.max(1, loadSettings().maxToolSteps);
     const usage: Usage = { promptTokens: 0, completionTokens: 0 };
     // Cache read-tool results for this turn keyed by name+args — identical reads
@@ -377,12 +418,30 @@ export const useAI = create<AIState>((set, get) => {
     const readKey = (name: string, args: Record<string, unknown>) => `${name}:${JSON.stringify(args)}`;
     try {
       for (let step = 0; step < maxToolSteps; step++) {
+        // Recomputed each step so entering Deep Work mid-turn (open_view) makes the
+        // study tools + instructions available on the very next step. Skips disabled
+        // tools AND tools whose integration isn't connected (Google, Canvas) — their
+        // definitions would cost prompt tokens on every step and any call could only
+        // fail. Stable between mode/settings changes, so the prefix cache still hits.
+        messages[0] = staticSystem();
+        const activeTools = TOOL_DEFS.filter((d) => {
+          const name = d.function.name;
+          return policyFor(name) !== "off" && isToolAvailable(name);
+        });
         set((s) => ({ turns: [...s.turns, { role: "assistant", content: "" }] }));
         const turnIndex = get().turns.length - 1;
         let acc = "";
         boundContext(messages);
         const gen = streamChatWithTools(messages, requestModelId(), activeTools, controller.signal);
         let reply: AssistantReply;
+        // Flush streamed text to the store at most every ~40ms — a per-delta set()
+        // re-renders the whole chat for every SSE chunk, which visibly lags long replies.
+        let lastFlush = 0;
+        const flushAcc = () => set((s) => {
+          const t = [...s.turns];
+          if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: acc };
+          return { turns: t };
+        });
         for (;;) {
           const next = await gen.next();
           if (next.done) {
@@ -391,14 +450,15 @@ export const useAI = create<AIState>((set, get) => {
               usage.promptTokens += reply.usage.promptTokens;
               usage.completionTokens += reply.usage.completionTokens;
             }
+            if (acc) flushAcc();
             break;
           }
           acc += next.value;
-          set((s) => {
-            const t = [...s.turns];
-            if (t[turnIndex]) t[turnIndex] = { role: "assistant", content: acc };
-            return { turns: t };
-          });
+          const now = performance.now();
+          if (now - lastFlush >= 40) {
+            lastFlush = now;
+            flushAcc();
+          }
         }
 
         if (reply.tool_calls?.length) {
@@ -567,29 +627,31 @@ export const useAI = create<AIState>((set, get) => {
 
     const messages = buildMessages(noteContext, userText);
 
-    // Auto-inject relevant notes from memory (RAG) before the model runs, so it
-    // has context without needing to call the recall tool itself.
-    try {
-      const hits = await recall(userText, useNotes.getState().notes, 5);
-      if (hits.length) {
-        messages.splice(1, 0, {
-          role: "system",
-          content:
-            "Relevant notes from the user's memory (use if helpful, cite [id:...]):\n" + formatRecall(hits),
-        });
-      }
-    } catch { /* memory unavailable — proceed without it */ }
-
-    try {
-      await ensureSourcesLoaded();
-      const sources = searchConnectedSources(userText, 5);
-      if (sources.length) messages.splice(1, 0, {
+    // Auto-inject relevant notes from memory (RAG) and connected sources before
+    // the model runs, so it has context without needing to call recall itself.
+    // Both lookups are independent — run them concurrently so they don't stack
+    // latency onto time-to-first-token.
+    const [hits, sources] = await Promise.all([
+      recall(userText, useNotes.getState().notes, 5).catch(() => []),
+      ensureSourcesLoaded()
+        .then(() => searchConnectedSources(userText, 5))
+        .catch(() => []),
+    ]);
+    // Insert just before the final user message (not at index 1): keeping the
+    // start of the message list untouched preserves the cached history prefix.
+    if (hits.length) {
+      messages.splice(messages.length - 1, 0, {
         role: "system",
-        content: "Relevant connected sources (cite [source:...], use read_source for full text):\n" + sources.map((source) =>
-          `- ${source.title} [source:${source.id}] (${source.provider}/${source.kind})\n  ${source.text.replace(/\s+/g, " ").slice(0, 500)}`
-        ).join("\n"),
+        content:
+          "Relevant notes from the user's memory (use if helpful, cite [id:...]):\n" + formatRecall(hits),
       });
-    } catch { /* source library unavailable — proceed */ }
+    }
+    if (sources.length) messages.splice(messages.length - 1, 0, {
+      role: "system",
+      content: "Relevant connected sources (cite [source:...], use read_source for full text):\n" + sources.map((source) =>
+        `- ${source.title} [source:${source.id}] (${source.provider}/${source.kind})\n  ${source.text.replace(/\s+/g, " ").slice(0, 500)}`
+      ).join("\n"),
+    });
 
     await runAgent(messages, controller);
   },
@@ -755,7 +817,9 @@ async function nameConversation(id: string): Promise<void> {
         { role: "system", content: "Generate a concise 3-5 word title for this conversation. Reply with ONLY the title — no quotes, no trailing punctuation." },
         { role: "user", content: `User: ${firstUser}\nAssistant: ${firstAsst}`.slice(0, 1500) },
       ],
-      requestModelId(),
+      // Titles never need the pro model — flash is cheaper and faster, and every
+      // tier can use it.
+      MODEL_ID.flash,
       []
     );
     const ai = (reply.content ?? "").trim().replace(/^["']|["']$/g, "").slice(0, 50);

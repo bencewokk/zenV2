@@ -2,23 +2,27 @@ import { useState } from "react";
 import { Connections } from "./sections/Connections";
 import { AiBehavior } from "./sections/AiBehavior";
 import { Appearance } from "./sections/Appearance";
+import { Assistant } from "./sections/Assistant";
 import { Data } from "./sections/Data";
 import { Billing } from "./sections/Billing";
+import { About } from "./sections/About";
 import LineSidebar from "@/shared/ui/reactbits/LineSidebar";
 
-type SectionId = "connections" | "billing" | "ai" | "appearance" | "data";
+type SectionId = "account" | "connections" | "ai" | "assistant" | "appearance" | "data" | "about";
 
 const SECTIONS: Array<{ id: SectionId; label: string; render: () => JSX.Element }> = [
+  { id: "account", label: "Account & plan", render: () => <Billing /> },
   { id: "connections", label: "Connections & keys", render: () => <Connections /> },
-  { id: "billing", label: "Plan & usage", render: () => <Billing /> },
   { id: "ai", label: "AI behavior", render: () => <AiBehavior /> },
+  { id: "assistant", label: "Phone & notifications", render: () => <Assistant /> },
   { id: "appearance", label: "Appearance", render: () => <Appearance /> },
-  { id: "data", label: "Data", render: () => <Data /> },
+  { id: "data", label: "Data & storage", render: () => <Data /> },
+  { id: "about", label: "About & updates", render: () => <About /> },
 ];
 
 /** Top-level Settings surface: section rail + content pane. */
 export function SettingsView() {
-  const [active, setActive] = useState<SectionId>("connections");
+  const [active, setActive] = useState<SectionId>("account");
   const section = SECTIONS.find((s) => s.id === active) ?? SECTIONS[0];
 
   return (

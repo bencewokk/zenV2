@@ -11,19 +11,32 @@
   position: fixed;
   inset: 0;
   z-index: 120;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
+  display: flex;
+  /* Tall beats (the setup grid on small windows) must scroll, not clip. */
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #000;
   isolation: isolate;
   color: var(--text);
   font-family: var(--font-ui);
 }
 
+/* Invisible strip along the top that lets the frameless window be moved while
+   the intro covers the app's normal titlebar drag region. */
+.spark-intro__dragbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 3;
+}
+
 /* The accent wash that the spark casts over the empty screen. Intensity is
    driven by --wash (0..1) so it can bloom as the spark ignites and settle. */
 .spark-intro__wash {
-  position: absolute;
+  /* Fixed (not absolute): the overlay scrolls, but the wash stays on the viewport. */
+  position: fixed;
   inset: 0;
   pointer-events: none;
   background:
@@ -39,7 +52,7 @@
 
 /* The spark itself. */
 .spark-intro__spark {
-  position: absolute;
+  position: fixed;
   top: 46%;
   left: 50%;
   width: 10px;
@@ -68,7 +81,9 @@
   align-items: center;
   gap: 14px;
   text-align: center;
-  padding: 24px;
+  padding: 40px 24px;
+  /* Centers in the flex overlay when short; top-aligns and scrolls when tall. */
+  margin: auto;
 }
 
 .spark-intro__title {
@@ -286,7 +301,7 @@
 }
 
 .spark-intro__skip {
-  position: absolute;
+  position: fixed;
   top: 20px;
   right: 22px;
   z-index: 4;

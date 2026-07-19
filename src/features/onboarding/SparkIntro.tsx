@@ -95,6 +95,8 @@ export function SparkIntro() {
       onClick={clickToAdvance ? advance : undefined}
     >
       <div className="spark-intro__wash" style={{ ["--wash" as string]: 1 }} />
+      {/* The intro covers the app titlebar, so it brings its own window-drag strip. */}
+      <div className="spark-intro__dragbar" data-tauri-drag-region />
       {b.kind === "ignite" && <div className="spark-intro__spark" />}
 
       <button className="spark-intro__skip" onClick={(e) => { e.stopPropagation(); handOff(); }}>
