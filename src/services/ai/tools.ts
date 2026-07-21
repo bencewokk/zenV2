@@ -2098,6 +2098,58 @@ export function studyModeActive(): boolean {
   return !!activeQuiz();
 }
 
+/** One canvas item as a compact label with its citable id, or null if it no
+ *  longer resolves (deleted note/pdf) — those are skipped, not shown as ghosts. */
+function targetLabel(t: HomeTarget): string | null {
+  if (t.type === "note") {
+    const n = useNotes.getState().notes[t.id];
+    return n ? `note "${n.title.slice(0, 60)}" [id:${t.id}]` : null;
+  }
+  if (t.type === "pdf") {
+    const p = usePdfs.getState().pdfs[t.id];
+    return p ? `pdf "${p.name.slice(0, 60)}" [pdf:${t.id}]` : null;
+  }
+  return `${t.type} ${t.id}`;
+}
+
+/**
+ * A compact "what's on screen" snapshot for the request's dynamic context, so
+ * the model knows what the user is looking at without spending tool calls on it.
+ * Kept to a handful of short lines — it is rebuilt on every request.
+ */
+export function appStateBlock(): string {
+  const ws = useWorkspace.getState();
+  const view =
+    ws.surface === "admin" ? (ws.adminFocus === "mail" ? "mail" : "calendar")
+    : ws.surface === "sources" ? "sources"
+    : ws.surface === "settings" ? "settings"
+    : useHome.getState().manualDeepWork ? "deepwork"
+    : "home";
+  const lines = [`View: ${view}`];
+
+  const noteId = useNotes.getState().selectedId;
+  const note = noteId ? useNotes.getState().notes[noteId] : null;
+  if (note) lines.push(`Open note: "${note.title.slice(0, 80)}" [id:${note.id}]`);
+
+  const dw = useDeepWork.getState();
+  const session = dw.activeId ? dw.sessions[dw.activeId] : null;
+  if (session) {
+    const items = session.items.map(targetLabel).filter(Boolean).slice(0, 8);
+    lines.push(
+      `Active Deep Work session: "${session.name.slice(0, 60)}"` +
+      (session.intent ? ` — goal: ${session.intent.slice(0, 120)}` : "") +
+      (items.length ? `\n  Canvas: ${items.join(", ")}` : "")
+    );
+  }
+
+  const lesson = useLesson.getState();
+  if (lesson.active) lines.push(`Lesson in progress: "${lesson.title || "untitled"}"`);
+  const quiz = activeQuiz();
+  if (quiz) lines.push(`Quiz in progress: "${quiz.title}" (the user is answering; wait for their submission)`);
+
+  return `\n\nApp state (what the user currently sees):\n${lines.map((l) => `- ${l}`).join("\n")}`;
+}
+
 /** Whether a tool should be offered to the model right now (integration
  *  connected, and study tools only inside Deep Work). */
 export function isToolAvailable(name: string): boolean {

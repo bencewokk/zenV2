@@ -27,6 +27,7 @@ vi.mock("@/services/ai/tools", () => ({
   studyModeActive: vi.fn(() => false),
   describeToolCall: vi.fn((name: string) => ({ title: name, detail: "test action", danger: false })),
   parseToolArgs: vi.fn((raw: string) => JSON.parse(raw || "{}")),
+  appStateBlock: vi.fn(() => "\n\nApp state (what the user currently sees):\n- View: home"),
 }));
 
 vi.mock("@/services/ai/toolPolicy", () => ({ policyFor: vi.fn(() => "auto") }));
@@ -40,6 +41,9 @@ vi.mock("@/services/memory", () => ({
   formatRecall: vi.fn(() => ""),
 }));
 vi.mock("@/features/notes/store", () => ({ useNotes: { getState: () => ({ notes: [] }) } }));
+vi.mock("@/features/pdfs/store", () => ({
+  usePdfs: { getState: () => ({ pdfs: { "pdf-1": { id: "pdf-1" } }, pagesFor: vi.fn(async () => null) }) },
+}));
 vi.mock("@/shared/stores/status", () => ({ useStatus: { getState: () => ({ set: mocks.statusSet }) } }));
 vi.mock("@/features/ai/access", () => ({
   useAiAccess: { getState: () => ({ tier: "plus" }) },
@@ -315,6 +319,69 @@ describe("AI request cancellation ownership", () => {
     expect(messages.some((message) =>
       message.role === "user" && message.content.includes("Created note [id:note-123] named Project plan."),
     )).toBe(true);
+  });
+
+  it("enriches the recall query with the previous exchange for short follow-ups", async () => {
+    const conversation = useAI.getState().conversations[0];
+    const turns = [
+      { id: "u1", role: "user" as const, content: "Explain the Cauchy integral theorem", status: "complete" as const },
+      { id: "a1", role: "assistant" as const, content: "It states that a holomorphic function...", status: "complete" as const },
+    ];
+    useAI.setState({ turns, conversations: [{ ...conversation, turns }] });
+    mocks.streamChatWithTools.mockImplementation(() => (async function* () {
+      yield "ok";
+      return { content: "ok" };
+    })());
+
+    await useAI.getState().send("what about the second part?");
+
+    const [query, , , pdfSources] = mocks.recallProgressive.mock.calls[0] as unknown as
+      [string, unknown, unknown, { pdfs: Record<string, unknown>; getPages: unknown }];
+    expect(query).toContain("Cauchy integral theorem");
+    expect(query).toContain("holomorphic");
+    expect(query).toContain("what about the second part?");
+    // The new user turn itself must not leak into the "previous exchange".
+    expect(query.match(/what about the second part\?/g)).toHaveLength(1);
+    expect(pdfSources.pdfs).toHaveProperty("pdf-1");
+    expect(typeof pdfSources.getPages).toBe("function");
+    // Connected-source search uses the same enriched query.
+    expect(mocks.searchConnectedSources).toHaveBeenCalledWith(query, 5);
+  });
+
+  it("injects the app-state snapshot into the dynamic context message", async () => {
+    mocks.streamChatWithTools.mockImplementation(() => (async function* () {
+      yield "ok";
+      return { content: "ok" };
+    })());
+
+    await useAI.getState().send("hello");
+
+    const messages = mocks.streamChatWithTools.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    const dynamic = messages.find((m) => m.role === "user" && m.content.includes("[Application context"));
+    expect(dynamic?.content).toContain("App state (what the user currently sees)");
+    expect(dynamic?.content).toContain("View: home");
+  });
+
+  it("keeps a long, specific message as the recall query on its own", async () => {
+    const conversation = useAI.getState().conversations[0];
+    const turns = [
+      { id: "u1", role: "user" as const, content: "Unrelated earlier topic", status: "complete" as const },
+      { id: "a1", role: "assistant" as const, content: "Earlier answer", status: "complete" as const },
+    ];
+    useAI.setState({ turns, conversations: [{ ...conversation, turns }] });
+    mocks.streamChatWithTools.mockImplementation(() => (async function* () {
+      yield "ok";
+      return { content: "ok" };
+    })());
+    const longMessage =
+      "Please compare the convergence behaviour of the Jacobi and Gauss-Seidel iterative methods " +
+      "for strictly diagonally dominant matrices, and explain which one converges faster and why.";
+
+    await useAI.getState().send(longMessage);
+
+    const [query] = mocks.recallProgressive.mock.calls[0] as unknown as [string];
+    expect(query).toBe(longMessage);
+    expect(query).not.toContain("Unrelated earlier topic");
   });
 
   it("keeps provider failures inline and safely retries requests without tools", async () => {
