@@ -262,4 +262,81 @@ describe("AI request cancellation ownership", () => {
     });
     expect(mocks.streamChatWithTools).not.toHaveBeenCalled();
   });
+
+  it("preserves unresolved proposals when switching conversations", () => {
+    const now = Date.now();
+    const owner: Conversation = { id: "owner", title: "Owner", turns: [], proposals: [], createdAt: now, updatedAt: now };
+    const target: Conversation = { id: "target", title: "Target", turns: [], proposals: [], createdAt: now, updatedAt: now };
+    const proposal = {
+      id: "proposal-pending",
+      conversationId: owner.id,
+      name: "auto_action",
+      args: {},
+      title: "Run action",
+      detail: "for owner",
+      danger: false,
+      status: "pending" as const,
+    };
+    useAI.setState({ conversations: [owner, target], activeId: owner.id, turns: [], proposals: [proposal] });
+
+    useAI.getState().switchConversation(target.id);
+    expect(useAI.getState().proposals).toEqual([]);
+    useAI.getState().switchConversation(owner.id);
+
+    expect(useAI.getState().proposals).toEqual([proposal]);
+  });
+
+  it("retains full tool outcomes in later model context", async () => {
+    const conversation = useAI.getState().conversations[0];
+    const turns = [
+      { id: "user-1", role: "user" as const, content: "Create it", status: "complete" as const },
+      {
+        id: "tool-1",
+        role: "tool" as const,
+        content: "Create note",
+        detail: "Project plan",
+        result: "Created note…",
+        modelResult: "Created note [id:note-123] named Project plan.",
+        tone: "done" as const,
+      },
+    ];
+    useAI.setState({
+      turns,
+      conversations: [{ ...conversation, turns }],
+    });
+    mocks.streamChatWithTools.mockImplementation(() => (async function* () {
+      yield "Done";
+      return { content: "Done" };
+    })());
+
+    await useAI.getState().send("Open it");
+
+    const messages = mocks.streamChatWithTools.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    expect(messages.some((message) =>
+      message.role === "user" && message.content.includes("Created note [id:note-123] named Project plan."),
+    )).toBe(true);
+  });
+
+  it("keeps provider failures inline and safely retries requests without tools", async () => {
+    mocks.streamChatWithTools.mockImplementationOnce(() => (async function* () {
+      throw new Error("provider offline");
+    })());
+
+    await useAI.getState().send("Explain this");
+
+    expect(useAI.getState().turns.at(-1)).toMatchObject({
+      role: "assistant",
+      status: "error",
+      error: "provider offline",
+    });
+
+    mocks.streamChatWithTools.mockImplementationOnce(() => (async function* () {
+      yield "Explanation";
+      return { content: "Explanation" };
+    })());
+    await useAI.getState().retryLast();
+
+    expect(useAI.getState().turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+    expect(useAI.getState().turns.at(-1)).toMatchObject({ content: "Explanation", status: "complete" });
+  });
 });

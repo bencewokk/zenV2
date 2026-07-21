@@ -12,6 +12,8 @@ vi.mock("./assistantSession.js", () => ({
   userIdFromAssistantSession: vi.fn(),
 }));
 
+import { userIdFromAssistantSession } from "./assistantSession.js";
+
 const ORIGINAL_GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
 function googleResponse(payload: Record<string, unknown>, status = 200): Response {
@@ -102,5 +104,18 @@ describe("browser Google access-token auth cache", () => {
 
     await userIdFromRequest("Bearer bounded-token-0");
     expect(fetchMock).toHaveBeenCalledTimes(516);
+  });
+
+  it("rejects assistant sessions unless an endpoint opts into their narrow scope", async () => {
+    vi.mocked(userIdFromAssistantSession).mockResolvedValue("assistant-user");
+    const { userIdFromRequest } = await import("./auth.js");
+
+    await expect(userIdFromRequest("Bearer zen_session-token")).rejects.toThrow(
+      "assistant session is not valid for this endpoint",
+    );
+    await expect(userIdFromRequest(
+      "Bearer zen_session-token",
+      { allowAssistantSession: true },
+    )).resolves.toBe("assistant-user");
   });
 });

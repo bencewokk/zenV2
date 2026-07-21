@@ -83,12 +83,24 @@ function audiences(): string[] {
     .filter(Boolean);
 }
 
-export async function userIdFromRequest(authHeader: string | undefined): Promise<string> {
+export interface RequestAuthOptions {
+  /** Assistant/PWA sessions are deliberately narrower than Google identity
+   * tokens and must only be accepted by assistant-specific routes. */
+  allowAssistantSession?: boolean;
+}
+
+export async function userIdFromRequest(
+  authHeader: string | undefined,
+  options: RequestAuthOptions = {},
+): Promise<string> {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     throw new Error("missing bearer token");
   }
   const token = authHeader.slice("Bearer ".length).trim();
-  if (token.startsWith("zen_")) return userIdFromAssistantSession(token);
+  if (token.startsWith("zen_")) {
+    if (!options.allowAssistantSession) throw new Error("assistant session is not valid for this endpoint");
+    return userIdFromAssistantSession(token);
+  }
   const aud = audiences();
   if (aud.length === 0) throw new Error("GOOGLE_CLIENT_ID is not configured");
 
