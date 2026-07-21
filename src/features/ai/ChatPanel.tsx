@@ -46,7 +46,15 @@ function UsageBadge({ promptTokens, completionTokens }: { promptTokens?: number;
 /** Historical turns keep the same object identity while the live answer grows,
  * so memoization avoids re-running Markdown, KaTeX, and sanitization for the
  * entire conversation on every streamed chunk. */
-const TurnBubble = memo(function TurnBubble({ turn }: { turn: ChatTurn }) {
+const TurnBubble = memo(function TurnBubble({
+  turn,
+  retryable = false,
+  onRetry,
+}: {
+  turn: ChatTurn;
+  retryable?: boolean;
+  onRetry?: () => void;
+}) {
   if (turn.role === "tool") {
     return (
       <div className="zen-anim-rise flex flex-col gap-0.5 text-xs">
@@ -80,10 +88,30 @@ const TurnBubble = memo(function TurnBubble({ turn }: { turn: ChatTurn }) {
         }`}
       >
         {turn.role === "assistant" ? (
-          <div
-            className="zen-md"
-            dangerouslySetInnerHTML={{ __html: linkifyCitations(renderMarkdown(turn.content || "…")) }}
-          />
+          <div>
+            {(turn.content || turn.status === "streaming") && (
+              <div
+                className="zen-md"
+                dangerouslySetInnerHTML={{ __html: linkifyCitations(renderMarkdown(turn.content || "…")) }}
+              />
+            )}
+            {(turn.status === "error" || turn.status === "stopped") && (
+              <div className={`mt-1.5 flex items-center gap-2 text-xs ${turn.status === "error" ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}>
+                <span className="min-w-0 flex-1">
+                  {turn.status === "error" ? (turn.error || "The reply failed.") : "Stopped."}
+                </span>
+                {retryable && onRetry && (
+                  <button
+                    type="button"
+                    className="zen-pressable shrink-0 rounded border border-[var(--border)] px-2 py-0.5 text-[var(--text)]"
+                    onClick={onRetry}
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <span className="whitespace-pre-wrap">{turn.content}</span>
         )}
@@ -97,6 +125,7 @@ export function ChatPanel() {
   const turns = useAI((s) => s.turns);
   const streaming = useAI((s) => s.streaming);
   const send = useAI((s) => s.send);
+  const retryLast = useAI((s) => s.retryLast);
   const stop = useAI((s) => s.stop);
   const toggle = useAI((s) => s.toggle);
   const proposals = useAI((s) => s.proposals);
@@ -130,6 +159,15 @@ export function ChatPanel() {
   // it would be redundant noise rather than useful signal.
   const lastTurn = turns[turns.length - 1];
   const hasLiveContent = !!lastTurn && lastTurn.role === "assistant" && !!lastTurn.content;
+  let lastUserIndex = -1;
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    if (turns[i].role === "user") { lastUserIndex = i; break; }
+  }
+  const turnsAfterLastUser = lastUserIndex === -1 ? [] : turns.slice(lastUserIndex + 1);
+  const retryableTurnId = turnsAfterLastUser.some((turn) => turn.role === "tool")
+    ? null
+    : [...turnsAfterLastUser].reverse().find((turn) =>
+        turn.role === "assistant" && (turn.status === "error" || turn.status === "stopped"))?.id ?? null;
 
   useEffect(() => {
     stickToBottom.current = true;
@@ -210,7 +248,7 @@ export function ChatPanel() {
   }
 
   return (
-    <aside data-tour="ai-panel" className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
+    <aside aria-label="Zen AI chat" data-tour="ai-panel" className={`${animClass} flex w-[360px] shrink-0 flex-col border-l border-[var(--border)]`}>
       {/* Primary row: conversation + new + close */}
       <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-3 py-2">
         <Dropdown
@@ -228,6 +266,7 @@ export function ChatPanel() {
           onClick={newConversation}
           disabled={conversationBusy}
           title={conversationBusy ? "Stop or wait for the current action before starting a new conversation" : "New conversation"}
+          aria-label="New conversation"
         >
           ＋
         </button>
@@ -235,6 +274,7 @@ export function ChatPanel() {
           className="zen-pressable shrink-0 rounded px-1.5 text-sm leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
           onClick={toggle}
           title="Close panel"
+          aria-label="Close AI panel"
         >
           ✕
         </button>
@@ -314,6 +354,9 @@ export function ChatPanel() {
 
       <div
         ref={scrollRef}
+        role="log"
+        aria-label="Conversation"
+        aria-busy={streaming}
         data-tour="ai-thread"
         className="flex-1 space-y-3 overflow-y-auto px-3 py-3"
         onScroll={(event) => {
@@ -327,11 +370,21 @@ export function ChatPanel() {
             then ask me to study your Deep Work material.
           </div>
         )}
-        {turns.map((turn, i) => <TurnBubble key={i} turn={turn} />)}
+        {turns.map((turn, i) => {
+          const retryable = !!turn.id && turn.id === retryableTurnId;
+          return (
+            <TurnBubble
+              key={turn.id ?? i}
+              turn={turn}
+              retryable={retryable}
+              onRetry={retryable ? retryLast : undefined}
+            />
+          );
+        })}
         {proposals
-          // Resolved cards (done/error) become inline tool turns, so only the
-          // still-actionable ones live here at the bottom of the chat.
-          .filter((p) => p.conversationId === activeId && (p.status === "pending" || p.status === "running"))
+          // Resolved cards become inline tool turns. Interrupted running cards
+          // remain visible as errors until the user acknowledges them.
+          .filter((p) => p.conversationId === activeId && (p.status === "pending" || p.status === "running" || p.status === "error"))
           .map((p) => (
             <div
               key={p.id}
@@ -369,8 +422,18 @@ export function ChatPanel() {
                     Dismiss
                   </button>
                 </div>
+              ) : p.status === "error" ? (
+                <div className="space-y-2 text-xs text-[var(--danger)]">
+                  <div>{p.result ?? "Completion is unknown. Check the target before retrying."}</div>
+                  <button
+                    className="zen-pressable rounded border border-[var(--border)] px-3 py-1 text-[var(--text-dim)] hover:text-[var(--text)]"
+                    onClick={() => dismissProposal(p.id)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
               ) : (
-                <div className={`text-xs ${p.status === "error" ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}>
+                <div className="text-xs text-[var(--text-dim)]">
                   {p.status === "running" ? "Running…" : p.status === "done" ? (p.result ?? "Done") : (p.result ?? "Failed")}
                 </div>
               )}
@@ -417,6 +480,7 @@ export function ChatPanel() {
             }
           }}
           placeholder={blocked ? "AI is unavailable for this account" : "Message… (Enter to send, Shift+Enter for newline)"}
+          aria-label="Message Zen"
           rows={3}
           disabled={blocked}
           className="w-full resize-none rounded bg-[var(--bg-elev)] px-2 py-1.5 text-sm outline-none placeholder:text-[var(--text-dim)] disabled:opacity-60"

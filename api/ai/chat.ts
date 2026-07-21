@@ -67,7 +67,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   if (req.query.assistant === "background") {
     let userId: string;
-    try { userId = await userIdFromRequest(req.headers.authorization); }
+    try { userId = await userIdFromRequest(req.headers.authorization, { allowAssistantSession: true }); }
     catch { res.status(401).json({ error: "unauthorized", code: "unauthorized" }); return; }
     if (req.method === "GET") {
       const [google, subscriptions, latestRun] = await Promise.all([
@@ -112,7 +112,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (req.method !== "GET" && req.method !== "POST") { res.status(405).json({ error: "method not allowed" }); return; }
     try {
-      const userId = await userIdFromRequest(req.headers.authorization);
+      const userId = await userIdFromRequest(req.headers.authorization, { allowAssistantSession: true });
       if (req.method === "GET") { res.status(200).json({ connected: true }); return; }
       res.status(200).json(await issueAssistantSession(userId)); return;
     } catch {
@@ -123,7 +123,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== "POST") { res.status(405).json({ error: "method not allowed" }); return; }
     let assistantUserId: string;
     try {
-      assistantUserId = await userIdFromRequest(req.headers.authorization);
+      assistantUserId = await userIdFromRequest(req.headers.authorization, { allowAssistantSession: true });
     } catch {
       res.status(401).json({ error: "unauthorized", code: "unauthorized" }); return;
     }
