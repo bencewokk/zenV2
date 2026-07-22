@@ -11,8 +11,10 @@ import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
 import { fmtClock, nextToReview, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import {
   reconcilePlan as reconcilePlanPure, nextSession, planHealth,
-  fmtPlanDay, fmtStartMin, verdictColor, verdictLabel, mostUrgentExam, KIND_META,
+  fmtPlanDay, fmtStartMin, verdictColor, verdictLabel, KIND_META,
 } from "@/features/home/deepwork/studyPlan";
+import { pickExamHero } from "@/features/home/deepwork/courseRollup";
+import { useCourses, courseList } from "@/features/home/deepwork/courseStore";
 import { useStudyLog, dayKey, HOUR_MS, computeStreak } from "@/features/home/deepwork/studyLog";
 import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
 import { useAI } from "@/features/ai/store";
@@ -1265,9 +1267,12 @@ function WeeklyStudyChart() {
 
 /**
  * The dashboard's decisive "next academic action": the most urgent exam across
- * all Deep Work sessions, with days left, evidence-based readiness, the verdict,
- * the weakest concept, and a one-click jump into that session. Hidden entirely
- * when no session has an AI-built plan with an exam date.
+ * courses and ungrouped Deep Work sessions, with days left, evidence-based
+ * readiness, the verdict, the weakest concept, and a one-click jump into the
+ * right session. A course hero aggregates its members (readiness rollup, exam
+ * countdown from the course's or nearest member's date); a session belonging to
+ * a course is represented by the course, never on its own. Hidden entirely when
+ * nothing has an exam date with study evidence behind it.
  */
 function ExamFocusHero({ now, className = "" }: { now: number; className?: string }) {
   const sessions = useDeepWork((s) => s.sessions);
@@ -1275,21 +1280,38 @@ function ExamFocusHero({ now, className = "" }: { now: number; className?: strin
   const switchSession = useDeepWork((s) => s.switchSession);
   const setManualDeepWork = useHome((s) => s.setManualDeepWork);
   const select = useNotes((s) => s.select);
+  const courses = useCourses((s) => s.courses);
+  const courseOrder = useCourses((s) => s.order);
 
-  const focus = useMemo(
-    () => mostUrgentExam(sessionList({ sessions, order }).filter((s) => !s.archived), now),
-    [sessions, order, now]
+  const hero = useMemo(
+    () => pickExamHero(courseList({ courses, order: courseOrder }), sessions, order, now),
+    [courses, courseOrder, sessions, order, now]
   );
-  if (!focus) return null;
+  if (!hero) return null;
 
-  const weak = nextToReview(sessions[focus.sessionId]?.backbone ?? null, now);
-  const h = focus.health;
-  const color = verdictColor(h);
-  const dayLabel = h.daysLeft === 0 ? "Exam today" : h.daysLeft === 1 ? "Exam tomorrow" : `Exam in ${h.daysLeft} days`;
+  // The two hero shapes unify: a course hero borrows verdict/urgency from its
+  // most urgent member (when one qualifies) and rolls readiness up over members.
+  const urgent = hero.kind === "course" ? hero.rollup.urgent : hero.urgent;
+  const h = urgent?.health ?? null;
+  const title =
+    hero.kind === "course"
+      ? `${hero.course.emoji ? `${hero.course.emoji} ` : ""}${hero.course.name}`
+      : hero.urgent.plan.goal || hero.urgent.sessionName;
+  const daysLeft = hero.kind === "course" ? hero.rollup.daysLeft ?? 0 : hero.urgent.health.daysLeft;
+  const targetId = hero.kind === "course" ? hero.rollup.studyTargetId : hero.urgent.sessionId;
+  const readiness = hero.kind === "course" ? hero.rollup.readiness : hero.urgent.health.effectiveReadiness;
+  const coverage =
+    hero.kind === "course" && hero.rollup.assessedCount < hero.rollup.memberCount
+      ? ` · ${hero.rollup.assessedCount}/${hero.rollup.memberCount} assessed`
+      : "";
+  const weak = targetId ? nextToReview(sessions[targetId]?.backbone ?? null, now) : null;
+  const color = h ? verdictColor(h) : "var(--accent)";
+  const dayLabel = daysLeft === 0 ? "Exam today" : daysLeft === 1 ? "Exam tomorrow" : `Exam in ${daysLeft} days`;
 
   function studyNow() {
+    if (!targetId) return;
     select(null);
-    switchSession(focus!.sessionId);
+    switchSession(targetId);
     setManualDeepWork(true);
   }
 
@@ -1301,9 +1323,11 @@ function ExamFocusHero({ now, className = "" }: { now: number; className?: strin
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="zen-meta text-[11px] uppercase tracking-[0.24em]">Exam focus</div>
+          <div className="zen-meta text-[11px] uppercase tracking-[0.24em]">
+            {hero.kind === "course" ? "Course exam focus" : "Exam focus"}
+          </div>
           <div className="mt-1 truncate text-lg font-semibold text-[var(--text)]">
-            {focus.plan.goal || focus.sessionName}
+            {title}
           </div>
         </div>
         <span
@@ -1314,8 +1338,10 @@ function ExamFocusHero({ now, className = "" }: { now: number; className?: strin
         </span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--text-dim)]">
-        <span className="font-medium tabular-nums" style={{ color }}>{h.effectiveReadiness}% ready</span>
-        <span>· {verdictLabel(h)}</span>
+        {readiness != null && (
+          <span className="font-medium tabular-nums" style={{ color }}>{readiness}% ready{coverage}</span>
+        )}
+        {h && <span>· {verdictLabel(h)}</span>}
         {weak && (
           <span className="min-w-0">· weakest: <span className="text-[var(--text)]">{weak.title}</span></span>
         )}

@@ -9,6 +9,8 @@ import {
   type PlannedSession, type StudyPlan, type PlanSessionKind, type PlanSessionStatus,
 } from "@/features/home/deepwork/studyPlan";
 import { useStudyLog, dayKey } from "@/features/home/deepwork/studyLog";
+import { useCourses, courseOf } from "@/features/home/deepwork/courseStore";
+import { courseRollup } from "@/features/home/deepwork/courseRollup";
 import { useLesson, type LessonBlock } from "@/features/home/deepwork/lessonStore";
 import { useQuiz, activeQuiz, quizQAList, sessionQuizzes, masteryUpdatesFor, sessionMistakes, type Verdict, type QuizInputKind } from "@/features/home/deepwork/quizStore";
 import { usePdfs } from "@/features/pdfs/store";
@@ -34,6 +36,7 @@ import {
 import {
   getCanvasAssignment, listCanvasAnnouncements, listCanvasAssignments,
   listCanvasCourses, listCanvasFiles, listCanvasModules,
+  listCanvasPages, getCanvasPage, listCanvasPlanner, downloadCanvasFile,
   type CanvasAssignment, type CanvasCourse,
 } from "@/services/canvas/client";
 import { loadCanvasSettings } from "@/services/canvas/settings";
@@ -866,7 +869,7 @@ const TOOLS: ToolImpl[] = [
       if (!modules.length) return "No modules found in that Canvas course.";
       return modules.slice(0, 30).map((module) => {
         const items = (module.items ?? []).slice(0, 40).map((item) =>
-          `  - ${item.title} (${item.type})${item.completion_requirement?.completed === true ? " · complete" : item.completion_requirement ? " · incomplete" : ""}`
+          `  - ${item.title} (${item.type})${item.type === "Page" && item.page_url ? ` [page:${item.page_url}]` : ""}${item.type === "File" && item.content_id ? ` [file:${item.content_id}]` : ""}${item.completion_requirement?.completed === true ? " · complete" : item.completion_requirement ? " · incomplete" : ""}`
         );
         return `- ${module.name} [module:${module.id}]${items.length ? `\n${items.join("\n")}` : ""}`;
       }).join("\n");
@@ -896,6 +899,70 @@ const TOOLS: ToolImpl[] = [
       return files.slice(0, 50).map((file) =>
         `- ${file.display_name} · ${file.content_type ?? "file"} · updated ${canvasDate(file.updated_at)} [file:${file.id}]${file.url ? `\n  ${file.url}` : ""}`
       ).join("\n");
+    }
+  ),
+  tool(
+    "canvas_upcoming",
+    "The user's cross-course Canvas planner: everything due soon (assignments, quizzes, discussions, " +
+      "calendar events) with submission state, soonest first. Prefer this over per-course " +
+      "canvas_list_assignments when the question is 'what's due / what should I work on'.",
+    obj({ days: num("how many days ahead; default 14") }),
+    async (a) => {
+      const items = await listCanvasPlanner(Math.max(1, Number(a.days ?? 14)));
+      if (!items.length) return "Nothing on the Canvas planner in that window.";
+      const rows = items
+        .map((p) => {
+          const due = p.plannable?.due_at ?? p.plannable?.todo_date ?? p.plannable_date;
+          const sub = typeof p.submissions === "object" && p.submissions !== null ? p.submissions : undefined;
+          const status = sub?.excused ? "excused" : sub?.submitted ? (sub.graded ? "submitted · graded" : "submitted") : sub?.missing ? "MISSING" : "not submitted";
+          return {
+            when: due ? new Date(due).getTime() : Number.MAX_SAFE_INTEGER,
+            line: `- ${canvasDate(due)} — ${p.context_name ? `${p.context_name}: ` : ""}${p.plannable?.title ?? "untitled"} ` +
+              `(${p.plannable_type.replace(/_/g, " ")}${p.plannable?.points_possible != null ? ` · ${p.plannable.points_possible} pts` : ""} · ${status})`,
+          };
+        })
+        .sort((x, y) => x.when - y.when);
+      return rows.slice(0, 40).map((r) => r.line).join("\n") +
+        (rows.length > 40 ? `\n…${rows.length - 40} more items omitted; narrow the window.` : "");
+    }
+  ),
+  tool(
+    "canvas_list_pages",
+    "List a Canvas course's content pages (wiki pages) with the slugs canvas_read_page takes.",
+    obj({ courseId: num("Canvas course id") }, ["courseId"]),
+    async (a) => {
+      const pages = await listCanvasPages(Number(a.courseId));
+      if (!pages.length) return "No pages found in that Canvas course.";
+      return pages.slice(0, 60).map((page) =>
+        `- ${page.title} [page:${page.url}]${page.front_page ? " · front page" : ""} · updated ${canvasDate(page.updated_at)}`
+      ).join("\n");
+    }
+  ),
+  tool(
+    "canvas_read_page",
+    "Read the full content of one Canvas course page. Pass the [page:...] slug from canvas_list_pages or canvas_list_modules.",
+    obj({ courseId: num("Canvas course id"), page: str("page url slug (or page id)") }, ["courseId", "page"]),
+    async (a) => {
+      const page = await getCanvasPage(Number(a.courseId), String(a.page));
+      const body = plainHtml(page.body ?? "");
+      return `# ${page.title}\nUpdated: ${canvasDate(page.updated_at)}\n\n${body ? body.slice(0, 12000) : "This page has no content."}`;
+    }
+  ),
+  tool(
+    "canvas_import_file",
+    "Download a PDF file from Canvas into the user's Zen PDF library so it can be read, indexed, " +
+      "highlighted, and studied in Deep Work. Pass the [file:...] id from canvas_list_files or " +
+      "canvas_list_modules. Only PDF files can be imported.",
+    obj({ fileId: num("Canvas file id"), tags: str("optional comma-separated tags for the imported PDF") }, ["fileId"]),
+    async (a) => {
+      const { file, blob } = await downloadCanvasFile(Number(a.fileId));
+      const isPdf = blob.type === "application/pdf" || /\.pdf$/i.test(file.filename || file.display_name);
+      if (!isPdf) return `"${file.display_name}" is ${file.content_type ?? "not a PDF"} — only PDF files can be imported into the library.`;
+      const named = new File([blob], file.display_name.endsWith(".pdf") ? file.display_name : `${file.display_name}.pdf`, { type: "application/pdf" });
+      const tags = a.tags ? String(a.tags).split(",").map((t) => t.trim()).filter(Boolean) : [];
+      const id = await usePdfs.getState().add(named, tags);
+      if (!id) return `Could not store "${file.display_name}" in the PDF library.`;
+      return `Imported "${file.display_name}" into the PDF library [pdf:${id}]. Text extraction runs in the background; it becomes searchable shortly.`;
     }
   ),
   tool(
@@ -2076,6 +2143,7 @@ const GOOGLE_TOOLS = new Set([
 const CANVAS_TOOLS = new Set([
   "canvas_list_courses", "canvas_list_assignments", "canvas_get_assignment",
   "canvas_list_modules", "canvas_list_announcements", "canvas_list_files",
+  "canvas_upcoming", "canvas_list_pages", "canvas_read_page", "canvas_import_file",
 ]);
 
 // Study tools only make sense inside Deep Work — outside it they'd cost prompt
@@ -2109,6 +2177,10 @@ function targetLabel(t: HomeTarget): string | null {
     const p = usePdfs.getState().pdfs[t.id];
     return p ? `pdf "${p.name.slice(0, 60)}" [pdf:${t.id}]` : null;
   }
+  if (t.type === "source") {
+    const s = useSources.getState().sources[t.id];
+    return s ? `${s.provider} ${s.kind} "${s.title.slice(0, 60)}"` : null;
+  }
   return `${t.type} ${t.id}`;
 }
 
@@ -2140,6 +2212,18 @@ export function appStateBlock(): string {
       (session.intent ? ` — goal: ${session.intent.slice(0, 120)}` : "") +
       (items.length ? `\n  Canvas: ${items.join(", ")}` : "")
     );
+    // When the session belongs to a course, surface the course + its (possibly
+    // Canvas-seeded) deadline and rolled-up readiness, so the assistant can reason
+    // about the wider class, not just this one session.
+    const cs = useCourses.getState();
+    const course = courseOf(session.id, cs);
+    if (course) {
+      const r = courseRollup(course, dw.sessions, Date.now());
+      const bits: string[] = [];
+      if (r.daysLeft != null) bits.push(r.daysLeft <= 0 ? "exam due" : `exam in ${r.daysLeft}d`);
+      if (r.readiness != null) bits.push(`${r.readiness}% ready`);
+      lines.push(`Course: "${course.name.slice(0, 60)}"${bits.length ? ` (${bits.join(" · ")})` : ""}`);
+    }
   }
 
   const lesson = useLesson.getState();
@@ -2176,6 +2260,7 @@ export const READ_TOOLS = new Set([
   "deepwork_read_material", "deepwork_weak_concepts", "deepwork_plan_status",
   "canvas_list_courses", "canvas_list_assignments", "canvas_get_assignment",
   "canvas_list_modules", "canvas_list_announcements", "canvas_list_files",
+  "canvas_upcoming", "canvas_list_pages", "canvas_read_page",
   "search_sources", "read_source", "refresh_sources",
 ]);
 
@@ -2242,6 +2327,7 @@ const CATEGORY_SETS: Array<[string, Set<string>]> = [
   ["Canvas", new Set([
     "canvas_list_courses", "canvas_list_assignments", "canvas_get_assignment",
     "canvas_list_modules", "canvas_list_announcements", "canvas_list_files",
+    "canvas_upcoming", "canvas_list_pages", "canvas_read_page", "canvas_import_file",
   ])],
   ["Sources", new Set(["search_sources", "read_source", "refresh_sources", "cite_source"])],
   ["PDF", new Set([
@@ -2359,6 +2445,10 @@ export function describeToolCall(name: string, args: Record<string, unknown>): T
     case "canvas_list_modules": return d("List Canvas modules", `course ${s("courseId")}`);
     case "canvas_list_announcements": return d("List Canvas announcements", s("courseId") ? `course ${s("courseId")}` : "all courses");
     case "canvas_list_files": return d("List Canvas files", `course ${s("courseId")}`);
+    case "canvas_upcoming": return d("Check Canvas planner", `next ${s("days") || "14"} days`);
+    case "canvas_list_pages": return d("List Canvas pages", `course ${s("courseId")}`);
+    case "canvas_read_page": return d("Read Canvas page", s("page"));
+    case "canvas_import_file": return d("Import Canvas file as PDF", `file ${s("fileId")}`);
     case "search_sources": return d("Search connected sources", s("query"));
     case "read_source": return d("Read connected source", s("id"));
     case "refresh_sources": return d("Refresh connected sources", "all configured connections");

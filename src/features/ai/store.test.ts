@@ -52,6 +52,10 @@ vi.mock("@/features/ai/access", () => ({
 }));
 vi.mock("@/shared/ui/notify", () => ({ notify: { error: vi.fn() } }));
 vi.mock("@/services/sync/cursor", () => ({ markBlobDirty: vi.fn() }));
+vi.mock("@/services/canvas/upcoming", () => ({
+  canvasContextBlock: vi.fn(() => ""),
+  refreshCanvasUpcoming: vi.fn(),
+}));
 vi.mock("@/services/sources/store", () => ({
   ensureSourcesLoaded: vi.fn(async () => undefined),
   searchConnectedSources: mocks.searchConnectedSources,

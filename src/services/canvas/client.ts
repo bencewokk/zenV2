@@ -56,6 +56,8 @@ export interface CanvasModuleItem {
   indent: number;
   html_url?: string;
   content_id?: number;
+  /** For type "Page": the slug to pass to getCanvasPage. */
+  page_url?: string;
   completion_requirement?: { type: string; completed?: boolean };
 }
 
@@ -193,5 +195,74 @@ export async function listCanvasAnnouncements(courseIds: number[], days = 30, si
 export async function listCanvasFiles(courseId: number, signal?: AbortSignal): Promise<CanvasFile[]> {
   const query = params([["sort", "updated_at"], ["order", "desc"], ["per_page", 100]]);
   return paged<CanvasFile>(`/courses/${encodeURIComponent(courseId)}/files?${query}`, signal);
+}
+
+export interface CanvasPageSummary {
+  page_id: number;
+  /** URL slug — the identifier getCanvasPage takes. */
+  url: string;
+  title: string;
+  updated_at?: string;
+  front_page?: boolean;
+  published?: boolean;
+}
+
+export interface CanvasPage extends CanvasPageSummary {
+  body?: string | null;
+}
+
+export async function listCanvasPages(courseId: number, signal?: AbortSignal): Promise<CanvasPageSummary[]> {
+  const query = params([["sort", "title"], ["per_page", 100]]);
+  return paged<CanvasPageSummary>(`/courses/${encodeURIComponent(courseId)}/pages?${query}`, signal);
+}
+
+export async function getCanvasPage(courseId: number, pageUrlOrId: string, signal?: AbortSignal): Promise<CanvasPage> {
+  return (await request<CanvasPage>(`/courses/${encodeURIComponent(courseId)}/pages/${encodeURIComponent(pageUrlOrId)}`, signal)).data;
+}
+
+/** One entry in the user's cross-course planner feed (assignments, quizzes,
+ *  discussions, calendar events, planner notes — anything with a date). */
+export interface CanvasPlannerItem {
+  context_name?: string;
+  course_id?: number;
+  plannable_type: string;
+  plannable_date?: string;
+  html_url?: string;
+  plannable?: {
+    id?: number;
+    title?: string;
+    due_at?: string | null;
+    todo_date?: string | null;
+    points_possible?: number | null;
+  };
+  /** Canvas sends `false` (not an object) when submission state doesn't apply. */
+  submissions?: false | { submitted?: boolean; graded?: boolean; missing?: boolean; excused?: boolean };
+}
+
+export async function listCanvasPlanner(daysAhead = 14, signal?: AbortSignal): Promise<CanvasPlannerItem[]> {
+  const end = new Date();
+  end.setDate(end.getDate() + Math.max(1, daysAhead));
+  const query = params([
+    ["start_date", new Date().toISOString()], ["end_date", end.toISOString()], ["per_page", 100],
+  ]);
+  return paged<CanvasPlannerItem>(`/planner/items?${query}`, signal);
+}
+
+export async function getCanvasFile(fileId: number, signal?: AbortSignal): Promise<CanvasFile> {
+  return (await request<CanvasFile>(`/files/${encodeURIComponent(fileId)}`, signal)).data;
+}
+
+/**
+ * Download a Canvas file's content. The metadata lookup is authenticated; the
+ * actual download uses the returned `url` WITHOUT the bearer header — that URL
+ * embeds its own single-use verifier and often redirects to a storage host,
+ * where sending the Canvas token would leak it cross-origin.
+ */
+export async function downloadCanvasFile(fileId: number, signal?: AbortSignal): Promise<{ file: CanvasFile; blob: Blob }> {
+  const file = await getCanvasFile(fileId, signal);
+  if (!file.url) throw new Error("Canvas did not provide a download URL for that file.");
+  const response = await httpFetch(file.url, { signal });
+  if (!response.ok) throw new Error(describeError(response.status, await response.text().catch(() => "")));
+  return { file, blob: await response.blob() };
 }
 

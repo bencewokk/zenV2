@@ -4,6 +4,7 @@ import type { CalEvent } from "@/services/google/calendar";
 import type { MailThread } from "@/services/google/gmail";
 import { useHome, type HomeTarget } from "@/features/home/store";
 import { usePdfs } from "@/features/pdfs/store";
+import { useSources, ensureSourcesLoaded } from "@/services/sources/store";
 import {
   targetKey,
   useDeepWork,
@@ -14,6 +15,7 @@ import { NoteWindow } from "@/features/home/deepwork/windows/NoteWindow";
 import { EmailWindow } from "@/features/home/deepwork/windows/EmailWindow";
 import { EventWindow } from "@/features/home/deepwork/windows/EventWindow";
 import { PdfWindow } from "@/features/home/deepwork/windows/PdfWindow";
+import { SourceWindow } from "@/features/home/deepwork/windows/SourceWindow";
 import { SourceLibrary } from "@/features/home/deepwork/SourceLibrary";
 import { SessionLauncher } from "@/features/home/deepwork/SessionLauncher";
 
@@ -148,7 +150,12 @@ export function DeepWorkV2({
   const setZenMode = useDeepWork((s) => s.setZenMode);
   const matchedLabels = useHome((s) => s.matchedThreadLabels);
   const pdfs = usePdfs((s) => s.pdfs);
+  const sources = useSources((s) => s.sources);
   const sessionName = useDeepWork((s) => (s.activeId ? s.sessions[s.activeId]?.name : "") ?? "");
+
+  // Connected sources live in IndexedDB; make sure they're mirrored into the
+  // store so source windows and the library can resolve them.
+  useEffect(() => { void ensureSourcesLoaded(); }, []);
 
   const [showLibrary, setShowLibrary] = useState(false);
 
@@ -173,6 +180,7 @@ export function DeepWorkV2({
     if (item.type === "note") return { glyph: "✎", accent: "var(--accent)", title: notes[item.id]?.title || "Untitled" };
     if (item.type === "event") return { glyph: "◷", accent: "var(--accent)", title: events.find((e) => e.id === item.id)?.summary || "Event" };
     if (item.type === "pdf") return { glyph: "📄", accent: "#e0a35f", title: pdfs[item.id]?.name || "PDF" };
+    if (item.type === "source") return { glyph: "🎓", accent: "#5fb0c9", title: sources[item.id]?.title || "Source" };
     return { glyph: "✉", accent: "#b073e0", title: threads.find((t) => t.id === item.id)?.subject || "Email" };
   }
 
@@ -413,6 +421,23 @@ export function DeepWorkV2({
                 </WindowFrame>
               );
             }
+            if (item.type === "source") {
+              const source = sources[item.id];
+              return (
+                <WindowFrame
+                  key={key}
+                  geom={geom}
+                  onCommit={commit}
+                  {...stack}
+                  glyph="🎓"
+                  accent="#5fb0c9"
+                  title={source?.title || "Source"}
+                  onHeaderContextMenu={(e) => openRelatedMenu(e, item)}
+                >
+                  {source ? <SourceWindow sourceId={item.id} /> : <Missing label="This source isn't synced on this device yet." />}
+                </WindowFrame>
+              );
+            }
             const thread = threads.find((t) => t.id === item.id);
             return (
               <WindowFrame
@@ -452,6 +477,7 @@ export function DeepWorkV2({
           events={events}
           threads={threads}
           pdfs={pdfs}
+          sources={sources}
           current={items}
           onAdd={(t) => addItem(t)}
           onClose={() => setShowLibrary(false)}

@@ -22,6 +22,7 @@ import { makeFilteredBlobAdapter } from "./adapters/filteredBlob";
 import { WORKSPACE_KEY, hydrateWorkspace } from "@/shared/stores/workspace";
 import { STUDYLOG_KEY, hydrateStudyLog } from "@/features/home/deepwork/studyLog";
 import { DEEPWORK_KEY, hydrateDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { COURSES_KEY, hydrateCourses } from "@/features/home/deepwork/courseStore";
 import { QUIZ_KEY, hydrateQuiz } from "@/features/home/deepwork/quizStore";
 import { AI_CONV_KEY, hydrateAI } from "@/features/ai/store";
 import { PROFILE_KEY, hydrateProfile } from "@/services/memory/profile";
@@ -45,6 +46,7 @@ const adapters: SyncAdapter[] = [
   makeBlobAdapter("workspace", WORKSPACE_KEY, hydrateWorkspace),
   makeBlobAdapter("studylog", STUDYLOG_KEY, hydrateStudyLog),
   makeBlobAdapter("deepwork", DEEPWORK_KEY, hydrateDeepWork),
+  makeBlobAdapter("courses", COURSES_KEY, hydrateCourses),
   makeBlobAdapter("quiz", QUIZ_KEY, hydrateQuiz),
   makeBlobAdapter("ai", AI_CONV_KEY, hydrateAI),
   makeBlobAdapter("memoryProfile", PROFILE_KEY, hydrateProfile),

@@ -15,7 +15,8 @@ export type HomeTarget =
   | { type: "event"; id: string }
   | { type: "mail"; id: string }
   | { type: "note"; id: string }
-  | { type: "pdf"; id: string };
+  | { type: "pdf"; id: string }
+  | { type: "source"; id: string }; // a connected source (e.g. a Canvas assignment/file), id = ConnectedSource.id
 
 /** A user-defined email topic the AI matches against, plus optional metadata
  *  (senders, keywords, context) that sharpens the match. */

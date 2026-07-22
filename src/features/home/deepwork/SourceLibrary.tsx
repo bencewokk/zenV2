@@ -3,10 +3,15 @@ import type { Note, PdfDoc } from "@/shared/lib/types";
 import type { CalEvent } from "@/services/google/calendar";
 import type { MailThread } from "@/services/google/gmail";
 import type { HomeTarget } from "@/features/home/store";
+import type { ConnectedSource } from "@/services/sources/types";
 import { usePdfs } from "@/features/pdfs/store";
 
-type SourceType = "note" | "event" | "mail" | "pdf";
-const TYPE_GLYPH: Record<SourceType, string> = { note: "✎", event: "◷", mail: "✉", pdf: "📄" };
+type SourceType = "note" | "event" | "mail" | "pdf" | "source";
+const TYPE_GLYPH: Record<SourceType, string> = { note: "✎", event: "◷", mail: "✉", pdf: "📄", source: "🎓" };
+
+/** Connected-source kinds that make sense as canvas material (a "course" record
+ *  is the grouping, not study material, so it's excluded). */
+const ATTACHABLE_SOURCE_KINDS = new Set(["assignment", "file", "module", "page", "announcement"]);
 
 interface SourceRow {
   target: HomeTarget;
@@ -25,6 +30,7 @@ export function SourceLibrary({
   events,
   threads,
   pdfs,
+  sources,
   current,
   onAdd,
   onClose,
@@ -33,6 +39,7 @@ export function SourceLibrary({
   events: CalEvent[];
   threads: MailThread[];
   pdfs: Record<string, PdfDoc>;
+  sources: Record<string, ConnectedSource>;
   current: HomeTarget[];
   onAdd: (t: HomeTarget) => void;
   onClose: () => void;
@@ -76,8 +83,17 @@ export function SourceLibrary({
       subtitle: t.from,
       haystack: `${t.subject} ${t.from}`.toLowerCase(),
     }));
-    return [...noteRows, ...pdfRows, ...eventRows, ...mailRows].filter((r) => !has(r.target));
-  }, [notes, pdfs, events, threads, current]);
+    const sourceRows: SourceRow[] = Object.values(sources)
+      .filter((s) => ATTACHABLE_SOURCE_KINDS.has(s.kind))
+      .map((s) => ({
+        target: { type: "source", id: s.id },
+        type: "source",
+        title: s.title,
+        subtitle: `${s.kind}${s.container ? ` · ${s.container}` : ""}`,
+        haystack: `${s.title} ${s.container ?? ""} ${s.kind}`.toLowerCase(),
+      }));
+    return [...noteRows, ...pdfRows, ...eventRows, ...mailRows, ...sourceRows].filter((r) => !has(r.target));
+  }, [notes, pdfs, events, threads, sources, current]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -100,7 +116,7 @@ export function SourceLibrary({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search notes, PDFs, events, emails…"
+            placeholder="Search notes, PDFs, events, emails, Canvas…"
             className="flex-1 bg-transparent text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)]"
           />
           <button

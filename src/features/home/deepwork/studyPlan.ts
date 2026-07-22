@@ -373,7 +373,7 @@ export interface UrgentExam {
   health: PlanHealth;
 }
 
-const VERDICT_RANK: Record<PlanHealth["verdict"], number> = {
+export const VERDICT_RANK: Record<PlanHealth["verdict"], number> = {
   overcommitted: 0,
   "at-risk": 1,
   "on-track": 2,

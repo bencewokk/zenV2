@@ -12,6 +12,7 @@ import { useAiAccess, availableModels, MODEL_ID, type AiModel } from "@/features
 import { notify } from "@/shared/ui/notify";
 import { markBlobDirty } from "@/services/sync/cursor";
 import { ensureSourcesLoaded, searchConnectedSources } from "@/services/sources/store";
+import { canvasContextBlock, refreshCanvasUpcoming } from "@/services/canvas/upcoming";
 import type { ConnectedSource } from "@/services/sources/types";
 
 /** Visual tone for a tool-activity turn (drives the chip's dot colour). */
@@ -459,6 +460,7 @@ function dynamicContext(ctx?: string): AIMessage {
       `Today is ${now.toDateString()}, around ${now.getHours()}:00 local time.` +
       memoryContext() +
       appStateBlock() +
+      canvasContextBlock() +
       (ctx ? `\n\nThe user's current note (for context):\n"""\n${ctx.slice(0, 6000)}\n"""` : ""),
   };
 }
@@ -795,6 +797,10 @@ export const useAI = create<AIState>((set, get) => {
     const controller = new AbortController();
     const conversationId = get().activeId;
     recordActivity(`asked AI: "${userText.slice(0, 80)}"`);
+    // Warm the Canvas deadline cache for the NEXT request — this one reads the
+    // current cache synchronously via canvasContextBlock(). No-op when
+    // disconnected or fresh.
+    refreshCanvasUpcoming();
     // Build before appending the visible turn. Zustand updates synchronously, so
     // doing this after set() duplicated the newest user message in every payload.
     const messages = buildMessages(noteContext, userText);
