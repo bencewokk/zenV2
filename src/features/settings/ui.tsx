@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Button } from "@/shared/ui/Button";
 
 /** A titled group of related settings. */
 export function SettingsSection({
@@ -45,7 +46,7 @@ export function SaveBar({ onSave, children }: { onSave: () => void; children?: R
   return (
     <div className="flex items-center gap-2 pt-1">
       {children}
-      <button className="zen-btn ml-auto" onClick={onSave}>Save</button>
+      <Button className="ml-auto" onClick={onSave}>Save</Button>
     </div>
   );
 }

@@ -22,8 +22,15 @@ interface SourceRow {
 }
 
 /**
- * Searchable picker over all notes / PDFs / events / emails. Clicking a row adds it as a
- * reference to the active session. Items already on the canvas are hidden.
+ * The one picker for adding material to a session.
+ *
+ * Searchable over all notes / PDFs / events / emails / connected sources; clicking a row
+ * adds it to the active session. Items already on the canvas are hidden.
+ *
+ * When opened from a specific item (right-click a window or its tab), that item's
+ * tag-related material is promoted to the top under "Related" — this used to be a separate
+ * context menu with its own list and its own look, so adding a source had three different
+ * UIs depending on where you started.
  */
 export function SourceLibrary({
   notes,
@@ -32,6 +39,8 @@ export function SourceLibrary({
   pdfs,
   sources,
   current,
+  related,
+  relatedTo,
   onAdd,
   onClose,
 }: {
@@ -41,6 +50,10 @@ export function SourceLibrary({
   pdfs: Record<string, PdfDoc>;
   sources: Record<string, ConnectedSource>;
   current: HomeTarget[];
+  /** Targets related by tag to `relatedTo`, promoted above the full list. */
+  related?: HomeTarget[];
+  /** Label of the item the picker was opened from, for the section heading. */
+  relatedTo?: string;
   onAdd: (t: HomeTarget) => void;
   onClose: () => void;
 }) {
@@ -101,6 +114,14 @@ export function SourceLibrary({
     return rows.filter((r) => r.haystack.includes(q));
   }, [rows, query]);
 
+  // Related rows are the same SourceRow objects, so they render and add identically.
+  const relatedRows = useMemo(() => {
+    if (!related?.length) return [];
+    const key = (t: HomeTarget) => `${t.type}:${t.id}`;
+    const wanted = new Set(related.map(key));
+    return filtered.filter((r) => wanted.has(key(r.target)));
+  }, [related, filtered]);
+
   return (
     <div
       className="zen-anim-fade absolute inset-0 z-20 flex items-start justify-center bg-[rgba(0,0,0,0.45)] p-8 backdrop-blur-sm"
@@ -128,41 +149,64 @@ export function SourceLibrary({
           </button>
         </div>
         <div className="zen-panel-scroll min-h-0 flex-1 overflow-auto p-1">
+          {relatedRows.length > 0 && (
+            <>
+              <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">
+                Related{relatedTo ? ` to ${relatedTo}` : " by tag"}
+              </div>
+              {relatedRows.map((r) => (
+                <Row key={`rel:${r.target.type}:${r.target.id}`} r={r} onAdd={onAdd} onDeletePdf={handleDeletePdf} />
+              ))}
+              <div className="mx-3 my-2 border-t border-[var(--border)]" />
+              <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">
+                Everything else
+              </div>
+            </>
+          )}
           {filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-[var(--text-dim)]">
               {rows.length === 0 ? "Everything is already on the canvas." : "Nothing matches."}
             </div>
           ) : (
             filtered.map((r) => (
-              <div
-                key={`${r.target.type}:${r.target.id}`}
-                className="group flex w-full items-center gap-2 rounded-[10px] pr-2 hover:bg-[var(--bg-elev)]"
-              >
-                <button
-                  className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left"
-                  onClick={() => onAdd(r.target)}
-                >
-                  <span className="shrink-0 text-sm text-[var(--text-dim)]">{TYPE_GLYPH[r.type]}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-[var(--text)]">{r.title}</span>
-                    {r.subtitle && <span className="block truncate text-xs text-[var(--text-dim)]">{r.subtitle}</span>}
-                  </span>
-                </button>
-                {r.type === "pdf" && (
-                  <button
-                    className="zen-pressable shrink-0 rounded-[8px] px-2 py-1 text-sm text-[var(--text-dim)] opacity-0 hover:bg-[rgba(246,104,94,0.15)] hover:text-[var(--danger,#f6685e)] group-hover:opacity-100"
-                    onClick={(e) => handleDeletePdf(e, r)}
-                    title={`Delete "${r.title}" permanently`}
-                    aria-label={`Delete ${r.title}`}
-                  >
-                    🗑
-                  </button>
-                )}
-              </div>
+              <Row key={`${r.target.type}:${r.target.id}`} r={r} onAdd={onAdd} onDeletePdf={handleDeletePdf} />
             ))
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** One addable row. Shared by the "Related" section and the full list. */
+function Row({
+  r,
+  onAdd,
+  onDeletePdf,
+}: {
+  r: SourceRow;
+  onAdd: (t: HomeTarget) => void;
+  onDeletePdf: (e: React.MouseEvent, r: SourceRow) => void;
+}) {
+  return (
+    <div className="group flex w-full items-center gap-2 rounded-[10px] pr-2 hover:bg-[var(--bg-elev)]">
+      <button className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left" onClick={() => onAdd(r.target)}>
+        <span className="shrink-0 text-sm text-[var(--text-dim)]">{TYPE_GLYPH[r.type]}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-[var(--text)]">{r.title}</span>
+          {r.subtitle && <span className="block truncate text-xs text-[var(--text-dim)]">{r.subtitle}</span>}
+        </span>
+      </button>
+      {r.type === "pdf" && (
+        <button
+          className="zen-pressable shrink-0 rounded-[8px] px-2 py-1 text-sm text-[var(--text-dim)] opacity-0 hover:bg-[rgba(246,104,94,0.15)] hover:text-[var(--danger,#f6685e)] group-hover:opacity-100"
+          onClick={(e) => onDeletePdf(e, r)}
+          title={`Delete "${r.title}" permanently`}
+          aria-label={`Delete ${r.title}`}
+        >
+          🗑
+        </button>
+      )}
     </div>
   );
 }

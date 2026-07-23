@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useHome } from "@/features/home/store";
+import { openInDeepWork } from "@/shared/stores/navigate";
 import { useDeepWork, sessionList } from "@/features/home/deepwork/deepworkStore";
 
 /**
  * Shown when a "Add to Deep Work" action requests a target (`pendingAdd`). Lets the user
- * pick which session to add it to, or create a new one. Reuses `launchDeepWork` to add to
+ * pick which session to add it to, or create a new one. Reuses `openInDeepWork` to add to
  * the now-active session and open Deep Work. Rendered once at the app root.
  */
 export function AddToSessionPicker() {
@@ -15,7 +15,6 @@ export function AddToSessionPicker() {
   const activeId = useDeepWork((s) => s.activeId);
   const switchSession = useDeepWork((s) => s.switchSession);
   const createSession = useDeepWork((s) => s.createSession);
-  const launchDeepWork = useHome((s) => s.launchDeepWork);
 
   const [name, setName] = useState("");
 
@@ -28,14 +27,14 @@ export function AddToSessionPicker() {
   function addToExisting(id: string) {
     if (!pendingAdd) return;
     switchSession(id);
-    launchDeepWork(pendingAdd); // adds to the now-active session + opens Deep Work
+    openInDeepWork(pendingAdd); // adds to the now-active session + opens Deep Work
     cancelAdd();
   }
 
   function addToNew() {
     if (!pendingAdd) return;
     createSession(name); // becomes active
-    launchDeepWork(pendingAdd);
+    openInDeepWork(pendingAdd);
     setName("");
     cancelAdd();
   }

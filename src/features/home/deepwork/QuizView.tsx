@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { renderMarkdown } from "@/shared/lib/renderMarkdown";
 import { useAI } from "@/features/ai/store";
-import { useHome } from "@/features/home/store";
+import { openInDeepWork } from "@/shared/stores/navigate";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { MathField } from "@/features/math/MathField";
 import { MathWorkspace } from "@/features/math/MathWorkspace";
@@ -92,7 +92,7 @@ export function QuizView() {
 
     const ai = useAI.getState();
     beginGrading();
-    if (!ai.open) ai.toggle();
+    ai.setOpen(true);
     void ai.send(buildGradePrompt(pendingIds));
   }
 
@@ -228,7 +228,7 @@ function QuestionCard({
             <button
               className="zen-pressable mt-1 block text-[var(--accent)] hover:underline"
               onClick={() => {
-                useHome.getState().launchDeepWork({ type: "pdf", id: result.pdfId! });
+                openInDeepWork({ type: "pdf", id: result.pdfId! });
                 usePdfNav.getState().goTo(result.pdfId!, result.page!);
               }}
               title="Open this page to review"

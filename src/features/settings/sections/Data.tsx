@@ -14,6 +14,7 @@ import { useToolPolicy } from "@/services/ai/toolPolicy";
 import { notify } from "@/shared/ui/notify";
 import { signOut } from "@/services/google/auth";
 import { SettingsSection } from "../ui";
+import { Button } from "@/shared/ui/Button";
 
 const CONV_KEY = "zen.ai.conversations.v1";
 
@@ -124,8 +125,8 @@ export function Data() {
     <div className="space-y-6">
       <SettingsSection title="Backup" hint="Backup covers notes, Deep Work, quizzes, memory, and non-secret settings. PDF files and connected-source caches are excluded; keep originals or enable PDF sync. Settings-only export carries no note content or credentials.">
         <div className="flex flex-wrap gap-2">
-          <button className="zen-btn-ghost" onClick={() => void exportBackup()}>Export backup…</button>
-          <button className="zen-btn-ghost" onClick={() => backupRef.current?.click()}>Restore backup…</button>
+          <Button variant="ghost" onClick={() => void exportBackup()}>Export backup…</Button>
+          <Button variant="ghost" onClick={() => backupRef.current?.click()}>Restore backup…</Button>
           <input
             ref={backupRef}
             type="file"
@@ -133,8 +134,8 @@ export function Data() {
             className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) restoreBackup(f); e.target.value = ""; }}
           />
-          <button className="zen-btn-ghost" onClick={exportSettings}>Export settings…</button>
-          <button className="zen-btn-ghost" onClick={() => fileRef.current?.click()}>Import settings…</button>
+          <Button variant="ghost" onClick={exportSettings}>Export settings…</Button>
+          <Button variant="ghost" onClick={() => fileRef.current?.click()}>Import settings…</Button>
           <input
             ref={fileRef}
             type="file"
@@ -147,12 +148,12 @@ export function Data() {
 
       <SettingsSection title="Reset" hint="These actions clear local data and can't be undone.">
         <div className="flex flex-col items-start gap-2">
-          <button className="zen-btn-ghost" onClick={() => { resetPolicies(); notify.success("Tool permissions reset"); }}>
+          <Button variant="ghost" onClick={() => { resetPolicies(); notify.success("Tool permissions reset"); }}>
             Reset tool permissions
-          </button>
-          <button className="zen-btn-danger" onClick={clearConversations}>Clear all conversations</button>
-          <button className="zen-btn-danger" onClick={wipeMemories}>Wipe saved memories</button>
-          <button className="zen-btn-danger" onClick={() => void resetFirstRun()}>Reset all local data & onboarding</button>
+          </Button>
+          <Button variant="danger" onClick={clearConversations}>Clear all conversations</Button>
+          <Button variant="danger" onClick={wipeMemories}>Wipe saved memories</Button>
+          <Button variant="danger" onClick={() => void resetFirstRun()}>Reset all local data & onboarding</Button>
         </div>
       </SettingsSection>
 
@@ -166,9 +167,9 @@ export function Data() {
           />
           Also delete all local data first (notes, PDFs, study state, settings)
         </label>
-        <button className="zen-btn-danger" disabled={!IS_TAURI || uninstalling} onClick={() => void uninstall()}>
+        <Button variant="danger" disabled={!IS_TAURI || uninstalling} onClick={() => void uninstall()}>
           {uninstalling ? "Preparing…" : "Uninstall Zen…"}
-        </button>
+        </Button>
       </SettingsSection>
     </div>
   );

@@ -109,8 +109,9 @@ export function ReleaseNotesModal() {
 }
 
 /**
- * Dashboard "What's new" card. Opens the shared modal; shows a pulsing dot
- * while the latest release is unacknowledged.
+ * Status-bar "What's new" affordance. Opens the shared modal; shows a pulsing dot
+ * while the latest release is unacknowledged. Was a full dashboard tile, which gave a
+ * release-notes link the same visual weight as the day's actual work.
  */
 export function WhatsNew() {
   const isNew = useReleaseNotes((s) => s.isNew);

@@ -9,9 +9,10 @@ import { CANVAS_DISABLED_MESSAGE, CANVAS_INTEGRATION_ENABLED } from "@/services/
 import { loadExternalConnectionSettings, saveExternalConnectionSettings } from "@/services/connections/settings";
 import { loadProfile, saveProfile } from "@/services/memory";
 import { notify } from "@/shared/ui/notify";
-import { useWorkspace } from "@/shared/stores/workspace";
+import { navigate } from "@/shared/stores/navigate";
 import { useSparkIntro } from "./sparkStore";
 import "./SparkIntro.css";
+import { Button } from "@/shared/ui/Button";
 
 /**
  * First-run "Spark Intro": a focused setup path. A spark ignites, the user
@@ -82,7 +83,7 @@ export function SparkIntro() {
     clearTimer();
     const go = () => {
       finishIntro();
-      useWorkspace.getState().set({ surface: "home" });
+      navigate({ view: "dashboard" });
     };
     if (reduceMotion.current) return go();
     setLeaving(true);
@@ -136,9 +137,9 @@ export function SparkIntro() {
               </button>
             ))}
           </div>
-          <button className="zen-btn zen-shine spark-look-continue" disabled={!lookPicked} onClick={advance}>
+          <Button className="zen-shine spark-look-continue" disabled={!lookPicked} onClick={advance}>
             {lookPicked ? "Continue" : "Pick a look to continue"}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -239,9 +240,9 @@ function FeatureStage({
           );
         })}
       </div>
-      <button className="zen-btn zen-shine spark-look-continue" onClick={onContinue}>
+      <Button className="zen-shine spark-look-continue" onClick={onContinue}>
         {selected.length ? `Set up ${selected.length} selection${selected.length === 1 ? "" : "s"}` : "Continue with local Zen"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -362,9 +363,9 @@ function SetupStage({
               ? "Required for Calendar, Mail, and Drive. It also anchors your Zen account."
               : "Required to identify your account for cloud sync."}
             action={signedIn ? <span className="spark-setup-status">Connected</span> : (
-              <button className="zen-btn" disabled={busy === "google" || !isConfigured()} onClick={() => void connectGoogle()}>
+              <Button disabled={busy === "google" || !isConfigured()} onClick={() => void connectGoogle()}>
                 {busy === "google" ? "Connecting..." : "Connect Google"}
-              </button>
+              </Button>
             )}
           />
         )}
@@ -374,9 +375,9 @@ function SetupStage({
             title="Cloud sync"
             detail="Let notes, study state, PDFs, and settings follow you across devices."
             action={syncEnabled ? <span className="spark-setup-status">Enabled</span> : (
-              <button className="zen-btn" disabled={!signedIn || busy === "sync"} onClick={() => void enableSync()}>
+              <Button disabled={!signedIn || busy === "sync"} onClick={() => void enableSync()}>
                 {busy === "sync" ? "Syncing..." : "Enable sync"}
-              </button>
+              </Button>
             )}
           />
         )}
@@ -391,7 +392,7 @@ function SetupStage({
               <div className="spark-profile">
                 <input className="zen-input" value={canvasDraft.baseUrl} onChange={(event) => setCanvasDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://school.instructure.com" />
                 <input className="zen-input" type="password" value={canvasDraft.accessToken} onChange={(event) => setCanvasDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder="Canvas access token" />
-                <button className="zen-btn" disabled={!canvasDraft.baseUrl.trim() || !canvasDraft.accessToken.trim()} onClick={saveCanvas}>Save Canvas</button>
+                <Button disabled={!canvasDraft.baseUrl.trim() || !canvasDraft.accessToken.trim()} onClick={saveCanvas}>Save Canvas</Button>
               </div>
             )}
           />
@@ -413,7 +414,7 @@ function SetupStage({
                   <input className="zen-input" value={externalDraft.zoteroLibraryId} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroLibraryId: event.target.value }))} placeholder="Library ID" />
                 </div>
                 <input className="zen-input" type="password" value={externalDraft.zoteroApiKey} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroApiKey: event.target.value }))} placeholder="Zotero API key" />
-                <button className="zen-btn" disabled={!externalDraft.zoteroLibraryId.trim() || !externalDraft.zoteroApiKey.trim()} onClick={saveZotero}>Save Zotero</button>
+                <Button disabled={!externalDraft.zoteroLibraryId.trim() || !externalDraft.zoteroApiKey.trim()} onClick={saveZotero}>Save Zotero</Button>
               </div>
             )}
           />
@@ -428,7 +429,7 @@ function SetupStage({
             action={githubReady ? <span className="spark-setup-status">Ready</span> : (
               <div className="spark-profile">
                 <input className="zen-input" type="password" value={externalDraft.githubToken} onChange={(event) => setExternalDraft((current) => ({ ...current, githubToken: event.target.value }))} placeholder="GitHub token" />
-                <button className="zen-btn" disabled={!externalDraft.githubToken.trim()} onClick={saveGitHub}>Save GitHub</button>
+                <Button disabled={!externalDraft.githubToken.trim()} onClick={saveGitHub}>Save GitHub</Button>
               </div>
             )}
           />
@@ -442,17 +443,17 @@ function SetupStage({
               <div className="spark-profile">
                 <input className="zen-input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" />
                 <textarea className="zen-input" rows={2} value={about} onChange={(event) => setAbout(event.target.value)} placeholder="What are you studying?" />
-                <button className="zen-btn" disabled={!name.trim() && !about.trim()} onClick={savePrivateProfile}>Save profile</button>
+                <Button disabled={!name.trim() && !about.trim()} onClick={savePrivateProfile}>Save profile</Button>
               </div>
             )}
           />
         )}
       </div>
       <div className="spark-setup-footer">
-        <button className="zen-btn-ghost" onClick={onBack}>Change choices</button>
-        <button className="zen-btn zen-shine" disabled={!canContinue} onClick={onContinue}>
+        <Button variant="ghost" onClick={onBack}>Change choices</Button>
+        <Button className="zen-shine" disabled={!canContinue} onClick={onContinue}>
           {canContinue ? "Enter Zen" : "Finish the selected setup"}
-        </button>
+        </Button>
       </div>
     </div>
   );

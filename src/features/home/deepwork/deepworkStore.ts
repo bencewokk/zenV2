@@ -62,10 +62,21 @@ export interface WindowGeom {
   h: number;
 }
 
+/**
+ * How the canvas arranges its windows.
+ *
+ * "free" is the original behaviour — every window carries its own x/y/w/h and the user
+ * places them. Grid and columns auto-place, so a session is usable without first doing a
+ * round of window management. Stored geometry is kept either way and only consulted in
+ * "free", so switching back restores the user's arrangement.
+ */
+export type CanvasLayout = "grid" | "columns" | "free";
+
 /** The per-session study state — everything that is scoped to one session. */
 export interface SessionStudyState {
   items: HomeTarget[];
   windows: Record<string, WindowGeom>;
+  layout: CanvasLayout;
   intent: string;
   backbone: StudyBackbone | null;
   focusMs: number;
@@ -107,7 +118,7 @@ function defaultGeom(index: number): WindowGeom {
 }
 
 function emptyStudyState(): SessionStudyState {
-  return { items: [], windows: {}, intent: "", backbone: null, focusMs: 0, focusSessions: 0, plan: null };
+  return { items: [], windows: {}, layout: "grid", intent: "", backbone: null, focusMs: 0, focusSessions: 0, plan: null };
 }
 
 interface PersistedV3 {
@@ -136,6 +147,8 @@ function mirrorOf(s: DeepWorkSession | null): SessionStudyState {
     ? {
         items: s.items,
         windows: s.windows,
+        // Sessions created before layouts existed have none; they keep free placement.
+        layout: s.layout ?? "free",
         intent: s.intent,
         backbone: s.backbone,
         focusMs: s.focusMs,
@@ -161,6 +174,7 @@ interface DeepWorkState extends SessionStudyState {
   addItem: (t: HomeTarget) => void;
   removeItem: (t: HomeTarget) => void;
   setWindow: (key: string, geom: WindowGeom) => void;
+  setLayout: (layout: CanvasLayout) => void;
   /** Proportionally rescale every window in the active session — used when the
    *  canvas viewport itself resizes (e.g. the Study/AI panel opening or closing)
    *  so a window's position/size keeps its ratio to the canvas instead of holding
@@ -276,7 +290,13 @@ export const useDeepWork = create<DeepWorkState>((set, get) => {
     },
 
     setWindow(key, geom) {
-      mutateActive((s) => ({ ...s, windows: { ...s.windows, [key]: geom } }));
+      // Dragging or resizing is an explicit act of arranging — honour it by dropping
+      // out of an automatic layout rather than snapping the window back.
+      mutateActive((s) => ({ ...s, windows: { ...s.windows, [key]: geom }, layout: "free" }));
+    },
+
+    setLayout(layout) {
+      mutateActive((s) => ({ ...s, layout }));
     },
 
     rescaleWindows(scaleX, scaleY) {

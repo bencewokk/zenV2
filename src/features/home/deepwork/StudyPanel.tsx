@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAI } from "@/features/ai/store";
+import * as study from "@/services/ai/study";
 import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
-import { useHome } from "@/features/home/store";
+import { openInDeepWork } from "@/shared/stores/navigate";
 import { usePdfs } from "@/features/pdfs/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
 import {
@@ -14,7 +15,8 @@ import {
   fmtClock,
 } from "@/features/home/deepwork/deepworkStore";
 import { useFocusSession, useFocusStore } from "@/features/home/deepwork/useFocusSession";
-import { useStudyLog, todayMs, computeStreak, HOUR_MS, dayKey } from "@/features/home/deepwork/studyLog";
+import { dayKey } from "@/features/home/deepwork/studyLog";
+import { StudyGoal } from "@/features/home/deepwork/StudyGoal";
 import { useQuiz, sessionQuizzes, sessionMistakes, type QuizRecord } from "@/features/home/deepwork/quizStore";
 import { useLesson } from "@/features/home/deepwork/lessonStore";
 import {
@@ -91,37 +93,8 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   }, [pdfIds, annotations]);
 
   function goToPage(pdfId: string, page: number) {
-    useHome.getState().launchDeepWork({ type: "pdf", id: pdfId });
+    openInDeepWork({ type: "pdf", id: pdfId });
     usePdfNav.getState().goTo(pdfId, page);
-  }
-
-  function ask(prompt: string) {
-    const ai = useAI.getState();
-    if (!ai.open) ai.toggle();
-    void ai.send(prompt);
-  }
-
-  function drill(title: string) {
-    ask(
-      `Quiz me on the concept "${title}" from my Deep Work material. Ask me one focused question ` +
-        `to test my understanding, wait for my answer, then grade it and update my mastery for this concept.`
-    );
-  }
-
-  function prepReading() {
-    ask(
-      "Before I take a quiz, prep my reading: find every note and PDF I should read for this Deep Work " +
-        "material, pull the relevant ones onto the canvas, and for any backbone concept that has no note, " +
-        "create a concise study note (grounded in the material) and add it too. Then give me a short reading checklist."
-    );
-  }
-
-  function requizMistakes() {
-    ask(
-      "Re-quiz me ONLY on the things I've gotten wrong before. Call deepwork_read_material to pull up my " +
-        "mistake bank, then call deepwork_start_quiz with questions that re-test those exact missed concepts " +
-        "(reworded, not identical), each tagged with its concept and with answer keys for instant grading."
-    );
   }
 
   return (
@@ -183,13 +156,15 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        <DailyGoalBar />
+        <StudyGoal variant="compact" />
+
+        <Zone label="Now" />
 
         <PlanSection now={now} />
 
         <button
           className="zen-pressable w-full rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
-          onClick={prepReading}
+          onClick={study.prepReading}
           disabled={aiActionsDisabled}
           title="Find/create everything to read before a quiz"
         >
@@ -200,7 +175,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
           <button
             data-tour="study-requiz"
             className="zen-pressable w-full rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)] disabled:opacity-50"
-            onClick={requizMistakes}
+            onClick={() => study.requizMistakes()}
             disabled={aiActionsDisabled}
             title="Re-test only the questions you've missed before"
           >
@@ -208,7 +183,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
           </button>
         )}
 
-        {quizList.length > 0 && <div data-tour="study-mistake-bank"><QuizHistory list={quizList} /></div>}
+        <Zone label="Progress" />
 
         {backbone ? (
           <div className="space-y-2">
@@ -226,9 +201,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
               <button
                 data-tour="study-review-next"
                 className="zen-pressable flex w-full items-center gap-2 rounded-[8px] border border-[var(--accent)] bg-[var(--accent-dim)] px-2.5 py-1.5 text-left text-xs disabled:opacity-50"
-                onClick={() => {
-                  drill(next.title);
-                }}
+                onClick={() => study.drillConcept(next)}
                 disabled={aiActionsDisabled}
                 title={`Quiz me on "${next.title}"`}
               >
@@ -250,7 +223,7 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
                   <li key={c.id}>
                     <button
                       className="zen-pressable w-full text-left disabled:opacity-60"
-                      onClick={() => drill(c.title)}
+                      onClick={() => study.drillConcept(c)}
                       disabled={aiActionsDisabled}
                       title={`${c.summary}\n\nClick to quiz me on this concept.`}
                     >
@@ -305,6 +278,13 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
             No study backbone yet. Add notes or PDFs to this session, then open the AI panel and ask it to
             study your Deep Work material — it'll build a concept map here.
           </div>
+        )}
+
+        {quizList.length > 0 && (
+          <>
+            <Zone label="History" />
+            <div data-tour="study-mistake-bank"><QuizHistory list={quizList} /></div>
+          </>
         )}
       </div>
     </aside>
@@ -412,12 +392,8 @@ export function PlanSection({ now }: { now: number }) {
   // Reactive sign-in so the "Connect Google" hint updates when auth changes.
   const [signedIn, setSignedIn] = useState(isSignedIn());
   useEffect(() => onAuthChange(setSignedIn), []);
-
-  function ask(prompt: string) {
-    const ai = useAI.getState();
-    if (!ai.open) ai.toggle();
-    void ai.send(prompt);
-  }
+  // The deadline is a field, not something the assistant has to ask for mid-conversation.
+  const [examDate, setExamDate] = useState("");
 
   // The empty-state hint below the backbone already covers "no backbone yet".
   if (!backbone) return null;
@@ -429,14 +405,18 @@ export function PlanSection({ now }: { now: number }) {
         <div className="mt-1 text-[11px] text-[var(--text-dim)]">
           Let the AI lay out study sessions across the next days — adapting as your mastery changes and the deadline nears.
         </div>
+        <label className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--text-dim)]">
+          Exam date
+          <input
+            type="date"
+            value={examDate}
+            onChange={(e) => setExamDate(e.target.value)}
+            className="rounded bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[var(--text)] outline-none [color-scheme:dark]"
+          />
+        </label>
         <button
           className="zen-pressable mt-2 w-full rounded-[6px] border border-[var(--accent)] bg-[var(--bg)] px-2.5 py-1.5 text-xs text-[var(--text)] disabled:opacity-50"
-          onClick={() =>
-            ask(
-              "Plan my study week for this Deep Work material. Check my plan status and free time, ask me for " +
-                "my exam date if you don't know it, then build an adaptive study plan."
-            )
-          }
+          onClick={() => study.planWeek(examDate || null)}
           disabled={aiActionsDisabled}
           title="AI builds a week of study sessions"
         >
@@ -452,7 +432,7 @@ export function PlanSection({ now }: { now: number }) {
   }
 
   const h = planHealth(plan, backbone, now);
-  const upcoming = actionableSessions(plan, now).slice(0, 8);
+  const upcoming = actionableSessions(plan, now);
 
   return (
     <div data-tour="study-plan" className="space-y-2">
@@ -483,12 +463,7 @@ export function PlanSection({ now }: { now: number }) {
         <button
           data-tour="study-replan"
           className="zen-pressable w-full rounded-[8px] border border-[#f5b14c] bg-[rgba(245,177,76,0.12)] px-2.5 py-1.5 text-left text-[11px] text-[var(--text)] disabled:opacity-50"
-          onClick={() =>
-            ask(
-              "My study plan needs updating — check deepwork_plan_status and revise the plan based on how I'm doing " +
-                "(add sessions for weak/missed concepts, remove or shorten ones I've mastered, reschedule missed time)."
-            )
-          }
+          onClick={study.replan}
           disabled={aiActionsDisabled}
           title="AI adjusts the plan to your progress"
         >
@@ -497,11 +472,26 @@ export function PlanSection({ now }: { now: number }) {
       )}
 
       {upcoming.length ? (
-        <ul data-tour="study-next-actions" className="space-y-1">
-          {upcoming.map((s) => (
-            <PlanSessionRow key={s.id} s={s} now={now} disabled={aiActionsDisabled} ask={ask} />
-          ))}
-        </ul>
+        <>
+          <ul data-tour="study-next-actions" className="space-y-1">
+            {upcoming.slice(0, 2).map((s) => (
+              <PlanSessionRow key={s.id} s={s} now={now} disabled={aiActionsDisabled} />
+            ))}
+          </ul>
+          {/* Eight stacked rows buried the two that matter; the rest stay one click away. */}
+          {upcoming.length > 2 && (
+            <details className="group">
+              <summary className="cursor-pointer list-none py-1 text-[11px] text-[var(--text-dim)] hover:text-[var(--text)]">
+                <span className="inline-block transition group-open:rotate-90">▸</span> {upcoming.length - 2} more planned
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {upcoming.slice(2).map((s) => (
+                  <PlanSessionRow key={s.id} s={s} now={now} disabled={aiActionsDisabled} />
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
       ) : (
         <div className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-[11px] text-[var(--text-dim)]">
           No upcoming sessions{h.drift ? " — re-plan to add some." : "."}
@@ -516,12 +506,10 @@ function PlanSessionRow({
   s,
   now,
   disabled,
-  ask,
 }: {
   s: PlannedSession;
   now: number;
   disabled: boolean;
-  ask: (prompt: string) => void;
 }) {
   const markPlanSession = useDeepWork((st) => st.markPlanSession);
   const meta = KIND_META[s.kind];
@@ -529,17 +517,7 @@ function PlanSessionRow({
   const missed = s.status === "missed";
 
   function start() {
-    // Credit any in-progress block before overwriting it, then mark THIS row as the
-    // one being studied so focus time credits it (not just today's earliest).
-    if (useFocusStore.getState().session) useFocusStore.getState().endSession();
-    useDeepWork.getState().setActivePlanSession(s.id);
-    useFocusStore.getState().startSession(s.durationMin);
-    const focus = s.focus.length ? s.focus.join(", ") : "this material";
-    if (s.kind === "quiz") {
-      ask(`Start a quiz on ${focus} from my Deep Work material.`);
-    } else {
-      ask(`Tutor me on ${focus} from my Deep Work material — a ${s.durationMin}-minute ${meta.label.toLowerCase()} session.`);
-    }
+    study.startPlanSession(s);
   }
 
   return (
@@ -583,62 +561,12 @@ function PlanSessionRow({
   );
 }
 
-/**
- * Daily self-study goal: today's focused time vs the goal (default 4h), with a
- * streak of consecutive days that hit the goal. The goal is click-to-edit.
- */
-function DailyGoalBar() {
-  const days = useStudyLog((s) => s.days);
-  const goalHours = useStudyLog((s) => s.goalHours);
-  const setGoalHours = useStudyLog((s) => s.setGoalHours);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(goalHours));
-
-  const today = todayMs(days);
-  const goalMs = goalHours * HOUR_MS;
-  const pct = Math.min(100, goalMs ? (today / goalMs) * 100 : 0);
-  const met = today >= goalMs;
-  const streak = computeStreak(days, goalMs);
-  const color = met ? "#4ade80" : "var(--accent)";
-
-  function commit() {
-    setGoalHours(Number(draft));
-    setEditing(false);
-  }
-
+/** Section divider for the panel's three zones: what to do now, how I'm doing, what I did. */
+function Zone({ label }: { label: string }) {
   return (
-    <div data-tour="daily-goal" className="rounded-[8px] border border-[var(--border)] px-2.5 py-1.5">
-      <div className="flex items-center gap-1.5 text-[11px]">
-        <span className="text-[var(--text-dim)]">Today</span>
-        <span className="font-medium tabular-nums text-[var(--text)]">{(today / HOUR_MS).toFixed(1)}h</span>
-        <span className="text-[var(--text-dim)]">/</span>
-        {editing ? (
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ""))}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commit();
-              else if (e.key === "Escape") setEditing(false);
-            }}
-            onBlur={commit}
-            inputMode="numeric"
-            className="w-7 rounded bg-[var(--bg)] text-center tabular-nums text-[var(--text)] outline-none"
-          />
-        ) : (
-          <button
-            className="zen-pressable tabular-nums text-[var(--text-dim)] hover:text-[var(--text)]"
-            onClick={() => { setDraft(String(goalHours)); setEditing(true); }}
-            title="Edit daily study goal"
-          >
-            {goalHours}h
-          </button>
-        )}
-        {streak > 0 && <span className="ml-auto tabular-nums text-[var(--text)]" title={`${streak}-day study streak`}>🔥 {streak}</span>}
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.07)]">
-        <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${pct}%`, background: color }} />
-      </div>
+    <div className="flex items-center gap-2 pt-1">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">{label}</span>
+      <span className="h-px flex-1 bg-[var(--border)]" />
     </div>
   );
 }

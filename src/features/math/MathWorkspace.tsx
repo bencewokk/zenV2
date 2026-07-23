@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { MathField } from "@/features/math/MathField";
 import { simplify, evaluate, type CasResult } from "@/features/math/cas";
+import { Checkbox } from "@/shared/ui/Checkbox";
 
 /**
  * Self-contained LaTeX scratch workspace: compose math in the same MathLive field
@@ -46,10 +47,12 @@ export function MathWorkspace({
         ariaLabel="Math scratch input"
       />
 
-      <label className="zen-math-ws-toggle">
-        <input type="checkbox" checked={casOn} onChange={(e) => setCasOn(e.target.checked)} />
-        CAS check
-      </label>
+      <Checkbox
+        checked={casOn}
+        onCheckedChange={setCasOn}
+        label="CAS check"
+        className="zen-math-ws-toggle"
+      />
 
       {casOn && (
         <div className="zen-math-ws-cas">

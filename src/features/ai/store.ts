@@ -8,6 +8,7 @@ import { memoryContext, recordActivity, recallProgressive, formatRecall, type Pr
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
 import { useStatus } from "@/shared/stores/status";
+import { useWorkspace } from "@/shared/stores/workspace";
 import { useAiAccess, availableModels, MODEL_ID, type AiModel } from "@/features/ai/access";
 import { notify } from "@/shared/ui/notify";
 import { markBlobDirty } from "@/services/sync/cursor";
@@ -276,6 +277,7 @@ interface AIState {
   conversations: Conversation[];
   activeId: string;
 
+  setOpen: (open: boolean) => void;
   toggle: () => void;
   setModel: (m: string) => void;
   refreshModels: () => Promise<void>;
@@ -776,10 +778,16 @@ export const useAI = create<AIState>((set, get) => {
   conversations: initialConv.conversations,
   activeId: initialConv.activeId,
 
-  toggle() {
-    const open = !get().open;
+  setOpen(open) {
     set({ open });
     try { localStorage.setItem(OPEN_KEY, open ? "1" : "0"); } catch { /* ignore */ }
+    // The right rail holds one panel: opening AI closes Study rather than splitting the
+    // width between them and squeezing the Deep Work canvas.
+    useWorkspace.getState().set({ rightPanel: open ? "ai" : null });
+  },
+
+  toggle() {
+    get().setOpen(!get().open);
   },
 
   answerQuestion(choice) {

@@ -6,6 +6,7 @@ import {
 import { SettingsSection, Field } from "../ui";
 import { isTutorialHidden, setTutorialHidden } from "@/features/home/dashboardPrefs";
 import { startCoreLoopTour } from "@/features/onboarding/tours";
+import { Toggle } from "@/shared/ui/Toggle";
 
 /** App look, motion, and UI font. Changes apply live. */
 export function Appearance() {
@@ -74,28 +75,22 @@ export function Appearance() {
       </SettingsSection>
 
       <SettingsSection title="Motion" hint="Collapse animations and transitions across the app.">
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={s.reduceMotion}
-            onChange={(e) => update({ reduceMotion: e.target.checked })}
-          />
-          Reduce motion
-        </label>
+        <Toggle
+          checked={s.reduceMotion}
+          onCheckedChange={(checked) => update({ reduceMotion: checked })}
+          label="Reduce motion"
+        />
       </SettingsSection>
 
       <SettingsSection title="Dashboard" hint="The first-run tutorial (“First Run Path”) shown at the top of the dashboard.">
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={showTutorial}
-            onChange={(e) => {
-              setShowTutorial(e.target.checked);
-              setTutorialHidden(!e.target.checked);
-            }}
-          />
-          Show dashboard tutorial
-        </label>
+        <Toggle
+          checked={showTutorial}
+          onCheckedChange={(checked) => {
+            setShowTutorial(checked);
+            setTutorialHidden(!checked);
+          }}
+          label="Show dashboard tutorial"
+        />
         <button
           className="zen-pressable mt-3 rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-dim)] hover:text-[var(--text)]"
           onClick={startCoreLoopTour}

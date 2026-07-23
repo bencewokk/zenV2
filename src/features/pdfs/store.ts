@@ -1,8 +1,17 @@
 import { create } from "zustand";
 import type { PdfDoc, PdfAnnotation, PdfOutlineItem } from "@/shared/lib/types";
 import { pdfStore } from "@/services/pdfStore";
-import { extractPages, extractOutline } from "@/services/pdf/pdfjs";
 import { notify } from "@/shared/ui/notify";
+
+/**
+ * pdfjs is loaded on first use, not at module scope.
+ *
+ * Importing it eagerly pulls a large canvas-dependent bundle into the graph of anything
+ * that reaches this store (which, via the AI tool registry, is most of the app) and makes
+ * it explode in non-browser environments that lack `DOMMatrix`. Every call site below is
+ * already inside an async path, so a dynamic import costs nothing.
+ */
+const loadPdfjs = () => import("@/services/pdf/pdfjs");
 
 // Object URLs are created lazily and cached for the session (revoked on remove).
 const urlCache = new Map<string, string>();
@@ -72,7 +81,7 @@ export const usePdfs = create<PdfState>((set, get) => ({
       void (async () => {
         try {
           const buf = await file.arrayBuffer();
-          const pages = await extractPages(buf);
+          const pages = await (await loadPdfjs()).extractPages(buf);
           await pdfStore.putPages(doc.id, pages);
           pagesCache.set(doc.id, pages);
           set((s) => {
@@ -81,7 +90,7 @@ export const usePdfs = create<PdfState>((set, get) => ({
           });
           // Table of contents (best-effort; empty if the PDF has no outline).
           try {
-            const outline = await extractOutline(buf);
+            const outline = await (await loadPdfjs()).extractOutline(buf);
             await pdfStore.putOutline(doc.id, outline);
             outlineCache.set(doc.id, outline);
           } catch { /* outlineFor will retry on demand */ }
@@ -154,7 +163,7 @@ export const usePdfs = create<PdfState>((set, get) => ({
       const blob = await pdfStore.getBlob(id);
       if (!blob) return null;
       try {
-        const pages = await extractPages(await blob.arrayBuffer());
+        const pages = await (await loadPdfjs()).extractPages(await blob.arrayBuffer());
         await pdfStore.putPages(id, pages);
         pagesCache.set(id, pages);
         set((s) => {
@@ -187,7 +196,7 @@ export const usePdfs = create<PdfState>((set, get) => ({
     const blob = await pdfStore.getBlob(id);
     if (!blob) return null;
     try {
-      const outline = await extractOutline(await blob.arrayBuffer());
+      const outline = await (await loadPdfjs()).extractOutline(await blob.arrayBuffer());
       await pdfStore.putOutline(id, outline);
       outlineCache.set(id, outline);
       return outline;

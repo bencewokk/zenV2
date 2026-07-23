@@ -7,6 +7,7 @@ import type { ConnectedSource, SourceProvider } from "@/services/sources/types";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import MagicBento from "@/shared/ui/reactbits/MagicBento";
 import { CANVAS_INTEGRATION_ENABLED } from "@/services/canvas/availability";
+import { Button } from "@/shared/ui/Button";
 
 /** A "course" record is the grouping, not study material — everything else can
  *  be pulled onto a Deep Work canvas as a source window. */
@@ -69,8 +70,8 @@ export function SourcesPanel() {
         </div>
         <div className="ml-auto flex gap-2">
           <input ref={importRef} type="file" accept=".json,.zenclip.json,application/json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importCapture(file); event.target.value = ""; }} />
-          <button className="zen-btn-ghost" onClick={() => importRef.current?.click()}>Import web capture…</button>
-          <button className="zen-btn" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh all"}</button>
+          <Button variant="ghost" onClick={() => importRef.current?.click()}>Import web capture…</Button>
+          <Button disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh all"}</Button>
         </div>
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-1">
@@ -138,7 +139,7 @@ function SourceDetail({ source }: { source?: ConnectedSource }) {
     <div className="mb-1 text-xs uppercase tracking-[0.2em] text-[var(--text-dim)]">{source.provider} · {source.kind.replace(/_/g, " ")}</div>
     <h2 className="text-xl font-semibold text-[var(--text)]">{source.title}</h2>
     {source.container && <div className="mt-1 text-sm text-[var(--text-dim)]">{source.container}</div>}
-    <div className="mt-3 flex gap-2">{source.url && <a className="zen-btn-ghost" href={source.url} target="_blank" rel="noreferrer">Open original</a>}<button className="zen-btn-ghost" onClick={() => void navigator.clipboard.writeText(source.citation || source.url || source.title)}>Copy citation</button>{isAttachable(source) && <button className="zen-btn-ghost" onClick={() => addSourceToDeepWork(source)}>Add to Deep Work</button>}</div>
+    <div className="mt-3 flex gap-2">{source.url && <a className="zen-btn-ghost" href={source.url} target="_blank" rel="noreferrer">Open original</a>}<Button variant="ghost" onClick={() => void navigator.clipboard.writeText(source.citation || source.url || source.title)}>Copy citation</Button>{isAttachable(source) && <Button variant="ghost" onClick={() => addSourceToDeepWork(source)}>Add to Deep Work</Button>}</div>
     {source.citation && <blockquote className="mt-4 rounded-[8px] border border-[var(--border)] bg-[var(--bg-elev)] p-3 text-xs text-[var(--text-dim)]">{source.citation}</blockquote>}
     {source.imageDataUrl && <img className="mt-4 max-w-full rounded-[8px] border border-[var(--border)]" src={source.imageDataUrl} alt={source.title} />}
     <pre className="mt-5 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-[var(--text)]">{source.text || "No extractable text. The source metadata and original link are still available."}</pre>

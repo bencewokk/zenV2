@@ -4,28 +4,31 @@ import { useStatus, type Conn, type AiStatus } from "@/shared/stores/status";
 import { useIndexProgress } from "@/features/memory/useIndexProgress";
 import { cancelIndexing } from "@/services/memory";
 import { docToText } from "@/shared/lib/docText";
-import { useWorkspace } from "@/shared/stores/workspace";
+import { useRoute } from "@/shared/stores/route";
+import { navigate } from "@/shared/stores/navigate";
 import { useHome } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
-import { useStudyLog, todayMs, HOUR_MS } from "@/features/home/deepwork/studyLog";
+import { StudyGoal } from "@/features/home/deepwork/StudyGoal";
+import { useReleaseNotes } from "@/features/home/ReleaseNotes";
+import { LATEST_RELEASE } from "@/data/releaseNotes";
+import { BadgeWithDot } from "@/shared/ui/Badge";
+import { ProgressBarBase } from "@/shared/ui/Progress";
+import { Tooltip } from "@/shared/ui/Tooltip";
+import { UtilityButton } from "@/shared/ui/UtilityButton";
+import { X } from "@untitledui/icons";
 
 const APP_VERSION = __APP_VERSION__;
 
-const DOT: Record<Conn | AiStatus, string> = {
-  off: "var(--text-dim)",
-  on: "var(--ok)",
-  idle: "var(--text-dim)",
-  busy: "var(--accent)",
-  connecting: "var(--accent)",
-  error: "var(--danger)",
-};
-
-// box-shadow can't alpha-blend a var(--token) reference directly, so the pulse
-// ring color is spelled out as rgba — same hue as DOT, just with alpha baked in.
-const GLOW_COLOR: Partial<Record<Conn | AiStatus, string>> = {
-  busy: "rgba(110, 168, 254, 0.45)",
-  connecting: "rgba(110, 168, 254, 0.45)",
-  error: "rgba(246, 104, 94, 0.45)",
+const BADGE_COLOR: Record<
+  Conn | AiStatus,
+  "gray" | "success" | "brand" | "error"
+> = {
+  off: "gray",
+  on: "success",
+  idle: "gray",
+  busy: "brand",
+  connecting: "brand",
+  error: "error",
 };
 
 // States worth spelling out. Quiet ones (off/idle) are conveyed by the dim dot
@@ -35,28 +38,27 @@ const LOUD = new Set<Conn | AiStatus>(["on", "busy", "connecting", "error"]);
 
 /** Route a status click to the place it can be fixed: Settings. */
 function openSettings() {
-  useNotes.getState().select(null);
-  useHome.getState().setManualDeepWork(false);
-  useWorkspace.getState().set({ surface: "settings", adminMailId: null });
+  navigate({ view: "settings" });
 }
 
-function Badge({ label, state }: { label: string; state: Conn | AiStatus }) {
-  const glow = GLOW_COLOR[state];
+function StatusBadge({ label, state }: { label: string; state: Conn | AiStatus }) {
   const quiet = !LOUD.has(state);
   return (
-    <button
-      className="zen-pressable flex items-center gap-1 hover:text-[var(--text)]"
-      title={`${label}: ${state} — open Settings`}
-      onClick={openSettings}
-    >
-      <span
-        className={`inline-block h-2 w-2 rounded-full transition-colors duration-300 ${glow ? "zen-glow" : ""}`}
-        style={{ background: DOT[state], "--zen-glow-color": glow } as React.CSSProperties}
-      />
-      <span className={`transition-opacity duration-300 ${quiet ? "opacity-55" : ""}`}>
-        {label}{quiet ? "" : ` · ${state}`}
-      </span>
-    </button>
+    <Tooltip label={`${label}: ${state} — open Settings`} placement="top">
+      <button
+        className="zen-pressable hover:text-[var(--text)]"
+        onClick={openSettings}
+        aria-label={`${label}: ${state}`}
+      >
+        <BadgeWithDot
+          size="sm"
+          color={BADGE_COLOR[state]}
+          className={quiet ? "opacity-65" : ""}
+        >
+          {label}{quiet ? "" : ` · ${state}`}
+        </BadgeWithDot>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -70,17 +72,9 @@ export function StatusBar() {
   const indexPct = indexing && indexing.total ? Math.round((indexing.done / indexing.total) * 100) : 0;
 
   // Which surface is in view, for the contextual count on the right.
-  const surface = useWorkspace((s) => s.surface);
-  const adminFocus = useWorkspace((s) => s.adminFocus);
-  const manualDeepWork = useHome((s) => s.manualDeepWork);
+  const route = useRoute((s) => s.route);
   const threads = useHome((s) => s.threads);
   const dwItems = useDeepWork((s) => s.items.length);
-
-  // Today's focus vs the daily study goal.
-  const days = useStudyLog((s) => s.days);
-  const goalHours = useStudyLog((s) => s.goalHours);
-  const todayH = todayMs(days) / HOUR_MS;
-  const goalMet = todayH >= goalHours;
 
   // Word count + reading time of the open note — recomputed only when it changes.
   const { words, readMin } = useMemo(() => {
@@ -91,10 +85,10 @@ export function StatusBar() {
   // Contextual count, chosen by where you are.
   const contextual = (() => {
     if (note) return words > 0 ? `${words.toLocaleString()} words · ~${readMin} min` : "";
-    if (surface === "home" && manualDeepWork) return `Deep Work · ${dwItems} item${dwItems === 1 ? "" : "s"}`;
+    if (route.view === "deepwork") return `Deep Work · ${dwItems} item${dwItems === 1 ? "" : "s"}`;
     const unread = threads.filter((t) => t.unread).length;
-    if (surface === "admin" && adminFocus === "mail") return unread ? `${unread} unread` : "inbox clear";
-    if (surface === "home") {
+    if (route.view === "mail") return unread ? `${unread} unread` : "inbox clear";
+    if (route.view === "dashboard") {
       const inbox = Object.values(notes).filter((n) => n.inbox).length;
       const parts = [inbox ? `${inbox} inbox` : "", unread ? `${unread} unread` : ""].filter(Boolean);
       return parts.join(" · ");
@@ -105,60 +99,75 @@ export function StatusBar() {
   return (
     <footer className="flex items-center gap-4 border-t border-[var(--border)] px-4 py-1 text-xs text-[var(--text-dim)]">
       {selectedId && (
-        <span className="flex items-center gap-1">
-          <span
-            className={`inline-block h-2 w-2 rounded-full transition-colors duration-300 ${dirty ? "zen-glow" : ""}`}
-            style={{ background: dirty ? "var(--accent)" : "var(--ok)", "--zen-glow-color": "rgba(110, 168, 254, 0.45)" } as React.CSSProperties}
-          />
+        <BadgeWithDot size="sm" color={dirty ? "brand" : "success"}>
           {dirty ? "Unsaved…" : "Saved"}
-        </span>
+        </BadgeWithDot>
       )}
-      <Badge label="Sync" state={sync} />
-      <Badge label="AI" state={ai} />
-      <Badge label="Calendar" state={calendar} />
+      <StatusBadge label="Sync" state={sync} />
+      <StatusBadge label="AI" state={ai} />
+      <StatusBadge label="Calendar" state={calendar} />
 
       {indexing ? (
         <span
           className="zen-anim-fade ml-auto flex items-center gap-2 text-[var(--text)]"
           title={`Building the on-device semantic index for ${indexing.label} — one-time, saved for next time`}
         >
-          <span
-            className="inline-block h-2 w-2 rounded-full zen-glow"
-            style={{ background: "var(--accent)", "--zen-glow-color": "rgba(110, 168, 254, 0.45)" } as React.CSSProperties}
-          />
-          <span className="text-[var(--text-dim)]">Indexing</span>
+          <BadgeWithDot size="sm" color="brand">Indexing</BadgeWithDot>
           <span className="max-w-[160px] truncate">{indexing.label}</span>
           <span className="tabular-nums text-[var(--text-dim)]">
             {indexPct}% · {indexing.done}/{indexing.total}
           </span>
-          <span className="h-1 w-16 overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
-            <span className="block h-full rounded-full transition-[width] duration-200" style={{ width: `${indexPct}%`, background: "var(--accent)" }} />
-          </span>
-          <button
-            className="zen-pressable rounded px-1 leading-none text-[var(--text-dim)] hover:text-[var(--danger)]"
+          <ProgressBarBase
+            value={indexPct}
+            className="h-1 w-16"
+            progressClassName="bg-[var(--accent)]"
+          />
+          <UtilityButton
+            size="xs"
+            color="tertiary"
+            icon={X}
             onClick={() => cancelIndexing()}
-            title="Stop indexing (keyword search still works; resume later)"
-          >
-            ✕
-          </button>
+            tooltip="Stop indexing (keyword search still works; resume later)"
+          />
         </span>
       ) : (
         <div className="zen-anim-fade ml-auto flex items-center gap-3">
           {contextual && <span className="tabular-nums opacity-55">{contextual}</span>}
-          {todayH > 0 && (
-            <span
-              className="tabular-nums transition-colors"
-              style={{ color: goalMet ? "#4ade80" : "var(--text-dim)" }}
-              title={`Focused today vs your daily goal${goalMet ? " — goal met 🎉" : ""}`}
-            >
-              ◷ {todayH.toFixed(1)} / {goalHours}h
-            </span>
-          )}
-          <span className="tabular-nums opacity-55" title={`Current release · commit ${__BUILD_COMMIT__}`}>
-            {APP_VERSION} · {__BUILD_COMMIT__}
-          </span>
+          <StudyGoal variant="inline" />
+          <ReleaseBadge />
         </div>
       )}
     </footer>
+  );
+}
+
+/** Version, doubling as the "what's new" entry point — a pulsing dot while the latest
+ *  release is unacknowledged. Replaces the dashboard tile this used to occupy. */
+function ReleaseBadge() {
+  const isNew = useReleaseNotes((s) => s.isNew);
+  const openModal = useReleaseNotes((s) => s.openModal);
+  if (!LATEST_RELEASE) {
+    return (
+      <span className="tabular-nums opacity-55" title={`Current release · commit ${__BUILD_COMMIT__}`}>
+        {APP_VERSION} · {__BUILD_COMMIT__}
+      </span>
+    );
+  }
+  return (
+    <button
+      className="zen-pressable flex items-center gap-1.5 tabular-nums hover:text-[var(--text)]"
+      onClick={openModal}
+      title={isNew ? `What's new in v${LATEST_RELEASE.version}` : `Release notes · commit ${__BUILD_COMMIT__}`}
+    >
+      {isNew && (
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ background: "var(--accent)" }} />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: "var(--accent)" }} />
+        </span>
+      )}
+      <span className={isNew ? "text-[var(--accent)]" : "opacity-55"}>
+        {APP_VERSION} · {__BUILD_COMMIT__}
+      </span>
+    </button>
   );
 }

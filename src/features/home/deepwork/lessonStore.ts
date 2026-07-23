@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useFocusStore } from "@/features/home/deepwork/useFocusSession";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
-import { useHome } from "@/features/home/store";
+import { navigate } from "@/shared/stores/navigate";
 import { notify } from "@/shared/ui/notify";
 
 /** Default lesson length (minutes) when the AI doesn't specify one. */
@@ -111,7 +111,7 @@ export const useLesson = create<LessonState>((set, get) => ({
     // Finish the fullscreen class and its underlying board as one transition.
     // The Deep Work session itself remains saved and can be resumed later.
     useDeepWork.getState().setZenMode(false);
-    useHome.getState().setManualDeepWork(false);
+    navigate({ view: "dashboard" });
     set({ active: false, title: "", blocks: [], cursor: 0, revealAll: false, boardComplete: false, focusedQid: null, insertReq: null });
     notify.success("Class finished · board saved");
   },

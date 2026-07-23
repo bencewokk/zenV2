@@ -24,6 +24,7 @@ import { notify } from "@/shared/ui/notify";
 import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { useStatus } from "@/shared/stores/status";
 import { Field, SettingsSection, SaveBar } from "../ui";
+import { Button } from "@/shared/ui/Button";
 
 /** API keys, endpoints, and Google connection. */
 export function Connections() {
@@ -249,7 +250,7 @@ export function Connections() {
     <div className="space-y-6">
       <SettingsSection title="Spark setup" hint="Replay the first-run intro and connection setup.">
         <div className="flex flex-wrap gap-2">
-          <button className="zen-btn-ghost" onClick={replayIntro}>Replay Spark setup</button>
+          <Button variant="ghost" onClick={replayIntro}>Replay Spark setup</Button>
         </div>
       </SettingsSection>
 
@@ -258,8 +259,8 @@ export function Connections() {
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: signedIn ? "var(--ok)" : "var(--text-dim)" }} />
           <span className="text-xs text-[var(--text-dim)]">{signedIn ? `${vaultConnections.length} provider connection${vaultConnections.length === 1 ? "" : "s"} secured` : "Sign in with Google below to use the vault"}</span>
           <div className="ml-auto flex gap-2">
-            <button className="zen-btn-ghost" disabled={!signedIn || vaultBusy} onClick={() => void restoreConnections()}>Restore</button>
-            <button className="zen-btn" disabled={!signedIn || vaultBusy} onClick={() => void secureConnections()}>{vaultBusy ? "Working…" : "Secure connections"}</button>
+            <Button variant="ghost" disabled={!signedIn || vaultBusy} onClick={() => void restoreConnections()}>Restore</Button>
+            <Button disabled={!signedIn || vaultBusy} onClick={() => void secureConnections()}>{vaultBusy ? "Working…" : "Secure connections"}</Button>
           </div>
         </div>
         <p className="text-xs text-[var(--text-dim)]">Provider credentials are encrypted at rest and only accessible after authenticating as the same Google account.</p>
@@ -270,9 +271,9 @@ export function Connections() {
       <SettingsSection title="Google Drive" hint="Read-only indexing across every non-trashed file and folder this Google account can access, including shared-drive items.">
         <p className="text-xs text-[var(--text-dim)]">Zen extracts supported Google documents and text files, and keeps metadata plus original links for other file types.</p>
         <SaveBar onSave={saveExternal}>
-          <button className="zen-btn-ghost" onClick={() => void testDrive()} disabled={testingExternal === "drive" || !signedIn}>
+          <Button variant="ghost" onClick={() => void testDrive()} disabled={testingExternal === "drive" || !signedIn}>
             {testingExternal === "drive" ? "Importing…" : "Test & import"}
-          </button>
+          </Button>
         </SaveBar>
       </SettingsSection>
 
@@ -288,22 +289,22 @@ export function Connections() {
           </Field>
         </div>
         <Field label="API key">
-          <div className="flex gap-2"><input type={showZoteroKey ? "text" : "password"} className="zen-input flex-1" value={external.zoteroApiKey} onChange={(e) => setExternal({ ...external, zoteroApiKey: e.target.value })} autoComplete="off" /><button className="zen-btn-ghost" onClick={() => setShowZoteroKey((value) => !value)}>{showZoteroKey ? "Hide" : "Show"}</button></div>
+          <div className="flex gap-2"><input type={showZoteroKey ? "text" : "password"} className="zen-input flex-1" value={external.zoteroApiKey} onChange={(e) => setExternal({ ...external, zoteroApiKey: e.target.value })} autoComplete="off" /><Button variant="ghost" onClick={() => setShowZoteroKey((value) => !value)}>{showZoteroKey ? "Hide" : "Show"}</Button></div>
         </Field>
         <Field label="Collection keys" hint="Optional. Leave blank to import the whole library.">
           <input className="zen-input w-full" value={external.zoteroCollectionKeys.join(", ")} onChange={(e) => setExternal({ ...external, zoteroCollectionKeys: splitConnectionList(e.target.value) })} placeholder="ABC123, DEF456" />
         </Field>
-        <SaveBar onSave={saveExternal}><button className="zen-btn-ghost" onClick={() => void testZotero()} disabled={testingExternal === "zotero" || !external.zoteroApiKey || !external.zoteroLibraryId}>{testingExternal === "zotero" ? "Testing…" : "Test connection"}</button></SaveBar>
+        <SaveBar onSave={saveExternal}><Button variant="ghost" onClick={() => void testZotero()} disabled={testingExternal === "zotero" || !external.zoteroApiKey || !external.zoteroLibraryId}>{testingExternal === "zotero" ? "Testing…" : "Test connection"}</Button></SaveBar>
       </SettingsSection>
 
       <SettingsSection title="GitHub" hint="Index every repository visible to the connected GitHub account, including owned, collaborated, and permitted organization repositories.">
         <Field label="Personal token" hint="Use a fine-grained token with All repositories, or restrict it at GitHub to control what Zen can read.">
-          <div className="flex gap-2"><input type={showGitHubToken ? "text" : "password"} className="zen-input flex-1" value={external.githubToken} onChange={(e) => setExternal({ ...external, githubToken: e.target.value })} autoComplete="off" /><button className="zen-btn-ghost" onClick={() => setShowGitHubToken((value) => !value)}>{showGitHubToken ? "Hide" : "Show"}</button></div>
+          <div className="flex gap-2"><input type={showGitHubToken ? "text" : "password"} className="zen-input flex-1" value={external.githubToken} onChange={(e) => setExternal({ ...external, githubToken: e.target.value })} autoComplete="off" /><Button variant="ghost" onClick={() => setShowGitHubToken((value) => !value)}>{showGitHubToken ? "Hide" : "Show"}</Button></div>
         </Field>
         <Field label="Excluded paths" hint="Files containing any of these path fragments are not indexed.">
           <input className="zen-input w-full" value={external.githubExcludePatterns.join(", ")} onChange={(e) => setExternal({ ...external, githubExcludePatterns: splitConnectionList(e.target.value) })} />
         </Field>
-        <SaveBar onSave={saveExternal}><button className="zen-btn-ghost" onClick={() => void testGitHub()} disabled={testingExternal === "github" || !external.githubToken}>{testingExternal === "github" ? "Testing…" : "Test connection"}</button></SaveBar>
+        <SaveBar onSave={saveExternal}><Button variant="ghost" onClick={() => void testGitHub()} disabled={testingExternal === "github" || !external.githubToken}>{testingExternal === "github" ? "Testing…" : "Test connection"}</Button></SaveBar>
       </SettingsSection>
 
       <SettingsSection
@@ -375,21 +376,19 @@ export function Connections() {
               systemCalendar.authorization === "denied" ||
               systemCalendar.authorization === "restricted" ||
               systemCalendar.authorization === "write_only" ? (
-                <button
-                  className="zen-btn-ghost ml-auto"
+                <Button variant="ghost" className="ml-auto"
                   disabled={icloudBusy}
                   onClick={() => void manageSystemCalendar()}
                 >
                   Open System Settings
-                </button>
+                </Button>
               ) : (
-                <button
-                  className="zen-btn ml-auto"
+                <Button className="ml-auto"
                   disabled={icloudBusy}
                   onClick={() => void connectSystemCalendar()}
                 >
                   {icloudBusy ? "Waiting for macOS…" : "Allow Calendar access"}
-                </button>
+                </Button>
               )}
             </div>
             {!systemCalendar.connected &&
@@ -407,13 +406,12 @@ export function Connections() {
             <span className="text-xs text-[var(--text-dim)]">
               Connected{icloud.email ? ` · ${icloud.email}` : ""}
             </span>
-            <button
-              className="zen-btn-ghost ml-auto"
+            <Button variant="ghost" className="ml-auto"
               disabled={icloudBusy}
               onClick={() => void disconnectIcloud()}
             >
               {icloudBusy ? "Disconnecting…" : "Disconnect"}
-            </button>
+            </Button>
           </div>
         ) : (
           <>
@@ -449,13 +447,12 @@ export function Connections() {
                   spellCheck={false}
                   disabled={icloudBusy}
                 />
-                <button
-                  className="zen-btn-ghost shrink-0"
+                <Button variant="ghost" className="shrink-0"
                   onClick={() => setShowIcloudPassword((visible) => !visible)}
                   disabled={icloudBusy}
                 >
                   {showIcloudPassword ? "Hide" : "Show"}
-                </button>
+                </Button>
               </div>
             </Field>
             <div className="flex items-center gap-2">
@@ -467,13 +464,12 @@ export function Connections() {
               >
                 Create an app-specific password
               </a>
-              <button
-                className="zen-btn ml-auto"
+              <Button className="ml-auto"
                 disabled={icloudBusy || !icloudEmail.trim() || !icloudPassword.trim()}
                 onClick={() => void connectIcloud()}
               >
                 {icloudBusy ? "Connecting…" : "Connect"}
-              </button>
+              </Button>
             </div>
           </>
         )}
@@ -498,11 +494,11 @@ export function Connections() {
           </span>
           <div className="ml-auto flex gap-2">
             {signedIn ? (
-              <button className="zen-btn-ghost" onClick={() => { signOut(); notify.success("Disconnected"); }}>
+              <Button variant="ghost" onClick={() => { signOut(); notify.success("Disconnected"); }}>
                 Disconnect
-              </button>
+              </Button>
             ) : (
-              <button className="zen-btn" onClick={connectGoogle}>Connect</button>
+              <Button onClick={connectGoogle}>Connect</Button>
             )}
           </div>
         </div>
@@ -548,9 +544,9 @@ export function Connections() {
                     : "Idle"}
           </span>
           <div className="ml-auto flex items-center gap-2">
-            <button className="zen-btn-ghost" onClick={syncNow} disabled={syncing || !sync.enabled}>
+            <Button variant="ghost" onClick={syncNow} disabled={syncing || !sync.enabled}>
               {syncing ? "Syncing…" : "Sync now"}
-            </button>
+            </Button>
             <button
               className={sync.enabled ? "zen-btn-ghost" : "zen-btn"}
               onClick={() => toggleSync(!sync.enabled)}

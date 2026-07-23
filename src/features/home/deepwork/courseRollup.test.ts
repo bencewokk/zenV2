@@ -46,6 +46,7 @@ function mkSession(
     archived,
     items: [],
     windows: {},
+    layout: "grid" as const,
     intent: "",
     focusMs: 0,
     focusSessions: 0,

@@ -28,7 +28,7 @@ export function LessonMode() {
 
   // The chat is the lesson's only input — make sure it's open while teaching.
   useEffect(() => {
-    if (active && !useAI.getState().open) useAI.getState().toggle();
+    if (active) useAI.getState().setOpen(true);
   }, [active]);
 
   // Keep the newest revealed step in view as the lesson advances.

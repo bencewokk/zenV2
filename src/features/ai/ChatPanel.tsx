@@ -4,7 +4,7 @@ import { linkifyCitations } from "@/features/ai/citations";
 import { useAI, type ToolTone, type ChatTurn } from "@/features/ai/store";
 import { useAiAccess, aiBlocked, aiBlockedMessage, availableModels, MODEL_LABEL, type AiModel } from "@/features/ai/access";
 import { useNotes } from "@/features/notes/store";
-import { useHome } from "@/features/home/store";
+import { navigate, openInDeepWork } from "@/shared/stores/navigate";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
 import { docToText } from "@/shared/lib/docText";
 import { ProfilePanel } from "@/features/memory/ProfilePanel";
@@ -12,8 +12,6 @@ import { ToolSettings } from "@/features/ai/ToolSettings";
 import { useMemoryStatus } from "@/features/memory/useMemoryStatus";
 import { usePresence } from "@/shared/ui/usePresence";
 import { Dropdown } from "@/shared/ui/Dropdown";
-import { useSources } from "@/services/sources/store";
-import { useWorkspace } from "@/shared/stores/workspace";
 
 /** Dot colour for a tool-activity tone (no emojis — a small status dot instead). */
 const TONE_DOT: Record<ToolTone, string> = {
@@ -193,15 +191,12 @@ export function ChatPanel() {
       const pdfId = cite.getAttribute("data-cite-pdf");
       const sourceId = cite.getAttribute("data-cite-source");
       if (noteId) {
-        useNotes.getState().select(noteId);
+        navigate({ view: "note", id: noteId });
       } else if (pdfId) {
-        useHome.getState().launchDeepWork({ type: "pdf", id: pdfId });
+        openInDeepWork({ type: "pdf", id: pdfId });
         usePdfNav.getState().goTo(pdfId, Number(cite.getAttribute("data-cite-page")) || 1);
       } else if (sourceId) {
-        useSources.getState().select(sourceId);
-        useNotes.getState().select(null);
-        useHome.getState().setManualDeepWork(false);
-        useWorkspace.getState().set({ surface: "sources" });
+        navigate({ view: "sources", sourceId });
       }
     };
     el.addEventListener("click", onClick);
@@ -341,11 +336,7 @@ export function ChatPanel() {
           <span className="text-[var(--text)]">{aiBlockedMessage(aiAccess)}</span>
           <button
             className="zen-pressable mt-1.5 block rounded border border-[var(--border)] px-2 py-1 text-[var(--text-dim)] hover:text-[var(--text)]"
-            onClick={() => {
-              useNotes.getState().select(null);
-              useHome.getState().setManualDeepWork(false);
-              useWorkspace.getState().set({ surface: "settings", adminMailId: null });
-            }}
+            onClick={() => navigate({ view: "settings" })}
           >
             Open Settings
           </button>

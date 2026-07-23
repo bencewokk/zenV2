@@ -8,6 +8,9 @@ import { useSources, ensureSourcesLoaded } from "@/services/sources/store";
 import {
   targetKey,
   useDeepWork,
+  MIN_W,
+  MIN_H,
+  type CanvasLayout,
   type WindowGeom,
 } from "@/features/home/deepwork/deepworkStore";
 import { WindowFrame } from "@/features/home/deepwork/windows/WindowFrame";
@@ -26,8 +29,6 @@ interface RelatedCandidate {
   title: string;
   subtitle: string;
 }
-
-const TYPE_GLYPH: Record<RelatedCandidate["type"], string> = { note: "✎", event: "◷", mail: "✉", pdf: "📄" };
 
 /**
  * Keywords that characterise a source item, used to find related material via
@@ -128,6 +129,13 @@ function relatedCandidates(
 }
 
 
+/** Canvas arrangements offered in the toolbar. */
+const LAYOUTS: { id: CanvasLayout; glyph: string; title: string }[] = [
+  { id: "grid", glyph: "▦", title: "Grid — tile every source" },
+  { id: "columns", glyph: "▥", title: "Columns — one full-height strip each" },
+  { id: "free", glyph: "◰", title: "Free — place windows yourself" },
+];
+
 export interface DeepWorkV2Props {
   notes: Record<string, Note>;
   events: CalEvent[];
@@ -141,6 +149,8 @@ export function DeepWorkV2({
   const activeId = useDeepWork((s) => s.activeId);
   const items = useDeepWork((s) => s.items);
   const windows = useDeepWork((s) => s.windows);
+  const layout = useDeepWork((s) => s.layout);
+  const setLayout = useDeepWork((s) => s.setLayout);
   const setWindow = useDeepWork((s) => s.setWindow);
   const rescaleWindows = useDeepWork((s) => s.rescaleWindows);
   const addItem = useDeepWork((s) => s.addItem);
@@ -213,21 +223,14 @@ export function DeepWorkV2({
     setZMap((m) => ({ ...m, [key]: next }));
   }
 
-  const [relatedMenu, setRelatedMenu] = useState<{ x: number; y: number; source: HomeTarget } | null>(null);
-  useEffect(() => {
-    if (!relatedMenu) return;
-    const close = () => setRelatedMenu(null);
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("blur", close);
-    };
-  }, [relatedMenu]);
+  // Right-clicking an item opens the one picker, with that item's tag-related material
+  // promoted. This used to be a third, separate context menu with its own list and look.
+  const [relatedTo, setRelatedTo] = useState<HomeTarget | null>(null);
 
   function openRelatedMenu(e: React.MouseEvent, source: HomeTarget) {
     e.preventDefault();
-    setRelatedMenu({ x: e.clientX, y: e.clientY, source });
+    setRelatedTo(source);
+    setShowLibrary(true);
   }
 
   // Rescale every window proportionally when the canvas viewport itself resizes —
@@ -236,6 +239,25 @@ export function DeepWorkV2({
   // half) instead of holding its old absolute pixels against the new space.
   const canvasRef = useRef<HTMLDivElement>(null);
   const canvasSizeRef = useRef<{ w: number; h: number } | null>(null);
+  // Live canvas box, so grid/column placement recomputes as the rail opens and closes.
+  const [canvasBox, setCanvasBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  /**
+   * Where a window sits under an automatic layout. Grid packs into the squarest
+   * arrangement that fits the item count; columns gives each item a full-height strip.
+   * Returns null in "free" mode, where stored geometry wins.
+   */
+  function autoGeom(index: number, count: number): WindowGeom | null {
+    if (layout === "free" || !canvasBox.w || !canvasBox.h) return null;
+    const gap = 10;
+    const cols = layout === "columns" ? count : Math.ceil(Math.sqrt(count));
+    const rows = layout === "columns" ? 1 : Math.ceil(count / cols);
+    const w = Math.max(MIN_W, (canvasBox.w - gap * (cols + 1)) / cols);
+    const h = Math.max(MIN_H, (canvasBox.h - gap * (rows + 1)) / rows);
+    const col = layout === "columns" ? index : index % cols;
+    const row = layout === "columns" ? 0 : Math.floor(index / cols);
+    return { x: gap + col * (w + gap), y: gap + row * (h + gap), w, h };
+  }
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
@@ -247,15 +269,17 @@ export function DeepWorkV2({
     // actual resize to react to.
     const rect0 = el.getBoundingClientRect();
     canvasSizeRef.current = { w: rect0.width, h: rect0.height };
+    setCanvasBox({ w: rect0.width, h: rect0.height });
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
       if (!rect) return;
       const { width: w, height: h } = rect;
       const prev = canvasSizeRef.current;
       canvasSizeRef.current = { w, h };
+      setCanvasBox({ w, h });
       if (!prev || prev.w <= 0 || prev.h <= 0) return;
       if (Math.abs(prev.w - w) < 1 && Math.abs(prev.h - h) < 1) return;
-      rescaleWindows(w / prev.w, h / prev.h);
+      if (useDeepWork.getState().layout === "free") rescaleWindows(w / prev.w, h / prev.h);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -329,6 +353,22 @@ export function DeepWorkV2({
           </button>
         </div>
         <div className="flex shrink-0 items-center gap-1 border-l border-[rgba(255,255,255,0.08)] pl-2">
+          <div className="mr-1 inline-flex items-center rounded-[8px] bg-[rgba(255,255,255,0.04)] p-0.5">
+            {LAYOUTS.map((l) => (
+              <button
+                key={l.id}
+                className={`zen-pressable rounded-[6px] px-1.5 py-0.5 text-xs leading-none ${
+                  layout === l.id ? "bg-[var(--bg)] text-[var(--accent)]" : "text-[var(--text-dim)] hover:text-[var(--text)]"
+                }`}
+                onClick={() => setLayout(l.id)}
+                title={l.title}
+                aria-label={l.title}
+                aria-pressed={layout === l.id}
+              >
+                {l.glyph}
+              </button>
+            ))}
+          </div>
           <button
             className="zen-pressable rounded-[8px] px-2 py-1 text-sm leading-none text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)] disabled:opacity-40"
             onClick={toggleMinimizeAll}
@@ -363,7 +403,9 @@ export function DeepWorkV2({
             // Cascade windows without a saved geometry so newly added sources don't
             // pile up in one spot hiding each other.
             const step = index % 6;
-            const geom: WindowGeom = windows[key] ?? { x: 32 + step * 36, y: 32 + step * 30, w: 380, h: 340 };
+            const geom: WindowGeom =
+              autoGeom(index, items.length) ??
+              windows[key] ?? { x: 32 + step * 36, y: 32 + step * 30, w: 380, h: 340 };
             const commit = (g: WindowGeom) => setWindow(key, g);
             const peers = Object.entries(windows)
               .filter(([k]) => k !== key)
@@ -457,20 +499,6 @@ export function DeepWorkV2({
         )}
       </div>
 
-      {relatedMenu && (
-        <RelatedTagMenu
-          x={relatedMenu.x}
-          y={relatedMenu.y}
-          related={relatedCandidates(relatedMenu.source, notes, events, threads, matchedLabels, pdfs).filter(
-            (c) => !items.some((it) => it.type === c.target.type && it.id === c.target.id)
-          )}
-          onAdd={(c) => {
-            addItem(c.target);
-            setRelatedMenu(null);
-          }}
-        />
-      )}
-
       {showLibrary && (
         <SourceLibrary
           notes={notes}
@@ -479,52 +507,22 @@ export function DeepWorkV2({
           pdfs={pdfs}
           sources={sources}
           current={items}
+          related={
+            relatedTo
+              ? relatedCandidates(relatedTo, notes, events, threads, matchedLabels, pdfs).map((c) => c.target)
+              : undefined
+          }
+          relatedTo={relatedTo ? describe(relatedTo).title : undefined}
           onAdd={(t) => addItem(t)}
-          onClose={() => setShowLibrary(false)}
+          onClose={() => {
+            setShowLibrary(false);
+            setRelatedTo(null);
+          }}
         />
       )}
     </div>
   );
 }
-
-function RelatedTagMenu({
-  x, y, related, onAdd,
-}: {
-  x: number;
-  y: number;
-  related: RelatedCandidate[];
-  onAdd: (candidate: RelatedCandidate) => void;
-}) {
-  return (
-    <div
-      className="zen-anim-pop fixed z-50 max-h-[60vh] min-w-[240px] overflow-auto rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
-      style={{ left: x, top: y, transformOrigin: "top left" }}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">
-        Related by tag
-      </div>
-      {related.length === 0 ? (
-        <div className="px-3 py-2 text-sm text-[var(--text-dim)]">Nothing related to add.</div>
-      ) : (
-        related.map((c) => (
-          <button
-            key={`${c.target.type}:${c.target.id}`}
-            className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left hover:bg-[var(--bg-elev)]"
-            onClick={() => onAdd(c)}
-          >
-            <span className="shrink-0 text-sm text-[var(--text-dim)]">{TYPE_GLYPH[c.type]}</span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm text-[var(--text)]">{c.title}</span>
-              {c.subtitle && <span className="block truncate text-xs text-[var(--text-dim)]">{c.subtitle}</span>}
-            </span>
-          </button>
-        ))
-      )}
-    </div>
-  );
-}
-
 function Missing({ label }: { label: string }) {
   return <div className="p-4 text-sm text-[var(--text-dim)]">{label}</div>;
 }

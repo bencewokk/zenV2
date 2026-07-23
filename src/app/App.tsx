@@ -5,21 +5,20 @@ import { NoteSurface } from "@/features/notes/NoteSurface";
 import { FilterBar } from "@/features/filtering/FilterBar";
 import { StatusBar } from "@/shared/ui/StatusBar";
 import { AmbientOverlay } from "@/shared/ui/AmbientOverlay";
-import { WindowControls, WindowResizeHandles, IS_TAURI } from "@/shared/ui/WindowChrome";
+import { WindowResizeHandles, IS_TAURI } from "@/shared/ui/WindowChrome";
+import { AppHeader } from "@/app/AppHeader";
+import { useAppShortcuts } from "@/app/useAppShortcuts";
 import { Home } from "@/features/home/Home";
 import { useHome } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
-import { FocusTimerButton } from "@/features/home/deepwork/FocusTimerButton";
 import { StudyPanel } from "@/features/home/deepwork/StudyPanel";
 import { useLesson } from "@/features/home/deepwork/lessonStore";
 import { useQuiz } from "@/features/home/deepwork/quizStore";
-import { SessionTabs } from "@/features/home/deepwork/SessionTabs";
 import { AddToSessionPicker } from "@/features/home/deepwork/AddToSessionPicker";
-import { CommandPalette, useCommandPalette } from "@/features/search/CommandPalette";
+import { CommandPalette } from "@/features/search/CommandPalette";
 import { ReleaseNotesModal } from "@/features/home/ReleaseNotes";
 import { SparkIntro } from "@/features/onboarding/SparkIntro";
 import { GuidedTour } from "@/features/onboarding/GuidedTour";
-import CardNav from "@/shared/ui/reactbits/CardNav";
 import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { seedSampleSession } from "@/features/onboarding/seedSession";
 import { checkForUpdates } from "@/services/update";
@@ -30,8 +29,9 @@ import { useNotes } from "@/features/notes/store";
 import { useAI } from "@/features/ai/store";
 import { startAiAccessWatch } from "@/features/ai/access";
 import { useWorkspace } from "@/shared/stores/workspace";
+import { navigate } from "@/shared/stores/navigate";
+import { currentRoute, useRoute } from "@/shared/stores/route";
 import { usePdfs } from "@/features/pdfs/store";
-import { useStatus } from "@/shared/stores/status";
 import { ensureSourcesLoaded } from "@/services/sources/store";
 import { startSourceRefresh } from "@/services/sources/refresh";
 import { isSignedIn, onAuthChange } from "@/services/google/auth";
@@ -67,17 +67,11 @@ function CloseCrashedSurface({ label, close }: { label: string; close: () => voi
  * Phase 1 shell — a thin composer of feature modules (the anti-ui.py).
  * Sidebar (tree) + FilterBar | Editor + NoteMeta, StatusBar across the bottom.
  */
-/** Shared base for every header button so they share one height (h-7). */
-const HEADER_BTN = "zen-pressable inline-flex h-7 items-center rounded-[6px] border px-2.5 text-xs";
-const HEADER_BTN_ACTIVE = "border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]";
-const HEADER_BTN_IDLE = "border-[var(--border)] bg-[var(--bg-elev)] text-[var(--text-dim)] hover:text-[var(--text)]";
-
 export function App() {
   const load = useNotes((s) => s.load);
   const loaded = useNotes((s) => s.loaded);
   const notes = useNotes((s) => s.notes);
-  const selectedId = useNotes((s) => s.selectedId);
-  const select = useNotes((s) => s.select);
+  const route = useRoute((s) => s.route);
   const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
   const sidebarCollapsed = useWorkspace((s) => s.sidebarCollapsed);
   const [winWidth, setWinWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
@@ -87,35 +81,18 @@ export function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   const setWs = useWorkspace((s) => s.set);
-  const manualDeepWork = useHome((s) => s.manualDeepWork);
-  const setManualDeepWork = useHome((s) => s.setManualDeepWork);
-  const deepWorkLaunchNonce = useHome((s) => s.deepWorkLaunchNonce);
-  const deepWorkItemCount = useDeepWork((s) => s.items.length);
   const zenMode = useDeepWork((s) => s.zenMode);
-  const setZenMode = useDeepWork((s) => s.setZenMode);
   const threads = useHome((s) => s.threads);
-  const aiStatus = useStatus((s) => s.ai);
   const aiOpen = useAI((s) => s.open);
-  const surface = useWorkspace((s) => s.surface);
-  const adminFocus = useWorkspace((s) => s.adminFocus);
-  const adminMailId = useWorkspace((s) => s.adminMailId);
-  const setSurface = (surface: "home" | "admin" | "sources" | "settings") => setWs({ surface });
-  const setAdminFocus = (adminFocus: "calendar" | "mail") => setWs({ adminFocus });
-  const setAdminMailId = (adminMailId: string | null) => setWs({ adminMailId });
+  const showStudy = useWorkspace((s) => s.rightPanel === "study");
   const shellRef = useRef<HTMLDivElement>(null);
-  const [showStudy, setShowStudy] = useState(false);
   const lessonActive = useLesson((s) => s.active);
   const quizActive = useQuiz((s) => s.activeId !== null);
 
-  // Selecting a note returns to the editor and resets any shell-only state.
-  useEffect(() => {
-    if (selectedId) setSurface("home");
-  }, [selectedId]);
+  useAppShortcuts();
 
-  // Initial load + restore the last surface (once). Until that has run we must
-  // not write lastOpenId, or the mount-time null selection would wipe it.
+  // Initial load + restore the persisted route (once).
   const restored = useRef(false);
-  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     applyAppearance();
     void usePdfs.getState().load();
@@ -138,37 +115,19 @@ export function App() {
     const stopAiAccess = startAiAccessWatch();
     return () => { window.clearTimeout(t); stopSourceRefresh(); stopVaultAuth(); stopAiAccess(); };
   }, [load]);
+  // Replay the persisted route through navigate() once notes are loaded, so every
+  // legacy field it still drives is set from one place. A note route whose note is
+  // gone (deleted on another device) falls back to the dashboard rather than a blank pane.
   useEffect(() => {
-    if (loaded && !restored.current) {
-      restored.current = true;
-      // Restore the last surface across refresh. Deep Work and the admin
-      // panels (Calendar/Mail) own the view, so don't re-open a note over them.
-      // A null lastOpenId on the home surface means the dashboard was showing.
-      const deepWork = useHome.getState().manualDeepWork;
-      // Admin (Calendar/Mail) and Settings own the view — don't re-open a note over them.
-      const ownsView = useWorkspace.getState().surface !== "home";
-      if (!deepWork && !ownsView) {
-        const last = useWorkspace.getState().lastOpenId;
-        if (last && notes[last]) select(last);
-      }
-      setHydrated(true);
-    }
-  }, [loaded, notes, select]);
+    if (!loaded || restored.current) return;
+    restored.current = true;
+    const route = currentRoute();
+    navigate(route.view === "note" && !notes[route.id] ? { view: "dashboard" } : route);
+  }, [loaded, notes]);
+
   useEffect(() => {
     if (loaded) void useHome.getState().bootstrap();
   }, [loaded]);
-  // Track the open note exactly (including deselection) so the home dashboard
-  // and editor both persist across refresh.
-  useEffect(() => {
-    if (hydrated) setWs({ lastOpenId: selectedId });
-  }, [hydrated, selectedId, setWs]);
-
-  useEffect(() => {
-    if (deepWorkLaunchNonce === 0) return;
-    select(null);
-    setSurface("home");
-    setAdminMailId(null);
-  }, [deepWorkLaunchNonce, select]);
 
   // Wiki-link click navigation.
   useEffect(() => {
@@ -177,20 +136,25 @@ export function App() {
       if (!el) return;
       e.preventDefault();
       const id = el.getAttribute("data-note-id");
-      if (id && useNotes.getState().notes[id]) select(id);
+      if (id && useNotes.getState().notes[id]) navigate({ view: "note", id });
     };
     document.addEventListener("click", handler);
     return () => document.removeEventListener("click", handler);
-  }, [select]);
+  }, []);
 
-  const note = selectedId ? notes[selectedId] : null;
-  const showAdmin = !note && surface === "admin";
-  const showSettings = !note && surface === "settings";
-  const showSources = !note && surface === "sources";
-  const showHome = !note && surface === "home";
-  const deepWork = showHome && manualDeepWork;
+  // One route decides the whole shell. Previously a selected note silently overrode the
+  // surface, so these five booleans could disagree about what was on screen.
+  const note = route.view === "note" ? notes[route.id] ?? null : null;
+  const showAdmin = route.view === "calendar" || route.view === "mail";
+  const adminFocus = route.view === "mail" ? "mail" : "calendar";
+  const adminMailId = route.view === "mail" ? route.threadId ?? null : null;
+  const showSettings = route.view === "settings";
+  const showSources = route.view === "sources";
+  const showHome = route.view === "dashboard";
+  const deepWork = route.view === "deepwork";
   const zen = deepWork && zenMode;
-  const sidebarApplicable = !showAdmin && !showSources && !showSettings && !deepWork;
+  // The notes sidebar belongs to the notes workspace: the dashboard and an open note.
+  const sidebarApplicable = showHome || route.view === "note";
   // Responsive guard: the notes sidebar is a fixed width, so on a narrow window it
   // would crush the main column (the dashboard text wraps a letter per line). Keep
   // main at least MIN_MAIN wide — shrink the sidebar to fit, and drop it entirely
@@ -253,151 +217,12 @@ export function App() {
         <div data-tauri-drag-region className="relative z-30 h-2.5 shrink-0" />
       )}
       {!zen && !lessonActive && (
-        <header data-tauri-drag-region className="relative z-30 flex items-start gap-2 px-2.5 pb-1.5 pt-1.5">
-          <div className="min-w-0 flex-1">
-            <CardNav
-              logoText="Zen"
-              onLogoClick={() => {
-                select(null);
-                setSurface("home");
-                setManualDeepWork(false);
-                void useHome.getState().refresh();
-              }}
-              centerSlot={
-                <SessionTabs
-                  onOpen={() => {
-                    select(null);
-                    setSurface("home");
-                    setAdminMailId(null);
-                    setManualDeepWork(true);
-                  }}
-                />
-              }
-              topExtras={
-                <>
-                  <button
-                    data-tour="search-header"
-                    className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
-                    onClick={() => useCommandPalette.getState().setOpen(true)}
-                    title="Search everything (Ctrl+K)"
-                    aria-label="Search"
-                  >
-                    ⌕
-                  </button>
-                  {sidebarApplicable && (
-                    <button
-                      className={`${HEADER_BTN} ${sidebarVisible ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-                      onClick={() => setWs({ sidebarCollapsed: !sidebarCollapsed })}
-                      title={sidebarVisible ? "Hide notes" : "Show notes"}
-                    >
-                      Notes
-                    </button>
-                  )}
-                  {deepWork && (
-                    <div className="zen-anim-fade inline-flex items-center gap-1 rounded-[8px] bg-[rgba(255,255,255,0.04)] p-0.5">
-                      <FocusTimerButton />
-                      <button
-                        data-tour="dw-study"
-                        className={`${HEADER_BTN} ${showStudy ? HEADER_BTN_ACTIVE : HEADER_BTN_IDLE}`}
-                        onClick={() => setShowStudy((visible) => {
-                          return !visible;
-                        })}
-                        title="Study panel — backbone, mastery & daily goal"
-                      >
-                        Study
-                      </button>
-                      <button
-                        className={`${HEADER_BTN} ${HEADER_BTN_IDLE}`}
-                        onClick={() => setZenMode(true)}
-                        title="Zen mode — show only sources"
-                        aria-label="Enter zen mode"
-                      >
-                        ◐
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    data-tour="ai-toggle"
-                    className={`${HEADER_BTN} ${aiStatus === "busy" ? "zen-glow border-[var(--accent)] bg-[var(--bg)] text-[var(--accent)]" : HEADER_BTN_IDLE}`}
-                    onClick={() => useAI.getState().toggle()}
-                    title="Toggle AI panel"
-                  >
-                    AI
-                  </button>
-                  {IS_TAURI && <WindowControls className="shrink-0" />}
-                </>
-              }
-              items={[
-                {
-                  label: "Study",
-                  bgColor: "var(--bg)",
-                  textColor: "var(--text)",
-                  links: [
-                    {
-                      label: `Deep Work${deepWorkItemCount > 0 ? ` · ${deepWorkItemCount}` : ""}`,
-                      active: deepWork,
-                      onClick: () => {
-                        if (deepWork) {
-                          setManualDeepWork(false);
-                        } else {
-                          select(null);
-                          setSurface("home");
-                          setAdminMailId(null);
-                          setManualDeepWork(true);
-                        }
-                      },
-                    },
-                    {
-                      label: "Sources",
-                      active: showSources,
-                      onClick: () => { select(null); setManualDeepWork(false); setAdminMailId(null); setSurface("sources"); },
-                    },
-                  ],
-                },
-                {
-                  label: "Notes",
-                  bgColor: "var(--bg)",
-                  textColor: "var(--text)",
-                  links: [
-                    {
-                      label: "Home dashboard",
-                      active: showHome && !deepWork,
-                      onClick: () => { select(null); setSurface("home"); setManualDeepWork(false); void useHome.getState().refresh(); },
-                    },
-                    {
-                      label: sidebarVisible ? "Hide notes panel" : "Show notes panel",
-                      onClick: () => {
-                        if (!sidebarApplicable) { select(null); setSurface("home"); setManualDeepWork(false); }
-                        setWs({ sidebarCollapsed: !sidebarCollapsed });
-                      },
-                    },
-                  ],
-                },
-                {
-                  label: "Admin",
-                  bgColor: "var(--bg)",
-                  textColor: "var(--text)",
-                  links: [
-                    {
-                      label: "Calendar",
-                      active: showAdmin && adminFocus === "calendar",
-                      onClick: () => { select(null); setSurface("admin"); setAdminFocus("calendar"); setAdminMailId(null); void useHome.getState().refresh(); },
-                    },
-                    {
-                      label: "Mail",
-                      active: showAdmin && adminFocus === "mail",
-                      onClick: () => { select(null); setSurface("admin"); setAdminFocus("mail"); void useHome.getState().refresh(); },
-                    },
-                    {
-                      label: "Settings",
-                      active: showSettings,
-                      onClick: () => { select(null); setManualDeepWork(false); setAdminMailId(null); setSurface("settings"); },
-                    },
-                  ],
-                },
-              ]}
-            />
-          </div>
+        <header data-tauri-drag-region className="relative z-30 flex items-center gap-2 px-2.5 pb-1.5 pt-1.5">
+          <AppHeader
+            winWidth={winWidth}
+            sidebarVisible={sidebarVisible}
+            sidebarApplicable={sidebarApplicable}
+          />
         </header>
       )}
 
@@ -451,17 +276,15 @@ export function App() {
             ) : (
               <Home
                 deepWork={deepWork}
-                onOpenAdmin={(focus, targetId) => {
-                  setAdminFocus(focus);
-                  setAdminMailId(focus === "mail" ? targetId ?? null : null);
-                  setSurface("admin");
-                }}
+                onOpenAdmin={(focus, targetId) =>
+                  navigate(focus === "mail" ? { view: "mail", threadId: targetId ?? null } : { view: "calendar" })
+                }
               />
             )}
           </div>
         </main>
 
-        {deepWork && showStudy && <StudyPanel onClose={() => setShowStudy(false)} />}
+        {deepWork && showStudy && <StudyPanel onClose={() => setWs({ rightPanel: null })} />}
 
         {/* During a lesson the ChatPanel is rendered inside LessonMode instead (one instance). */}
         {!lessonActive && aiOpen && (
@@ -507,7 +330,9 @@ function AdminPanel({
   focus: "calendar" | "mail";
   mailId: string | null;
 }) {
-  const [calendarFraction, setCalendarFraction] = useState(1 / 3);
+  // Persisted, so dragging the divider survives leaving and coming back.
+  const calendarFraction = useWorkspace((s) => s.calendarFraction);
+  const setWs = useWorkspace((s) => s.set);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const onDividerMouseDown = (e: React.MouseEvent) => {
@@ -517,7 +342,7 @@ function AdminPanel({
     const onMove = (ev: MouseEvent) => {
       const rect = container.getBoundingClientRect();
       const fraction = Math.max(0.15, Math.min(0.85, (ev.clientX - rect.left) / rect.width));
-      setCalendarFraction(fraction);
+      setWs({ calendarFraction: fraction });
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
@@ -527,14 +352,27 @@ function AdminPanel({
     window.addEventListener("mouseup", onUp);
   };
 
+  const calendar = (
+    <AdminSurface title="Agenda" active={focus === "calendar"}>
+      <Suspense fallback={<LoadingSurface />}><CalendarPanel embedded /></Suspense>
+    </AdminSurface>
+  );
+  const mail = (
+    <AdminSurface title="Inbox" active={focus === "mail"}>
+      <Suspense fallback={<LoadingSurface />}><MailPanel embedded initialOpenId={mailId} /></Suspense>
+    </AdminSurface>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col px-4 py-4 sm:px-6">
-      {/* Wide layout: resizable side-by-side */}
+      {/* Wide: the focused panel leads, the other stays alongside as context. Both used to
+          render equally, which made choosing Calendar vs Mail only re-tint a border. */}
       <div ref={containerRef} className="hidden min-h-0 flex-1 lg:flex lg:gap-0">
-        <div style={{ width: `${calendarFraction * 100}%` }} className="min-w-0 min-h-0">
-          <AdminSurface title="Agenda" active={focus === "calendar"}>
-            <Suspense fallback={<LoadingSurface />}><CalendarPanel embedded /></Suspense>
-          </AdminSurface>
+        <div
+          style={{ width: `${(focus === "calendar" ? calendarFraction : 1 - calendarFraction) * 100}%` }}
+          className="min-w-0 min-h-0"
+        >
+          {focus === "calendar" ? calendar : mail}
         </div>
 
         <div
@@ -542,25 +380,16 @@ function AdminPanel({
           onMouseDown={onDividerMouseDown}
         />
 
-        <div style={{ width: `${(1 - calendarFraction) * 100}%` }} className="min-w-0 min-h-0">
-          <AdminSurface title="Inbox" active={focus === "mail"}>
-            <Suspense fallback={<LoadingSurface />}><MailPanel embedded initialOpenId={mailId} /></Suspense>
-          </AdminSurface>
+        <div
+          style={{ width: `${(focus === "calendar" ? 1 - calendarFraction : calendarFraction) * 100}%` }}
+          className="min-w-0 min-h-0"
+        >
+          {focus === "calendar" ? mail : calendar}
         </div>
       </div>
 
-      {/* Narrow layout: stacked tabs */}
-      <div className="min-h-0 flex-1 lg:hidden">
-        {focus === "calendar" ? (
-          <AdminSurface title="Agenda" active>
-            <Suspense fallback={<LoadingSurface />}><CalendarPanel embedded /></Suspense>
-          </AdminSurface>
-        ) : (
-          <AdminSurface title="Inbox" active>
-            <Suspense fallback={<LoadingSurface />}><MailPanel embedded initialOpenId={mailId} /></Suspense>
-          </AdminSurface>
-        )}
-      </div>
+      {/* Narrow: only the focused panel. */}
+      <div className="min-h-0 flex-1 lg:hidden">{focus === "calendar" ? calendar : mail}</div>
     </div>
   );
 }

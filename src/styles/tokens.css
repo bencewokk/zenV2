@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./uui-bridge.css";
 
 /* Theme tokens — replaces V1's constants.py styling. */
 :root {

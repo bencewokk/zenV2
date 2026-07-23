@@ -20,6 +20,7 @@ import { assistantReceiptsAdapter } from "@/services/assistantReceipts";
 import { makeBlobAdapter } from "./adapters/blob";
 import { makeFilteredBlobAdapter } from "./adapters/filteredBlob";
 import { WORKSPACE_KEY, hydrateWorkspace } from "@/shared/stores/workspace";
+import { ROUTE_KEY, hydrateRoute } from "@/shared/stores/route";
 import { STUDYLOG_KEY, hydrateStudyLog } from "@/features/home/deepwork/studyLog";
 import { DEEPWORK_KEY, hydrateDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { COURSES_KEY, hydrateCourses } from "@/features/home/deepwork/courseStore";
@@ -44,6 +45,7 @@ const adapters: SyncAdapter[] = [
   assistantRoutinesAdapter,
   assistantReceiptsAdapter,
   makeBlobAdapter("workspace", WORKSPACE_KEY, hydrateWorkspace),
+  makeBlobAdapter("route", ROUTE_KEY, hydrateRoute),
   makeBlobAdapter("studylog", STUDYLOG_KEY, hydrateStudyLog),
   makeBlobAdapter("deepwork", DEEPWORK_KEY, hydrateDeepWork),
   makeBlobAdapter("courses", COURSES_KEY, hydrateCourses),

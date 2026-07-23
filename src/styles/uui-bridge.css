@@ -1,0 +1,214 @@
+/**
+ * Untitled UI → Zen token bridge.
+ *
+ * Untitled UI components are written against a semantic token layer (`bg-brand-solid`,
+ * `text-secondary`, `ring-primary`, …) that normally resolves to its own palette of
+ * neutral/brand scales. Zen already has a theme system — `--bg`, `--text`, `--accent`
+ * and friends on `:root`, retinted per look by `data-look` on <html> — and two competing
+ * palettes would mean every component needed hand-editing to match, and the three looks
+ * (zen / veil / orb) would stop applying to anything new.
+ *
+ * So instead of importing their palette, this maps their token names onto Zen's variables.
+ * Because Tailwind v4 emits `background-color: var(--background-color-brand-solid)` and
+ * that indirects to `var(--accent)`, the resolution happens at RUNTIME — which is what
+ * lets a `data-look` switch retint Untitled UI components for free, with no rebuild and
+ * no per-component overrides.
+ *
+ * `tokens.css` stays the single source of truth for what a colour actually is. Adding a
+ * component that references a token not yet listed here shows up as an unstyled element,
+ * not a wrong colour — add the mapping rather than editing the component.
+ *
+ * Imported after `tokens.css` in `main.tsx`.
+ */
+
+@theme inline {
+  /* ── Text ─────────────────────────────────────────────────────────────── */
+  --text-color-primary: var(--text);
+  --text-color-secondary: var(--text);
+  --text-color-secondary_hover: var(--text);
+  --text-color-tertiary: var(--text-dim);
+  --text-color-tertiary_hover: var(--text);
+  --text-color-quaternary: var(--text-dim);
+  --text-color-disabled: var(--text-dim);
+  --text-color-placeholder: var(--text-dim);
+  --text-color-brand-primary: var(--accent);
+  --text-color-brand-secondary: var(--accent);
+  --text-color-brand-secondary_hover: var(--accent);
+  --text-color-brand-tertiary: var(--accent);
+  --text-color-error-primary: var(--danger);
+  --text-color-error-primary_hover: var(--danger);
+  --text-color-success-primary: var(--ok);
+  --text-color-white: #fff;
+
+  /* ── Foreground (icons) ───────────────────────────────────────────────── */
+  --color-fg-primary: var(--text);
+  --color-fg-secondary: var(--text);
+  --color-fg-secondary_hover: var(--text);
+  --color-fg-tertiary: var(--text-dim);
+  --color-fg-tertiary_hover: var(--text);
+  --color-fg-quaternary: var(--text-dim);
+  --color-fg-quaternary_hover: var(--text);
+  --color-fg-disabled: var(--text-dim);
+  --color-fg-brand-primary: var(--accent);
+  --color-fg-brand-secondary: var(--accent);
+  --color-fg-brand-secondary_alt: var(--accent);
+  --color-fg-brand-secondary_hover: var(--accent);
+  --color-fg-error-primary: var(--danger);
+  --color-fg-error-secondary: var(--danger);
+  --color-fg-success-primary: var(--ok);
+  --color-fg-white: #fff;
+
+  /* ── Background ───────────────────────────────────────────────────────── */
+  --background-color-primary: var(--bg-elev);
+  --background-color-primary_hover: var(--bg);
+  --background-color-primary_alt: var(--bg-elev);
+  --background-color-secondary: var(--bg);
+  --background-color-secondary_hover: var(--bg-elev);
+  --background-color-secondary_subtle: var(--bg);
+  --background-color-tertiary: var(--bg);
+  --background-color-quaternary: var(--border);
+  --background-color-active: var(--accent-dim);
+  --background-color-disabled: var(--bg);
+  --background-color-disabled_subtle: var(--bg);
+  --background-color-overlay: rgba(0, 0, 0, 0.45);
+  --background-color-brand-solid: var(--accent);
+  --background-color-brand-solid_hover: var(--accent);
+  --background-color-brand-primary: var(--accent-dim);
+  --background-color-brand-primary_alt: var(--accent-dim);
+  --background-color-brand-secondary: var(--accent);
+  --background-color-brand-section: var(--accent-dim);
+  --background-color-error-solid: var(--danger);
+  --background-color-error-solid_hover: var(--danger);
+  --background-color-error-primary: rgba(246, 104, 94, 0.12);
+  --background-color-error-secondary: var(--danger);
+  --background-color-success-solid: var(--ok);
+  --background-color-success-primary: rgba(76, 175, 114, 0.12);
+  --background-color-warning-primary: rgba(245, 177, 76, 0.12);
+  --background-color-fg-brand-primary: var(--accent);
+
+  /* ── Border / ring / outline ──────────────────────────────────────────── */
+  --border-color-primary: var(--border);
+  --border-color-secondary: var(--border);
+  --border-color-secondary_alt: var(--border);
+  --border-color-tertiary: var(--border);
+  --border-color-disabled: var(--border);
+  --border-color-disabled_subtle: var(--border);
+  --border-color-brand: var(--accent);
+  --border-color-brand_alt: var(--accent);
+  --border-color-error: var(--danger);
+  --border-color-error_subtle: var(--danger);
+  --border-color-toggle-border: rgba(255, 255, 255, 0.22);
+  --border-color-toggle-slim-border_pressed: var(--accent);
+  --border-color-toggle-slim-border_pressed-hover: var(--accent);
+
+  --ring-color-primary: var(--border);
+  --ring-color-secondary: var(--border);
+  --ring-color-secondary_alt: var(--border);
+  --ring-color-disabled: var(--border);
+  --ring-color-disabled_subtle: var(--border);
+  --ring-color-brand: var(--accent);
+  --ring-color-brand-solid: var(--accent);
+  --ring-color-error: var(--danger);
+  --ring-color-error_subtle: var(--danger);
+  --ring-color-bg-primary: var(--bg-elev);
+
+  --outline-color-brand: var(--accent);
+  --outline-color-error: var(--danger);
+  --outline-color-focus-ring: var(--accent);
+
+  /* ── Shadows ──────────────────────────────────────────────────────────── */
+  /* Untitled UI's skeuomorphic variants layer an inset highlight over a drop shadow.
+     Zen's surfaces are flat and translucent, so these resolve to its quieter depth. */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-xs-skeuomorphic: inset 0 -1px 0 rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 18px 45px rgba(0, 0, 0, 0.32);
+  --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.4);
+
+  /* ── Radius ───────────────────────────────────────────────────────────── */
+  /* `--radius` is look-dependent (10px zen, 14px veil), so component corners follow
+     the active look instead of pinning Tailwind's fixed scale. */
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* ── Tooltip ──────────────────────────────────────────────────────────── */
+  --background-color-primary-solid: var(--bg-elev);
+  --color-bg-primary-solid: var(--bg-elev);
+  --text-color-tooltip-supporting-text: var(--text-dim);
+
+  /* ── Badge utility palette ───────────────────────────────────────────── */
+  --color-utility-brand-50: rgba(110,168,254, 0.08);
+  --color-utility-brand-100: rgba(110,168,254, 0.14);
+  --color-utility-brand-200: rgba(110,168,254, 0.32);
+  --color-utility-brand-400: var(--accent);
+  --color-utility-brand-500: var(--accent);
+  --color-utility-brand-700: var(--accent);
+  --color-utility-blue-50: rgba(110,168,254, 0.08);
+  --color-utility-blue-100: rgba(110,168,254, 0.14);
+  --color-utility-blue-200: rgba(110,168,254, 0.32);
+  --color-utility-blue-400: #6ea8fe;
+  --color-utility-blue-500: #6ea8fe;
+  --color-utility-blue-700: #6ea8fe;
+  --color-utility-sky-50: rgba(95,176,201, 0.08);
+  --color-utility-sky-100: rgba(95,176,201, 0.14);
+  --color-utility-sky-200: rgba(95,176,201, 0.32);
+  --color-utility-sky-400: #5fb0c9;
+  --color-utility-sky-500: #5fb0c9;
+  --color-utility-sky-700: #5fb0c9;
+  --color-utility-indigo-50: rgba(142,162,255, 0.08);
+  --color-utility-indigo-100: rgba(142,162,255, 0.14);
+  --color-utility-indigo-200: rgba(142,162,255, 0.32);
+  --color-utility-indigo-400: #8ea2ff;
+  --color-utility-indigo-500: #8ea2ff;
+  --color-utility-indigo-700: #8ea2ff;
+  --color-utility-purple-50: rgba(176,115,224, 0.08);
+  --color-utility-purple-100: rgba(176,115,224, 0.14);
+  --color-utility-purple-200: rgba(176,115,224, 0.32);
+  --color-utility-purple-400: #b073e0;
+  --color-utility-purple-500: #b073e0;
+  --color-utility-purple-700: #b073e0;
+  --color-utility-pink-50: rgba(224,122,176, 0.08);
+  --color-utility-pink-100: rgba(224,122,176, 0.14);
+  --color-utility-pink-200: rgba(224,122,176, 0.32);
+  --color-utility-pink-400: #e07ab0;
+  --color-utility-pink-500: #e07ab0;
+  --color-utility-pink-700: #e07ab0;
+  --color-utility-red-50: rgba(246,104,94, 0.08);
+  --color-utility-red-100: rgba(246,104,94, 0.14);
+  --color-utility-red-200: rgba(246,104,94, 0.32);
+  --color-utility-red-400: var(--danger);
+  --color-utility-red-500: var(--danger);
+  --color-utility-red-700: var(--danger);
+  --color-utility-orange-50: rgba(224,163,95, 0.08);
+  --color-utility-orange-100: rgba(224,163,95, 0.14);
+  --color-utility-orange-200: rgba(224,163,95, 0.32);
+  --color-utility-orange-400: #e0a35f;
+  --color-utility-orange-500: #e0a35f;
+  --color-utility-orange-700: #e0a35f;
+  --color-utility-yellow-50: rgba(245,177,76, 0.08);
+  --color-utility-yellow-100: rgba(245,177,76, 0.14);
+  --color-utility-yellow-200: rgba(245,177,76, 0.32);
+  --color-utility-yellow-400: #f5b14c;
+  --color-utility-yellow-500: #f5b14c;
+  --color-utility-yellow-700: #f5b14c;
+  --color-utility-green-50: rgba(76,175,114, 0.08);
+  --color-utility-green-100: rgba(76,175,114, 0.14);
+  --color-utility-green-200: rgba(76,175,114, 0.32);
+  --color-utility-green-400: var(--ok);
+  --color-utility-green-500: var(--ok);
+  --color-utility-green-700: var(--ok);
+  --color-utility-neutral-50: rgba(154,160,168, 0.08);
+  --color-utility-neutral-100: rgba(154,160,168, 0.14);
+  --color-utility-neutral-200: rgba(154,160,168, 0.32);
+  --color-utility-neutral-400: var(--text-dim);
+  --color-utility-neutral-500: var(--text-dim);
+  --color-utility-neutral-700: var(--text-dim);
+  --color-utility-slate-50: rgba(154,160,168, 0.08);
+  --color-utility-slate-100: rgba(154,160,168, 0.14);
+  --color-utility-slate-200: rgba(154,160,168, 0.32);
+  --color-utility-slate-400: var(--text-dim);
+  --color-utility-slate-500: var(--text-dim);
+  --color-utility-slate-700: var(--text-dim);
+}

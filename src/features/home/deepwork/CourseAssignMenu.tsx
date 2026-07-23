@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { Button as AriaButton } from "react-aria-components";
 import { useCourses, courseList, courseOf } from "@/features/home/deepwork/courseStore";
+import { Dropdown } from "@/shared/ui/uui/base/dropdown/dropdown";
+import { Input } from "@/shared/ui/Input";
 
 /**
  * Small "which course?" dropdown for one session: pick an existing course
@@ -15,16 +18,6 @@ export function CourseAssignMenu({ sessionId }: { sessionId: string }) {
 
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [open]);
 
   const current = courseOf(sessionId, { courses, order });
   const list = courseList({ courses, order });
@@ -38,70 +31,64 @@ export function CourseAssignMenu({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <div ref={wrapRef} className="relative">
-      <button
+    <Dropdown.Root isOpen={open} onOpenChange={setOpen}>
+      <AriaButton
         className="zen-pressable rounded bg-[var(--bg-elev)] px-2 py-0.5 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
-        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        title={current ? `Course: ${current.name}` : "Add to a course"}
+        onClick={(event) => event.stopPropagation()}
+        aria-label={current ? `Course: ${current.name}` : "Add to a course"}
       >
         {current ? `${current.emoji ? `${current.emoji} ` : ""}${current.name}` : "＋ Course"}
-      </button>
-      {open && (
-        <div
-          className="zen-anim-pop absolute right-0 z-50 mt-1 max-h-[50vh] min-w-[200px] overflow-auto rounded-[12px] border border-[var(--border)] bg-[rgba(18,19,24,0.96)] p-1 shadow-[0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur"
-          style={{ transformOrigin: "top right" }}
+      </AriaButton>
+      <Dropdown.Popover
+        placement="bottom right"
+        className="max-h-[50vh] min-w-[220px]"
+      >
+        <Dropdown.Menu
+          selectionMode="single"
+          selectedKeys={current ? new Set([current.id]) : new Set()}
+          onAction={(key) => {
+            if (String(key) === "__remove") {
+              unassignSession(sessionId);
+            } else {
+              assignSession(String(key), sessionId);
+            }
+            setOpen(false);
+          }}
         >
-          {list.length > 0 && (
-            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-dim)]">
-              Courses
-            </div>
-          )}
           {list.map((c) => (
-            <button
+            <Dropdown.Item
               key={c.id}
-              className="flex w-full items-center gap-2 rounded-[8px] px-3 py-1.5 text-left text-sm text-[var(--text)] hover:bg-[rgba(255,255,255,0.05)]"
-              onClick={() => {
-                assignSession(c.id, sessionId);
-                setOpen(false);
-              }}
-            >
-              <span className="min-w-0 flex-1 truncate">
-                {c.emoji ? `${c.emoji} ` : ""}
-                {c.name}
-              </span>
-              {current?.id === c.id && <span className="shrink-0 text-[var(--accent)]">✓</span>}
-            </button>
+              id={c.id}
+              label={`${c.emoji ? `${c.emoji} ` : ""}${c.name}`}
+            />
           ))}
           {current && (
-            <button
-              className="w-full rounded-[8px] px-3 py-1.5 text-left text-sm text-[var(--text-dim)] hover:bg-[rgba(255,255,255,0.05)] hover:text-[var(--text)]"
-              onClick={() => {
-                unassignSession(sessionId);
-                setOpen(false);
-              }}
-            >
-              Remove from course
-            </button>
-          )}
-          <div className="mt-1 flex items-center gap-1 border-t border-[var(--border)] px-2 pt-1.5 pb-1">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && createAndAssign()}
-              placeholder="New course…"
-              className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-dim)]"
+            <Dropdown.Item
+              id="__remove"
+              label="Remove from course"
+              selectionIndicator="none"
             />
-            <button
-              className="shrink-0 rounded px-1.5 text-sm text-[var(--text-dim)] hover:text-[var(--accent)] disabled:opacity-40"
-              onClick={createAndAssign}
-              disabled={!draft.trim()}
-              title="Create course and add this session"
-            >
-              ＋
-            </button>
-          </div>
+          )}
+        </Dropdown.Menu>
+        <div className="flex items-center gap-1 border-t border-[var(--border)] p-2">
+          <Input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => event.key === "Enter" && createAndAssign()}
+            placeholder="New course…"
+            wrapperClassName="min-w-0 flex-1"
+            inputClassName="py-1.5"
+          />
+          <button
+            className="shrink-0 rounded px-1.5 text-sm text-[var(--text-dim)] hover:text-[var(--accent)] disabled:opacity-40"
+            onClick={createAndAssign}
+            disabled={!draft.trim()}
+            aria-label="Create course and add this session"
+          >
+            ＋
+          </button>
         </div>
-      )}
-    </div>
+      </Dropdown.Popover>
+    </Dropdown.Root>
   );
 }

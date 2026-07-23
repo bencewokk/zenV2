@@ -22,7 +22,9 @@ import {
   sendTestNotification,
 } from "@/services/notifications";
 import { notify } from "@/shared/ui/notify";
+import { AssistantConnect } from "@/features/home/AssistantConnect";
 import { SettingsSection } from "../ui";
+import { Button } from "@/shared/ui/Button";
 
 /** Phone-companion state: notifications, synced tasks, routines, and captures. */
 export function Assistant() {
@@ -60,6 +62,11 @@ export function Assistant() {
 
   return (
     <div className="space-y-6">
+      {/* Pairing lived on the home dashboard; it belongs with the rest of the phone config. */}
+      <SettingsSection title="Link your phone" hint="Scan to pair the Zen assistant PWA with this workspace.">
+        <div data-tour="phone-qr"><AssistantConnect /></div>
+      </SettingsSection>
+
       <NotificationSettings />
 
       <SettingsSection title="Assistant tasks" hint="Tasks created by Zen on phone or desktop. Changes sync with your Zen account.">
@@ -116,9 +123,9 @@ export function Assistant() {
       <SettingsSection title="Legacy phone captures" hint="Older phone captures are imported automatically when they sync.">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <button className="zen-btn-ghost" onClick={importAllCaptures} disabled={!assistantCaptures.some((capture) => !capture.importedAt)}>
+            <Button variant="ghost" onClick={importAllCaptures} disabled={!assistantCaptures.some((capture) => !capture.importedAt)}>
               Import new captures
-            </button>
+            </Button>
             <span className="text-xs text-[var(--text-dim)]">
               {assistantCaptures.length} capture{assistantCaptures.length === 1 ? "" : "s"} · {assistantCaptures.filter((capture) => !capture.importedAt).length} new
             </span>
@@ -169,13 +176,12 @@ function NotificationSettings() {
         <button className={enabled ? "zen-btn" : "zen-btn-ghost"} onClick={() => void toggle()}>
           {enabled ? "Turn off" : "Turn on"}
         </button>
-        <button
-          className="zen-btn-ghost"
+        <Button variant="ghost"
           onClick={async () => { await sendTestNotification(); setPerm(notificationPermission()); }}
           disabled={perm === "unsupported"}
         >
           Send test notification
-        </button>
+        </Button>
         <span className="text-xs text-[var(--text-dim)]">{status}</span>
       </div>
     </SettingsSection>
@@ -197,9 +203,9 @@ function PhoneCaptureRow({ capture, onImport }: { capture: AssistantCapture; onI
             {capture.type} · {new Date(capture.createdAt).toLocaleString()} · {detail}
           </div>
         </div>
-        <button className="zen-btn-ghost shrink-0" onClick={onImport} disabled={!!capture.importedAt}>
+        <Button variant="ghost" className="shrink-0" onClick={onImport} disabled={!!capture.importedAt}>
           {capture.importedAt ? "Imported" : "Import"}
-        </button>
+        </Button>
       </div>
     </div>
   );

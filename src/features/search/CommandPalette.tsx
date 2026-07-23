@@ -3,9 +3,9 @@ import { create } from "zustand";
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
 import { useSources } from "@/services/sources/store";
-import { useHome } from "@/features/home/store";
 import { sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
-import { useWorkspace } from "@/shared/stores/workspace";
+import { navigate, openInDeepWork } from "@/shared/stores/navigate";
+import type { Route } from "@/shared/stores/route";
 import { docToText } from "@/shared/lib/docText";
 
 /**
@@ -83,44 +83,14 @@ function closePalette() {
   useCommandPalette.getState().setOpen(false);
 }
 
-function openNote(id: string) {
+function go(route: Route) {
   closePalette();
-  useNotes.getState().select(id);
+  navigate(route);
 }
 
 function openPdf(id: string) {
   closePalette();
-  useHome.getState().launchDeepWork({ type: "pdf", id });
-}
-
-function openSource(id: string) {
-  closePalette();
-  useSources.getState().select(id);
-  useNotes.getState().select(null);
-  useHome.getState().setManualDeepWork(false);
-  useWorkspace.getState().set({ surface: "sources" });
-}
-
-function openSession(id: string) {
-  closePalette();
-  useDeepWork.getState().switchSession(id);
-  useNotes.getState().select(null);
-  useWorkspace.getState().set({ surface: "home", adminMailId: null });
-  useHome.getState().setManualDeepWork(true);
-}
-
-function goHome(surface: "home" | "sources" | "settings") {
-  closePalette();
-  useNotes.getState().select(null);
-  useHome.getState().setManualDeepWork(false);
-  useWorkspace.getState().set({ surface, adminMailId: null });
-}
-
-function goAdmin(focus: "calendar" | "mail") {
-  closePalette();
-  useNotes.getState().select(null);
-  useHome.getState().setManualDeepWork(false);
-  useWorkspace.getState().set({ surface: "admin", adminFocus: focus, adminMailId: null });
+  openInDeepWork({ type: "pdf", id });
 }
 
 function buildActions(): Omit<Result, "score">[] {
@@ -135,22 +105,11 @@ function buildActions(): Omit<Result, "score">[] {
         void useNotes.getState().create(null);
       },
     },
-    {
-      key: "action:deep-work",
-      kind: "action",
-      title: "Open Deep Work",
-      subtitle: "Go to the session canvas",
-      run: () => {
-        closePalette();
-        useNotes.getState().select(null);
-        useWorkspace.getState().set({ surface: "home", adminMailId: null });
-        useHome.getState().setManualDeepWork(true);
-      },
-    },
-    { key: "action:calendar", kind: "action", title: "Open Calendar", subtitle: "Agenda and events", run: () => goAdmin("calendar") },
-    { key: "action:mail", kind: "action", title: "Open Mail", subtitle: "Inbox", run: () => goAdmin("mail") },
-    { key: "action:sources", kind: "action", title: "Open Sources", subtitle: "Connected course material and files", run: () => goHome("sources") },
-    { key: "action:settings", kind: "action", title: "Open Settings", subtitle: "Connections, plan, appearance, data", run: () => goHome("settings") },
+    { key: "action:deep-work", kind: "action", title: "Open Deep Work", subtitle: "Go to the session canvas", run: () => go({ view: "deepwork" }) },
+    { key: "action:calendar", kind: "action", title: "Open Calendar", subtitle: "Agenda and events", run: () => go({ view: "calendar" }) },
+    { key: "action:mail", kind: "action", title: "Open Mail", subtitle: "Inbox", run: () => go({ view: "mail" }) },
+    { key: "action:sources", kind: "action", title: "Open Sources", subtitle: "Connected course material and files", run: () => go({ view: "sources" }) },
+    { key: "action:settings", kind: "action", title: "Open Settings", subtitle: "Connections, plan, appearance, data", run: () => go({ view: "settings" }) },
   ];
 }
 
@@ -220,7 +179,7 @@ export function CommandPalette() {
           title: n.title || "Untitled",
           subtitle: [n.subject, n.unit].filter(Boolean).join(" · ") || "Recently edited",
           score: 0,
-          run: () => openNote(n.id),
+          run: () => go({ view: "note", id: n.id }),
         }));
       const recentSessions = sessionList({ sessions, order })
         .filter((s) => !s.archived)
@@ -232,7 +191,7 @@ export function CommandPalette() {
           title: s.name,
           subtitle: `${s.items.length} source${s.items.length === 1 ? "" : "s"}`,
           score: 0,
-          run: () => openSession(s.id),
+          run: () => go({ view: "deepwork", sessionId: s.id }),
         }));
       return [...recent, ...recentSessions, ...actionResults];
     }
@@ -248,7 +207,7 @@ export function CommandPalette() {
         subtitle: [note.subject, note.unit].filter(Boolean).join(" · ") || "Note",
         snippet: score === 1 ? snippetFor(tokens, body) : undefined,
         score,
-        run: () => openNote(note.id),
+        run: () => go({ view: "note", id: note.id }),
       });
     }
 
@@ -278,7 +237,7 @@ export function CommandPalette() {
         subtitle: `${s.provider} · ${s.kind.replace(/_/g, " ")}`,
         snippet: score === 1 ? snippetFor(tokens, body) : undefined,
         score,
-        run: () => openSource(s.id),
+        run: () => go({ view: "sources", sourceId: s.id }),
       }));
 
     const sessionHits: Result[] = sessionList({ sessions, order })
@@ -291,7 +250,7 @@ export function CommandPalette() {
         title: s.name,
         subtitle: `${s.items.length} source${s.items.length === 1 ? "" : "s"} · Deep Work`,
         score,
-        run: () => openSession(s.id),
+        run: () => go({ view: "deepwork", sessionId: s.id }),
       }));
 
     const bySection = [

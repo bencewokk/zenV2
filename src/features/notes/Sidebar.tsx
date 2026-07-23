@@ -15,6 +15,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useNotes } from "@/features/notes/store";
+import { navigate, createAndOpenNote } from "@/shared/stores/navigate";
 import { notify } from "@/shared/ui/notify";
 import { type HomeTarget } from "@/features/home/store";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
@@ -33,8 +34,6 @@ export function Sidebar() {
   const notes = useNotes((s) => s.notes);
   const filter = useNotes((s) => s.filter);
   const selectedId = useNotes((s) => s.selectedId);
-  const select = useNotes((s) => s.select);
-  const create = useNotes((s) => s.create);
   const remove = useNotes((s) => s.remove);
   const restore = useNotes((s) => s.restore);
   const toggleCollapse = useNotes((s) => s.toggleCollapse);
@@ -108,7 +107,7 @@ export function Sidebar() {
         <button
           className="rounded px-1.5 text-lg leading-none text-[var(--text-dim)] hover:text-[var(--text)]"
           title="New note"
-          onClick={() => create(null)}
+          onClick={() => void createAndOpenNote(null)}
         >
           +
         </button>
@@ -138,9 +137,9 @@ export function Sidebar() {
                 selected={selectedId === f.note.id}
                 dimDepth={activeId === f.note.id ? Math.round(offsetX / INDENT) : 0}
                 color={colorForRoot(rootIdOf(notes, f.note.id))}
-                onSelect={() => select(f.note.id)}
+                onSelect={() => navigate({ view: "note", id: f.note.id })}
                 onToggle={() => toggleCollapse(f.note.id)}
-                onAddChild={() => create(f.note.id)}
+                onAddChild={() => void createAndOpenNote(f.note.id)}
                 onDelete={() => {
                   // Deletion is reversible for a moment: snapshot the note and its
                   // direct children (remove() detaches them to root), then offer Undo.

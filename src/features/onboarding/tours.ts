@@ -1,5 +1,6 @@
 import { useWorkspace } from "@/shared/stores/workspace";
-import { useHome } from "@/features/home/store";
+import { useRoute } from "@/shared/stores/route";
+import { navigate, createAndOpenNote } from "@/shared/stores/navigate";
 import { useNotes } from "@/features/notes/store";
 import { usePdfs } from "@/features/pdfs/store";
 import { useCommandPalette } from "@/features/search/CommandPalette";
@@ -13,9 +14,7 @@ import { useTour, type TourStep } from "./tourStore";
 
 /** Put the app on the plain home dashboard so the tour's tile anchors exist. */
 function goDashboard() {
-  useNotes.getState().select(null);
-  useHome.getState().setManualDeepWork(false);
-  useWorkspace.getState().set({ surface: "home", adminMailId: null });
+  navigate({ view: "dashboard" });
 }
 
 function completeTutorialGoals(...keys: string[]): void {
@@ -59,15 +58,30 @@ function withWalkthroughCompletion(steps: TourStep[]): TourStep[] {
  *  excludes seeded notes, so the walkthrough must never ask the user to edit
  *  one and then advance without ticking the matching goal. */
 function openNoteForTour() {
-  useHome.getState().setManualDeepWork(false);
-  useWorkspace.getState().set({ surface: "home", adminMailId: null, sidebarCollapsed: false });
+  useWorkspace.getState().set({ sidebarCollapsed: false });
   const st = useNotes.getState();
-  if (st.selectedId && st.notes[st.selectedId] && !isSeededSample(st.notes[st.selectedId])) return;
+  const open = st.selectedId ? st.notes[st.selectedId] : null;
+  if (open && !isSeededSample(open)) {
+    navigate({ view: "note", id: open.id });
+    return;
+  }
   const pick = Object.values(st.notes)
     .filter((note) => !isSeededSample(note))
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
-  if (pick) st.select(pick.id);
-  else void st.create(null);
+  if (pick) navigate({ view: "note", id: pick.id });
+  else void createAndOpenNote(null);
+}
+
+/** Auto-advance once the Deep Work canvas is on screen (already there, or the
+ *  moment the user navigates to it). */
+function advanceOnDeepWorkOpened(advance: () => void): () => void {
+  if (useRoute.getState().route.view === "deepwork") {
+    advance();
+    return () => {};
+  }
+  return useRoute.subscribe((s, prev) => {
+    if (s.route.view === "deepwork" && prev.route.view !== "deepwork") advance();
+  });
 }
 
 /** Auto-advance when a new note appears in the store. */
@@ -134,14 +148,14 @@ function advanceOnSearchJump(advance: () => void): () => void {
     if (opened && s.selectedId !== prev.selectedId) navigated = true;
     maybeAdvance();
   });
-  const unsubWorkspace = useWorkspace.subscribe((s, prev) => {
-    if (opened && s.surface !== prev.surface) navigated = true;
+  const unsubRoute = useRoute.subscribe((s, prev) => {
+    if (opened && s.route.view !== prev.route.view) navigated = true;
     maybeAdvance();
   });
   return () => {
     unsubPalette();
     unsubNotes();
-    unsubWorkspace();
+    unsubRoute();
   };
 }
 
@@ -194,18 +208,9 @@ function openDeepWorkStep(prefix: string, body: string): TourStep {
     anchor: '[data-tour="deep-work"]',
     interactive: true,
     beforeShow: () => {
-      useNotes.getState().select(null);
-      useWorkspace.getState().set({ surface: "home", adminMailId: null });
+      navigate({ view: "dashboard" });
     },
-    advanceWhen: (advance) => {
-      if (useHome.getState().manualDeepWork) {
-        advance();
-        return () => {};
-      }
-      return useHome.subscribe((s, prev) => {
-        if (s.manualDeepWork && !prev.manualDeepWork) advance();
-      });
-    },
+    advanceWhen: (advance) => advanceOnDeepWorkOpened(advance),
   };
 }
 
@@ -438,9 +443,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       interactive: true,
       beforeShow: goDashboard,
       advanceWhen: (advance) =>
-        useHome.subscribe((s, prev) => {
-          if (s.manualDeepWork && !prev.manualDeepWork) advance();
-        }),
+        advanceOnDeepWorkOpened(advance),
     },
     {
       id: "dw-session",
@@ -527,9 +530,7 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
       interactive: true,
       beforeShow: goDashboard,
       advanceWhen: (advance) =>
-        useHome.subscribe((s, prev) => {
-          if (s.manualDeepWork && !prev.manualDeepWork) advance();
-        }),
+        advanceOnDeepWorkOpened(advance),
     },
     {
       id: "sq-study",

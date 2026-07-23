@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { loadAIUsageStatus, type AIUsageStatus } from "@/services/ai/usage";
 import { accountTypeLabel, canAccessPaidFeatures, loadAccountStatus, type AccountStatus } from "@/services/account";
 import { SettingsSection } from "../ui";
+import { Button } from "@/shared/ui/Button";
+import { ProgressBar } from "@/shared/ui/Progress";
 
 export function Billing() {
   const [account, setAccount] = useState<AccountStatus | null>(null);
@@ -45,7 +47,7 @@ export function Billing() {
             <div className="mt-1 text-2xl font-semibold capitalize text-[var(--text)]">{loading && !account ? "Loading…" : subscription?.plan ?? "Free"}</div>
             <div className={`mt-1 text-xs ${paid ? "text-[var(--ok)]" : "text-[var(--text-dim)]"}`}>{accountTypeLabel(account)}</div>
           </div>
-          <button className="zen-btn-ghost ml-auto" disabled={loading} onClick={() => void refresh()}>{loading ? "Refreshing…" : "Refresh"}</button>
+          <Button variant="ghost" className="ml-auto" disabled={loading} onClick={() => void refresh()}>{loading ? "Refreshing…" : "Refresh"}</Button>
         </div>
         <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
           <Detail label="Model" value={usage?.model ?? "No AI"} />
@@ -64,7 +66,11 @@ export function Billing() {
       </div>
       <div className="mt-3 rounded-[12px] border border-[var(--border)] bg-[var(--bg)] p-4">
         <div className="flex items-center text-xs"><span className="font-medium text-[var(--text)]">{trial ? "Trial AI budget" : "Monthly AI budget"}</span><span className="ml-auto tabular-nums text-[var(--text-dim)]">{budget ? `${money(spent, 4)} of ${money(budget, 2)}` : "AI not included"}</span></div>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--border)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width]" style={{ width: `${percent}%` }} /></div>
+        <ProgressBar
+          value={percent}
+          className="mt-2"
+          progressClassName="bg-[var(--accent)]"
+        />
         <div className="mt-1.5 text-right text-[11px] tabular-nums text-[var(--text-dim)]">{budget ? `${percent.toFixed(1)}% used` : "Free plan"}</div>
       </div>
       {trialSpent && <div className="mt-2 rounded-[10px] border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] px-3 py-2 text-xs text-[var(--text)]">

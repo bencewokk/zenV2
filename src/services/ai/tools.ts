@@ -15,7 +15,10 @@ import { useLesson, type LessonBlock } from "@/features/home/deepwork/lessonStor
 import { useQuiz, activeQuiz, quizQAList, sessionQuizzes, masteryUpdatesFor, sessionMistakes, type Verdict, type QuizInputKind } from "@/features/home/deepwork/quizStore";
 import { usePdfs } from "@/features/pdfs/store";
 import { usePdfNav } from "@/features/pdfs/pdfNav";
-import { useWorkspace } from "@/shared/stores/workspace";
+// navigate/route are safe to import here despite this module's existing store cycle:
+// they touch the feature stores only inside function bodies, never at module-eval time.
+import { navigate, openInDeepWork } from "@/shared/stores/navigate";
+import { currentRoute } from "@/shared/stores/route";
 import { allTags, facetValues } from "@/features/filtering/filter";
 import { flattenTree } from "@/features/notes/tree";
 import { docToText } from "@/shared/lib/docText";
@@ -1024,7 +1027,7 @@ const TOOLS: ToolImpl[] = [
     async (a) => {
       const type = String(a.type);
       if (!["note", "event", "mail", "pdf"].includes(type)) return "type must be note, event, mail, or pdf.";
-      useHome.getState().launchDeepWork({ type: type as HomeTarget["type"], id: String(a.id) });
+      openInDeepWork({ type: type as HomeTarget["type"], id: String(a.id) });
       return "Added to Deep Work.";
     }
   ),
@@ -1240,7 +1243,7 @@ const TOOLS: ToolImpl[] = [
       const pdf = usePdfs.getState().pdfs[String(a.id)];
       if (!pdf) return "No PDF with that id.";
       const page = Math.max(1, Math.round(Number(a.page)) || 1);
-      useHome.getState().launchDeepWork({ type: "pdf", id: String(a.id) });
+      openInDeepWork({ type: "pdf", id: String(a.id) });
       usePdfNav.getState().goTo(String(a.id), page);
       notify.info(`${pdf.name} · page ${page}`);
       return `Showing ${pdf.name} page ${page}.`;
@@ -2115,15 +2118,12 @@ const TOOLS: ToolImpl[] = [
     obj({ view: str("home | deepwork | calendar | mail | sources") }, ["view"]),
     async (a) => {
       const view = String(a.view);
-      const notes = useNotes.getState();
-      const home = useHome.getState();
-      const ws = useWorkspace.getState();
       switch (view) {
-        case "home": notes.select(null); ws.set({ surface: "home" }); home.setManualDeepWork(false); break;
-        case "deepwork": notes.select(null); ws.set({ surface: "home" }); home.setManualDeepWork(true); break;
-        case "calendar": notes.select(null); ws.set({ surface: "admin", adminFocus: "calendar" }); break;
-        case "mail": notes.select(null); ws.set({ surface: "admin", adminFocus: "mail" }); break;
-        case "sources": notes.select(null); ws.set({ surface: "sources" }); home.setManualDeepWork(false); break;
+        case "home": navigate({ view: "dashboard" }); break;
+        case "deepwork": navigate({ view: "deepwork" }); break;
+        case "calendar": navigate({ view: "calendar" }); break;
+        case "mail": navigate({ view: "mail" }); break;
+        case "sources": navigate({ view: "sources" }); break;
         default: return "view must be home, deepwork, calendar, mail, or sources.";
       }
       return `Opened ${view}.`;
@@ -2162,7 +2162,7 @@ const STUDY_TOOLS = new Set([
 export function studyModeActive(): boolean {
   const dw = useDeepWork.getState();
   if (dw.activeId) return true;
-  if (useHome.getState().manualDeepWork) return true;
+  if (currentRoute().view === "deepwork") return true;
   if (useLesson.getState().active) return true;
   return !!activeQuiz();
 }
@@ -2191,13 +2191,9 @@ function targetLabel(t: HomeTarget): string | null {
  * Kept to a handful of short lines — it is rebuilt on every request.
  */
 export function appStateBlock(): string {
-  const ws = useWorkspace.getState();
-  const view =
-    ws.surface === "admin" ? (ws.adminFocus === "mail" ? "mail" : "calendar")
-    : ws.surface === "sources" ? "sources"
-    : ws.surface === "settings" ? "settings"
-    : useHome.getState().manualDeepWork ? "deepwork"
-    : "home";
+  const route = currentRoute();
+  // A note is reported as "home" — the open note gets its own line just below.
+  const view = route.view === "dashboard" || route.view === "note" ? "home" : route.view;
   const lines = [`View: ${view}`];
 
   const noteId = useNotes.getState().selectedId;

@@ -5,6 +5,7 @@ import { checkForUpdates, type UpdateCheckResult } from "@/services/update";
 import { useReleaseNotes } from "@/features/home/ReleaseNotes";
 import { notify } from "@/shared/ui/notify";
 import { SettingsSection } from "../ui";
+import { Button } from "@/shared/ui/Button";
 
 /** App version, update checks, and diagnostics. */
 export function About() {
@@ -58,17 +59,16 @@ export function About() {
     <div className="space-y-6">
       <SettingsSection title="Updates" hint={`Zen ${CURRENT_VERSION}. Check for a newer desktop build, or see what changed.`}>
         <div className="flex items-center gap-2">
-          <button className="zen-btn-ghost" onClick={() => void handleCheckUpdates()} disabled={updateState.status === "checking"}>
+          <Button variant="ghost" onClick={() => void handleCheckUpdates()} disabled={updateState.status === "checking"}>
             Check for updates
-          </button>
-          <button className="zen-btn-ghost" onClick={openReleaseNotes}>Release notes</button>
+          </Button>
+          <Button variant="ghost" onClick={openReleaseNotes}>Release notes</Button>
           {updateFeedback && <span className={`text-xs ${updateFeedbackClass}`} title={updateFeedbackTitle}>{updateFeedback}</span>}
         </div>
       </SettingsSection>
 
       <SettingsSection title="Diagnostics" hint="Copies a plain-text report (version, platform, recent errors — no note content) to paste into a bug report.">
-        <button
-          className="zen-btn-ghost"
+        <Button variant="ghost"
           onClick={() => {
             void navigator.clipboard
               .writeText(buildDiagnosticsReport(CURRENT_VERSION))
@@ -80,7 +80,7 @@ export function About() {
           }}
         >
           Copy diagnostics
-        </button>
+        </Button>
       </SettingsSection>
     </div>
   );

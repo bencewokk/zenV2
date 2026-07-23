@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type JSX } from "react";
 import { Connections } from "./sections/Connections";
 import { AiBehavior } from "./sections/AiBehavior";
 import { Appearance } from "./sections/Appearance";

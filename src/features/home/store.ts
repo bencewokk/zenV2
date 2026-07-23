@@ -9,7 +9,6 @@ import { listEvents, type CalEvent } from "@/services/google/calendar";
 import { listThreads, modifyThread, ensureLabel, type MailThread } from "@/services/google/gmail";
 import { chatOnce } from "@/services/ai/deepseek";
 import type { AIMessage } from "@/services/ai/types";
-import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 
 export type HomeTarget =
   | { type: "event"; id: string }
@@ -79,16 +78,11 @@ interface HomeState {
   knownLabelOptions: string[]; // label names the AI has scanned emails against
   eventTags: Record<string, string[]>; // normalized event title → manual tags (shared by every future occurrence of that title)
   focusTarget: HomeTarget | null;
-  manualDeepWork: boolean;
-  deepWorkLaunchNonce: number;
 
   bootstrap: () => Promise<void>;
   refresh: (forceSummary?: boolean) => Promise<void>;
   regenerateSummary: () => Promise<void>;
   setFocusTarget: (target: HomeTarget | null) => void;
-  launchDeepWork: (target: HomeTarget) => void;
-  setManualDeepWork: (value: boolean) => void;
-  toggleManualDeepWork: () => void;
   addCustomLabel: (label: string) => void;
   updateCustomLabel: (name: string, hint: string) => void;
   removeCustomLabel: (label: string) => void;
@@ -249,8 +243,9 @@ export function parseBriefItems(summary: string): BriefItem[] {
     });
 }
 
+/** Which item the dashboard treats as the active one. "Am I in Deep Work?" used to be
+ *  persisted alongside it as `manualDeepWork`; that is the route's job now. */
 interface PersistedDeepWork {
-  manualDeepWork: boolean;
   focusTarget: HomeTarget | null;
 }
 
@@ -259,17 +254,17 @@ function readDeepWork(): PersistedDeepWork {
     const raw = localStorage.getItem(DEEP_WORK_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<PersistedDeepWork>;
-      return { manualDeepWork: !!parsed.manualDeepWork, focusTarget: parsed.focusTarget ?? null };
+      return { focusTarget: parsed.focusTarget ?? null };
     }
   } catch {
     /* ignore */
   }
-  return { manualDeepWork: false, focusTarget: null };
+  return { focusTarget: null };
 }
 
-function persistDeepWork(manualDeepWork: boolean, focusTarget: HomeTarget | null) {
+function persistDeepWork(focusTarget: HomeTarget | null) {
   try {
-    localStorage.setItem(DEEP_WORK_KEY, JSON.stringify({ manualDeepWork, focusTarget }));
+    localStorage.setItem(DEEP_WORK_KEY, JSON.stringify({ focusTarget }));
   } catch {
     /* ignore */
   }
@@ -730,8 +725,6 @@ export const useHome = create<HomeState>((set, get) => ({
   knownLabelOptions: [...readKnownLabelOptions()],
   eventTags: readEventTags(),
   focusTarget: persistedDeepWork.focusTarget,
-  manualDeepWork: persistedDeepWork.manualDeepWork,
-  deepWorkLaunchNonce: 0,
 
   async bootstrap() {
     if (get().bootstrapped) return;
@@ -759,7 +752,7 @@ export const useHome = create<HomeState>((set, get) => ({
         threads,
         focusTarget,
       });
-      persistDeepWork(get().manualDeepWork, focusTarget);
+      persistDeepWork(focusTarget);
 
       void autoLabelThreads(threads, get().customLabels);
       await maybeRefreshSummary(forceSummary, notes, events, threads);
@@ -777,28 +770,7 @@ export const useHome = create<HomeState>((set, get) => ({
 
   setFocusTarget(target) {
     set({ focusTarget: target });
-    persistDeepWork(get().manualDeepWork, target);
-  },
-
-  launchDeepWork(target) {
-    // Curated model: add the right-clicked item to the Deep Work canvas and open it.
-    useDeepWork.getState().addItem(target);
-    set((state) => ({
-      focusTarget: target,
-      manualDeepWork: true,
-      deepWorkLaunchNonce: state.deepWorkLaunchNonce + 1,
-    }));
-    persistDeepWork(true, target);
-  },
-
-  setManualDeepWork(value) {
-    set({ manualDeepWork: value });
-    persistDeepWork(value, get().focusTarget);
-  },
-
-  toggleManualDeepWork() {
-    set((state) => ({ manualDeepWork: !state.manualDeepWork }));
-    persistDeepWork(get().manualDeepWork, get().focusTarget);
+    persistDeepWork(target);
   },
 
   addCustomLabel(label) {

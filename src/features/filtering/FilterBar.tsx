@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useNotes } from "@/features/notes/store";
 import { facetValues, allTags, isFilterActive } from "@/features/filtering/filter";
+import { Input } from "@/shared/ui/Input";
+import { Select } from "@/shared/ui/Select";
 
 export function FilterBar() {
   const notes = useNotes((s) => s.notes);
@@ -16,11 +18,12 @@ export function FilterBar() {
 
   return (
     <div data-tour="filter-bar" className="flex flex-wrap items-center gap-1.5 border-b border-[var(--border)] px-2 py-1.5">
-      <input
+      <Input
         value={filter.query}
         onChange={(e) => setFilter({ query: e.target.value })}
         placeholder="Search…"
-        className="min-w-[120px] flex-1 rounded bg-[var(--bg-elev)] px-2 py-1 text-sm outline-none placeholder:text-[var(--text-dim)]"
+        wrapperClassName="min-w-[120px] flex-1"
+        inputClassName="py-1.5"
       />
       <Facet label="Space" value={filter.space} options={spaces} onChange={(v) => setFilter({ space: v })} />
       <Facet label="Subject" value={filter.subject} options={subjects} onChange={(v) => setFilter({ subject: v })} />
@@ -36,19 +39,19 @@ export function FilterBar() {
       </button>
 
       {tags.length > 0 && (
-        <select
+        <Select
           value=""
           onChange={(e) => {
             const t = e.target.value;
             if (t && !filter.tags.includes(t)) setFilter({ tags: [...filter.tags, t] });
           }}
-          className="rounded bg-[var(--bg-elev)] px-1 py-1 text-xs text-[var(--text-dim)] outline-none"
-        >
-          <option value="">+ tag</option>
-          {tags.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
+          className="w-auto"
+          selectClassName="py-1.5 pr-7 text-xs"
+          options={[
+            { value: "", label: "+ tag" },
+            ...tags.map((tag) => ({ value: tag, label: tag })),
+          ]}
+        />
       )}
       {filter.tags.map((t) => (
         <button
@@ -81,17 +84,17 @@ function Facet(props: {
 }) {
   if (props.options.length === 0) return null;
   return (
-    <select
+    <Select
       value={props.value ?? ""}
       onChange={(e) => props.onChange(e.target.value || null)}
-      className={`rounded px-1 py-1 text-xs outline-none ${
+      className="w-auto"
+      selectClassName={`py-1.5 pr-7 text-xs ${
         props.value ? "bg-[var(--accent-dim)] text-[var(--text)]" : "bg-[var(--bg-elev)] text-[var(--text-dim)]"
       }`}
-    >
-      <option value="">{props.label}</option>
-      {props.options.map((o) => (
-        <option key={o} value={o}>{o}</option>
-      ))}
-    </select>
+      options={[
+        { value: "", label: props.label },
+        ...props.options.map((option) => ({ value: option, label: option })),
+      ]}
+    />
   );
 }
