@@ -22,3 +22,30 @@ describe("untrusted rich text", () => {
     expect(svg).not.toMatch(/foreignObject|onload|alert/i);
   });
 });
+
+describe("math rendering", () => {
+  const isKatex = (html: string) => /class="katex/.test(html);
+
+  it("renders $$…$$ display and $…$ inline math", () => {
+    expect(isKatex(renderMarkdown("$$E = mc^2$$"))).toBe(true);
+    expect(isKatex(renderMarkdown("Let $x^2$ be."))).toBe(true);
+  });
+
+  it("renders ```math and ```latex fenced blocks as math, not code", () => {
+    const math = renderMarkdown("```math\nE = mc^2\n```");
+    expect(isKatex(math)).toBe(true);
+    expect(math).not.toMatch(/<pre><code/);
+    expect(isKatex(renderMarkdown("```latex\n\\int_0^1 x\\,dx\n```"))).toBe(true);
+  });
+
+  it("renders bare \\begin{…}\\end{…} display environments without $$ delimiters", () => {
+    expect(isKatex(renderMarkdown("\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}"))).toBe(true);
+    expect(isKatex(renderMarkdown("\\begin{cases} x & x>0 \\\\ 0 & x\\le 0 \\end{cases}"))).toBe(true);
+  });
+
+  it("leaves ordinary code fences as code blocks", () => {
+    const html = renderMarkdown("```js\nconst x = 1;\n```");
+    expect(html).toMatch(/<pre><code/);
+    expect(isKatex(html)).toBe(false);
+  });
+});

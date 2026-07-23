@@ -22,8 +22,6 @@ import { useWorkspace } from "@/shared/stores/workspace";
 import { WhatsNew } from "@/features/home/ReleaseNotes";
 import { useNotes } from "@/features/notes/store";
 import { useCommandPalette } from "@/features/search/CommandPalette";
-import { useSources } from "@/services/sources/store";
-import { useSparkIntro } from "@/features/onboarding/sparkStore";
 import { docToText } from "@/shared/lib/docText";
 import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
 import { onTutorialStateChange, readTutorialState, writeTutorialState, type TutorialManualState } from "@/features/home/dashboardPrefs";
@@ -454,13 +452,11 @@ function DashboardTutorial() {
   const createNote = useNotes((s) => s.create);
   const renameNote = useNotes((s) => s.rename);
   const selectNote = useNotes((s) => s.select);
-  const sourcesCount = useSources((s) => Object.keys(s.sources).length);
   const sessions = useDeepWork((s) => s.sessions);
   const order = useDeepWork((s) => s.order);
   const switchSession = useDeepWork((s) => s.switchSession);
   const setManualDeepWork = useHome((s) => s.setManualDeepWork);
   const setWorkspace = useWorkspace((s) => s.set);
-  const startSpark = useSparkIntro((s) => s.start);
   const [manual, setManual] = useState<TutorialManualState>(() => readTutorialState());
   useEffect(() => writeTutorialState(manual), [manual]);
   useEffect(() => onTutorialStateChange(setManual), []);
@@ -521,55 +517,12 @@ function DashboardTutorial() {
     setWorkspace({ surface: "home", adminMailId: null });
     setManualDeepWork(true);
   };
-  const openSettings = () => {
-    selectNote(null);
-    setManualDeepWork(false);
-    setWorkspace({ surface: "settings", adminMailId: null });
-  };
-  const openSources = () => {
-    selectNote(null);
-    setManualDeepWork(false);
-    setWorkspace({ surface: "sources", adminMailId: null });
-  };
 
   const configuredGroups: TutorialGroup[] = [
     {
-      key: "assistant",
-      title: "Use the Zen Assistant",
-      body: "Work with an assistant that can understand and operate your academic workspace.",
-      action: "Open Assistant",
-      run: () => {
-        if (!useAI.getState().open) useAI.getState().toggle();
-      },
-      phases: [
-        { key: "assistant-1", label: "Ask with context", items: [] },
-        { key: "assistant-2", label: "Let Zen do work", items: [] },
-        { key: "assistant-3", label: "Control and verify", items: [] },
-      ],
-    },
-    {
-      key: "setup",
-      title: "Set Up Zen",
-      body: "Finish the foundation so Zen knows what it may connect.",
-      action: "Replay setup",
-      run: startSpark,
-      phases: [
-        {
-          key: "setup-1",
-          label: "Foundation",
-          items: [],
-        },
-        {
-          key: "setup-2",
-          label: "Make it yours",
-          items: [],
-        },
-      ],
-    },
-    {
       key: "material",
-      title: "Collect Material",
-      body: "Open or create the material Zen will help you study.",
+      title: "Capture & find",
+      body: "Create a note, then jump to anything with instant search.",
       action: ownNoteCount ? "Try search" : "Create note",
       run: () => {
         if (ownNoteCount) {
@@ -587,26 +540,11 @@ function DashboardTutorial() {
           label: "Capture",
           items: [],
         },
-        {
-          key: "material-2",
-          label: "Organise & link",
-          items: [],
-        },
-        {
-          key: "material-3",
-          label: "Author & solve",
-          items: [],
-        },
-        {
-          key: "material-4",
-          label: "PDF research",
-          items: [],
-        },
       ],
     },
     {
       key: "deepwork",
-      title: "Start Deep Work",
+      title: "Deep Work",
       body: "Turn loose notes, PDFs, events, or mail into one study workspace.",
       action: "Open Deep Work",
       run: openDeepWork,
@@ -616,16 +554,11 @@ function DashboardTutorial() {
           label: "Build a workspace",
           items: [],
         },
-        {
-          key: "deepwork-2",
-          label: "Work the canvas",
-          items: [],
-        },
       ],
     },
     {
       key: "study",
-      title: "Study and Quiz",
+      title: "Study & quiz",
       body: "Use the learning loop: backbone, focus, quiz, feedback.",
       action: "Go study",
       run: openDeepWork,
@@ -635,69 +568,18 @@ function DashboardTutorial() {
           label: "The loop",
           items: [],
         },
-        {
-          key: "study-2",
-          label: "Evidence & mastery",
-          items: [],
-        },
-        {
-          key: "study-3",
-          label: "Mistakes & mastery",
-          items: [],
-        },
-        {
-          key: "study-4",
-          label: "Plan to the deadline",
-          items: [],
-        },
-        {
-          key: "study-5",
-          label: "Adaptive study strategy",
-          items: [],
-        },
-        {
-          key: "study-6",
-          label: "Lessons & tutoring",
-          items: [],
-        },
       ],
     },
     {
-      key: "connect",
-      title: "Connect Real Life",
-      body: "Bring in outside academic context when you want it.",
-      action: sourcesCount ? "Open Sources" : "Connect sources",
-      run: sourcesCount ? openSources : openSettings,
+      key: "assistant",
+      title: "The AI assistant",
+      body: "Work with an assistant that can understand and operate your academic workspace.",
+      action: "Open Assistant",
+      run: () => {
+        if (!useAI.getState().open) useAI.getState().toggle();
+      },
       phases: [
-        {
-          key: "connect-1",
-          label: "Bring it in",
-          items: [],
-        },
-        {
-          key: "connect-2",
-          label: "Wire it up",
-          items: [],
-        },
-      ],
-    },
-    {
-      key: "trust",
-      title: "Trust and Control",
-      body: "Know where data, AI tools, backups, and diagnostics live.",
-      action: "Open Settings",
-      run: openSettings,
-      phases: [
-        {
-          key: "trust-1",
-          label: "Where things live",
-          items: [],
-        },
-        {
-          key: "trust-2",
-          label: "Own your data",
-          items: [],
-        },
+        { key: "assistant-1", label: "Ask with context", items: [] },
       ],
     },
   ];

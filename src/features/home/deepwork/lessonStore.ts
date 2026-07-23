@@ -47,6 +47,11 @@ interface LessonState {
   /** Start a lesson and a focus timer for it (minutes defaults to 25). */
   start: (title?: string, minutes?: number) => void;
   end: () => void;
+  /** Leave the lesson surface WITHOUT ending it — the board (and its focus timer)
+   *  stay alive so the Study panel can offer to resume it. */
+  background: () => void;
+  /** Re-open a backgrounded lesson's fullscreen surface. */
+  resume: () => void;
   /** Replace or append board blocks (the AI drives this via study_present). */
   present: (blocks: LessonBlock[], mode: "replace" | "append", complete: boolean) => void;
   /** Reveal the next block. Returns false if already at the end (caller asks the AI
@@ -109,6 +114,20 @@ export const useLesson = create<LessonState>((set, get) => ({
     useHome.getState().setManualDeepWork(false);
     set({ active: false, title: "", blocks: [], cursor: 0, revealAll: false, boardComplete: false, focusedQid: null, insertReq: null });
     notify.success("Class finished · board saved");
+  },
+
+  background() {
+    // Only hide the surface — keep blocks/cursor/timer so `resume()` restores the
+    // exact board. A lesson with no content isn't worth backgrounding, so end it.
+    if (!get().blocks.length) {
+      get().end();
+      return;
+    }
+    set({ active: false });
+  },
+
+  resume() {
+    if (get().blocks.length || get().title) set({ active: true });
   },
 
   present(blocks, mode, complete) {

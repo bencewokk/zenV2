@@ -129,6 +129,13 @@ export function LessonMode() {
             </button>
             <button
               className="zen-pressable rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
+              onClick={() => useLesson.getState().background()}
+              title="Leave the board for now — resume it from the Study panel (timer keeps running)"
+            >
+              ↙ Leave
+            </button>
+            <button
+              className="zen-pressable rounded-[6px] border border-[var(--border)] px-2 py-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
               onClick={() => useLesson.getState().end()}
               title="Finish class and close the board"
             >

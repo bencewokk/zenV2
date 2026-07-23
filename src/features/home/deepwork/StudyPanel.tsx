@@ -16,6 +16,7 @@ import {
 import { useFocusSession, useFocusStore } from "@/features/home/deepwork/useFocusSession";
 import { useStudyLog, todayMs, computeStreak, HOUR_MS, dayKey } from "@/features/home/deepwork/studyLog";
 import { useQuiz, sessionQuizzes, sessionMistakes, type QuizRecord } from "@/features/home/deepwork/quizStore";
+import { useLesson } from "@/features/home/deepwork/lessonStore";
 import {
   planHealth, actionableSessions, fmtPlanDay, fmtStartMin, KIND_META, verdictLabel, verdictColor,
   type PlannedSession,
@@ -58,6 +59,12 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   const now = useNow();
   const next = nextToReview(backbone);
   const focus = useFocusSession();
+  // A lesson the user left (or that was crash-closed) stays alive but off-screen;
+  // surface it here so they can jump back in instead of losing the session.
+  const lessonActive = useLesson((s) => s.active);
+  const lessonBlocks = useLesson((s) => s.blocks.length);
+  const lessonTitle = useLesson((s) => s.title);
+  const lessonPaused = !lessonActive && lessonBlocks > 0;
 
   // Flip past-due plan sessions to "missed" — on open and as time passes (the tick).
   useEffect(() => {
@@ -158,6 +165,30 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
+        {lessonPaused && (
+          <div className="rounded-[10px] border border-[var(--accent)] bg-[var(--accent-dim)] px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-dim)]">Active lesson</div>
+            <div className="mt-0.5 truncate text-sm font-medium text-[var(--text)]" title={lessonTitle || "Lesson in progress"}>
+              {lessonTitle || "Lesson in progress"}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                className="zen-pressable flex-1 rounded-[8px] border border-[var(--accent)] bg-[rgba(var(--accent-rgb),0.15)] px-2.5 py-1.5 text-sm font-medium text-[var(--text)] hover:bg-[rgba(var(--accent-rgb),0.25)]"
+                onClick={() => useLesson.getState().resume()}
+              >
+                ▶ Resume lesson
+              </button>
+              <button
+                className="zen-pressable rounded-[8px] border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text-dim)] hover:text-[#f6685e]"
+                onClick={() => useLesson.getState().end()}
+                title="End the class and clear the board"
+              >
+                End
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Primary actions: the two ways to actually study. */}
         <div className="grid grid-cols-2 gap-2">
           {focus.sessionActive ? (

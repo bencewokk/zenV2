@@ -33,11 +33,21 @@ export function renderMarkdown(src: string): string {
     const clean = sanitizeSvg(String(svg).trim());
     return clean ? stash(`<div class="zen-svg">${clean}</div>`) : "";
   });
+  // ```math / ```latex / ```tex fenced blocks — some models wrap display math
+  // this way; render as math instead of leaving it as a code block.
+  s = s.replace(/```(?:math|latex|tex)[^\n]*\n?([\s\S]*?)```/gi, (_m, tex) => stash(renderMath(tex, true)));
   // Display math first so $$ isn't eaten by the single-$ rule.
   s = s.replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex) => stash(renderMath(tex, true)));
   s = s.replace(/\\\[([\s\S]+?)\\\]/g, (_m, tex) => stash(renderMath(tex, true)));
   s = s.replace(/\\\(([\s\S]+?)\\\)/g, (_m, tex) => stash(renderMath(tex, false)));
   s = s.replace(/\$([^$\n]+?)\$/g, (_m, tex) => stash(renderMath(tex, false)));
+  // Bare LaTeX display environments emitted WITHOUT $$ delimiters (a common LLM
+  // habit). KaTeX renders these directly. Runs after the delimited rules so an
+  // environment already inside $$…$$ isn't matched (and double-rendered) here.
+  s = s.replace(
+    /\\begin\{(aligned|align\*?|equation\*?|gather\*?|gathered|cases|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|Bmatrix|smallmatrix|array)\}[\s\S]*?\\end\{\1\}/g,
+    (m) => stash(renderMath(m, true))
+  );
 
   let html = marked.parse(s) as string;
   html = html.replace(/@@ZENMATH(\d+)@@/g, (_m, i) => slots[Number(i)] ?? "");

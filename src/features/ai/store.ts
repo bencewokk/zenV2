@@ -327,6 +327,12 @@ const CORE_PROMPT =
     "way, issue the tool call and let the app handle gating; never invent results. " +
     "To reschedule or remove an event/note, first list/search to get its [id:...], then call " +
     "update_event/delete_event (or move/delete note) with that id — never recreate a duplicate. " +
+    "SCHEDULING (ask before you book): before creating calendar events for the user — especially more " +
+    "than one, a recurring series, or study/work blocks — understand their schedule first. Call " +
+    "list_events / find_free_slots to see what's already on the calendar, and use ask_user to gather the " +
+    "specifics you're missing (which days and times actually work, how long each block should be, any " +
+    "times to keep free, and the timezone if it's unclear). Propose concrete times and get a clear yes " +
+    "before creating anything; never invent event times the user hasn't agreed to. " +
     "When the user tells you a durable fact about themselves or a preference, save it with " +
     "update_profile (about them / how to work) or save_memory (any other fact). Don't ask " +
     "permission to remember — just do it and mention briefly that you saved it. " +
@@ -409,8 +415,11 @@ const STUDY_PROMPT =
     "sessions across the coming days. FIRST call deepwork_plan_status (it returns the deadline & days " +
     "left, current mastery and the gap to target, time still needed, the weakest concepts, and any " +
     "existing planned sessions with ids). If there's no backbone yet, read the material and build one " +
-    "first. If no exam date is known, use ask_user to get the deadline (and optionally the daily study " +
-    "budget). Then call find_free_slots to find real open calendar time and create the plan with " +
+    "first. GATHER THE USER'S SCHEDULE before booking: if the exam date, their daily study budget, or " +
+    "their study-time preferences aren't already known, use ask_user to get them — the deadline, roughly " +
+    "how much time per day they can study, which days/times they prefer to study, and any times to keep " +
+    "free — BEFORE you create any sessions. Then call find_free_slots to find real open calendar time that " +
+    "fits those preferences and create the plan with " +
     "deepwork_set_plan: one entry per study block (startISO + durationMin + kind learn|review|quiz|catchup " +
     "+ the focus concept titles). SCALE THE INTENSITY to deadline proximity AND the mastery gap — schedule " +
     "more and longer sessions when the exam is near or the gap is large, fewer when the user is ahead; " +
