@@ -3,13 +3,14 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 interface Props {
   children: ReactNode;
   /** Rendered instead of the children after a render/lifecycle error. Defaults to nothing. */
-  fallback?: ReactNode;
+  fallback?: ReactNode | ((error: Error, info: ErrorInfo | null) => ReactNode);
   /** Optional hook for logging/telemetry when a subtree crashes. */
   onError?: (error: Error, info: ErrorInfo) => void;
 }
 
 interface State {
-  failed: boolean;
+  error: Error | null;
+  info: ErrorInfo | null;
 }
 
 /**
@@ -18,18 +19,25 @@ interface State {
  * to initialize in a webview) unmounts the entire React tree — a black screen.
  */
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { failed: false };
+  state: State = { error: null, info: null };
 
-  static getDerivedStateFromError(): State {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown): Pick<State, "error"> {
+    return {
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    this.setState({ info });
     this.props.onError?.(error, info);
   }
 
   render() {
-    if (this.state.failed) return this.props.fallback ?? null;
+    if (this.state.error) {
+      return typeof this.props.fallback === "function"
+        ? this.props.fallback(this.state.error, this.state.info)
+        : this.props.fallback ?? null;
+    }
     return this.props.children;
   }
 }

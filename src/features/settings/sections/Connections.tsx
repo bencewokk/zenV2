@@ -7,6 +7,13 @@ import { loadExternalConnectionSettings, saveExternalConnectionSettings, splitCo
 import { refreshDriveSources } from "@/services/sources/drive";
 import { testZoteroConnection } from "@/services/sources/zotero";
 import { testGitHubConnection } from "@/services/sources/github";
+import {
+  connectICloudCalendar,
+  disconnectICloudCalendar,
+  getICloudConnectionStatus,
+  isICloudConnectionAvailable,
+  type ICloudConnectionStatus,
+} from "@/services/icloud/auth";
 import { backupConnectionsToVault, deleteVaultConnection, listVaultConnections, restoreConnectionsFromVault, type VaultConnectionStatus, type VaultProvider } from "@/services/connections/vault";
 import { syncOnce, clearSyncState } from "@/services/sync/engine";
 import { notify } from "@/shared/ui/notify";
@@ -31,8 +38,26 @@ export function Connections() {
   const [vaultConnections, setVaultConnections] = useState<VaultConnectionStatus[]>([]);
   const [vaultBusy, setVaultBusy] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
+  const [icloud, setIcloud] = useState<ICloudConnectionStatus>({ connected: false, email: null });
+  const [icloudEmail, setIcloudEmail] = useState("");
+  const [icloudPassword, setIcloudPassword] = useState("");
+  const [showIcloudPassword, setShowIcloudPassword] = useState(false);
+  const [icloudBusy, setIcloudBusy] = useState(false);
+  const icloudAvailable = isICloudConnectionAvailable();
 
   useEffect(() => onAuthChange(setSignedIn), []);
+  useEffect(() => {
+    if (!icloudAvailable) return;
+    void getICloudConnectionStatus()
+      .then((status) => {
+        setIcloud(status);
+        if (status.email) setIcloudEmail(status.email);
+      })
+      .catch(() => {
+        // A missing or unavailable credential store is surfaced when the user
+        // explicitly attempts to connect.
+      });
+  }, [icloudAvailable]);
   useEffect(() => {
     if (!signedIn) { setVaultConnections([]); setVaultError(null); return; }
     void listVaultConnections().then((items) => { setVaultConnections(items); setVaultError(null); }).catch((error) => setVaultError((error as Error).message || "Vault unavailable"));
@@ -45,6 +70,34 @@ export function Connections() {
       notify.success("Connected to Google");
     } catch (e) {
       notify.error((e as Error).message || "Google sign-in failed");
+    }
+  }
+
+  async function connectIcloud() {
+    setIcloudBusy(true);
+    try {
+      const status = await connectICloudCalendar(icloudEmail, icloudPassword);
+      setIcloud(status);
+      setIcloudPassword("");
+      notify.success("Connected to iCloud Calendar");
+    } catch (e) {
+      notify.error((e as Error).message || "iCloud Calendar sign-in failed");
+    } finally {
+      setIcloudBusy(false);
+    }
+  }
+
+  async function disconnectIcloud() {
+    setIcloudBusy(true);
+    try {
+      await disconnectICloudCalendar();
+      setIcloud({ connected: false, email: null });
+      setIcloudPassword("");
+      notify.success("Disconnected from iCloud Calendar");
+    } catch (e) {
+      notify.error((e as Error).message || "Could not disconnect iCloud Calendar");
+    } finally {
+      setIcloudBusy(false);
     }
   }
 
@@ -286,6 +339,95 @@ export function Connections() {
             </button>
           </div>
         </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="iCloud Calendar"
+        hint="Connect an Apple Account on Windows using an app-specific password."
+      >
+        <p className="text-xs text-[var(--text-dim)]">
+          Zen verifies the connection directly with iCloud Calendar. Your normal Apple Account password is never requested, and the app-specific password stays in Windows Credential Manager on this device.
+        </p>
+        {!icloudAvailable ? (
+          <p className="text-xs text-[var(--text-dim)]">
+            iCloud Calendar connection is available in the Zen desktop app.
+          </p>
+        ) : icloud.connected ? (
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--ok)" }} />
+            <span className="text-xs text-[var(--text-dim)]">
+              Connected{icloud.email ? ` · ${icloud.email}` : ""}
+            </span>
+            <button
+              className="zen-btn-ghost ml-auto"
+              disabled={icloudBusy}
+              onClick={() => void disconnectIcloud()}
+            >
+              {icloudBusy ? "Disconnecting…" : "Disconnect"}
+            </button>
+          </div>
+        ) : (
+          <>
+            <Field label="Apple Account email">
+              <input
+                type="email"
+                value={icloudEmail}
+                onChange={(e) => setIcloudEmail(e.target.value)}
+                placeholder="name@icloud.com"
+                className="zen-input w-full"
+                autoComplete="username"
+                spellCheck={false}
+                disabled={icloudBusy}
+              />
+            </Field>
+            <Field
+              label="App-specific password"
+              hint="Generate this under Sign-In and Security → App-Specific Passwords on account.apple.com."
+            >
+              <div className="flex gap-2">
+                <input
+                  type={showIcloudPassword ? "text" : "password"}
+                  value={icloudPassword}
+                  onChange={(e) => setIcloudPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && icloudEmail.trim() && icloudPassword.trim()) {
+                      void connectIcloud();
+                    }
+                  }}
+                  placeholder="xxxx-xxxx-xxxx-xxxx"
+                  className="zen-input flex-1"
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  disabled={icloudBusy}
+                />
+                <button
+                  className="zen-btn-ghost shrink-0"
+                  onClick={() => setShowIcloudPassword((visible) => !visible)}
+                  disabled={icloudBusy}
+                >
+                  {showIcloudPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </Field>
+            <div className="flex items-center gap-2">
+              <a
+                className="text-xs text-[var(--text-dim)] underline hover:text-[var(--text)]"
+                href="https://account.apple.com/account/manage/section/security"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Create an app-specific password
+              </a>
+              <button
+                className="zen-btn ml-auto"
+                disabled={icloudBusy || !icloudEmail.trim() || !icloudPassword.trim()}
+                onClick={() => void connectIcloud()}
+              >
+                {icloudBusy ? "Connecting…" : "Connect"}
+              </button>
+            </div>
+          </>
+        )}
       </SettingsSection>
 
       <SettingsSection

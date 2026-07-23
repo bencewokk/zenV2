@@ -5,7 +5,6 @@ import { usePdfs } from "@/features/pdfs/store";
 import { useCommandPalette } from "@/features/search/CommandPalette";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import { useFocusStore } from "@/features/home/deepwork/useFocusSession";
-import { useQuiz } from "@/features/home/deepwork/quizStore";
 import { useAI } from "@/features/ai/store";
 import { docToText } from "@/shared/lib/docText";
 import { isSeededSample } from "./contentSignals";
@@ -560,22 +559,6 @@ export const GROUP_TOURS: Record<string, TourStep[]> = {
         }
         return useFocusStore.subscribe((s) => {
           if (s.session) advance();
-        });
-      },
-    },
-    {
-      id: "sq-quiz",
-      title: "Quiz yourself",
-      body: "With AI on, Start quiz builds questions weighted to your weak spots, then grades them here.",
-      feedback: "Every graded answer updates your mastery so Zen re-tests what you miss.",
-      anchor: '[data-tour="study-quiz"]',
-      interactive: true,
-      optional: true,
-      skipLabel: "Skip — needs AI",
-      advanceWhen: (advance) => {
-        const base = Object.keys(useQuiz.getState().quizzes).length;
-        return useQuiz.subscribe((s) => {
-          if (Object.keys(s.quizzes).length > base) advance();
         });
       },
     },

@@ -116,28 +116,6 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
     );
   }
 
-  /** Start a focused study session: a timer plus an AI tutor on the material. */
-  function startStudySession(durationMin = 25) {
-    if (useFocusStore.getState().session) useFocusStore.getState().endSession();
-    useFocusStore.getState().startSession(durationMin);
-    ask(
-      `Tutor me on my Deep Work material — a ${durationMin}-minute study session. First call ` +
-        "deepwork_read_material (and deepwork_weak_concepts if I have a backbone), then teach the " +
-        "highest-priority and weakest concepts, checking my understanding as we go. Keep it conversational."
-    );
-  }
-
-  function startQuiz() {
-    ask(
-      "Make me a quiz on my Deep Work material. First call deepwork_read_material and deepwork_weak_concepts, " +
-        "then call deepwork_start_quiz. WEIGHT the questions toward my lowest-mastery / due concepts and the " +
-        "mistake bank (re-test things I got wrong before), while still covering the material. Use a good mix of " +
-        "question types (multiple choice, numerical, fill-in-the-blank, step-by-step, error analysis, matching, " +
-        "ordering, true/false), each tagged with the concept it tests, and include answer keys (correct / " +
-        "matchKey / numericAnswer) so objective questions grade instantly."
-    );
-  }
-
   function requizMistakes() {
     ask(
       "Re-quiz me ONLY on the things I've gotten wrong before. Call deepwork_read_material to pull up my " +
@@ -149,19 +127,18 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
   return (
     <aside data-tour="study-panel" className="zen-anim-slide-right flex w-[340px] shrink-0 flex-col border-l border-[var(--border)]">
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--text-dim)]">Study</span>
+        <button
+          className="zen-pressable rounded-[7px] px-1.5 py-1 text-xs text-[var(--text-dim)] hover:bg-[var(--bg-elev)] hover:text-[var(--text)]"
+          onClick={onClose}
+          title="Return to the Deep Work canvas"
+        >
+          ← Back to studyboard
+        </button>
         {backbone && (
           <span className="ml-auto text-base font-bold tabular-nums" style={{ color: readinessColor(backbone.overall) }}>
             {backbone.overall}%
           </span>
         )}
-        <button
-          className={`zen-pressable shrink-0 rounded px-1.5 text-sm leading-none text-[var(--text-dim)] hover:text-[var(--text)] ${backbone ? "" : "ml-auto"}`}
-          onClick={onClose}
-          title="Close study panel"
-        >
-          ✕
-        </button>
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
@@ -189,40 +166,16 @@ export function StudyPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* Primary actions: the two ways to actually study. */}
-        <div className="grid grid-cols-2 gap-2">
-          {focus.sessionActive ? (
-            <button
-              className="zen-pressable rounded-[10px] border border-[#4ade80] bg-[rgba(74,222,128,0.1)] px-3 py-3 text-left disabled:opacity-50"
-              onClick={() => useFocusStore.getState().endSession()}
-              title="End the current focus timer"
-            >
-              <div className="text-sm font-semibold tabular-nums text-[var(--text)]">⏹ {fmtClock(focus.sessionRemaining)}</div>
-              <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">End session</div>
-            </button>
-          ) : (
-            <button
-              data-tour="study-session"
-              className="zen-pressable rounded-[10px] border border-[var(--border)] bg-[var(--bg-elev)] px-3 py-3 text-left disabled:opacity-50"
-              onClick={() => startStudySession()}
-              disabled={aiActionsDisabled}
-              title="Start a 25-minute focus timer and have the AI tutor you on this material"
-            >
-              <div className="text-sm font-semibold text-[var(--text)]">▶ Study session</div>
-              <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">25-min timer + AI tutor</div>
-            </button>
-          )}
+        {focus.sessionActive && (
           <button
-            data-tour="study-quiz"
-            className="zen-pressable rounded-[10px] border border-[var(--accent)] bg-[var(--accent-dim)] px-3 py-3 text-left disabled:opacity-50"
-            onClick={startQuiz}
-            disabled={aiActionsDisabled}
-            title="Generate a quiz weighted toward your weak spots"
+            className="zen-pressable w-full rounded-[10px] border border-[#4ade80] bg-[rgba(74,222,128,0.1)] px-3 py-3 text-left"
+            onClick={() => useFocusStore.getState().endSession()}
+            title="End the current focus timer"
           >
-            <div className="text-sm font-semibold text-[var(--text)]">✎ Start quiz</div>
-            <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">Test your mastery</div>
+            <div className="text-sm font-semibold tabular-nums text-[var(--text)]">⏹ {fmtClock(focus.sessionRemaining)}</div>
+            <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">End session</div>
           </button>
-        </div>
+        )}
 
         {aiOff && (
           <div className="rounded-[8px] border border-[var(--border)] bg-[rgba(246,104,94,0.06)] px-2.5 py-2 text-[11px] text-[var(--text-dim)]">

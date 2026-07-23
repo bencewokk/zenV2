@@ -1,4 +1,5 @@
 mod auth;
+mod icloud;
 
 /// Opens the OS "installed apps" page so the user can finish uninstalling Zen.
 /// The app can't remove its own installer entry, so this hands off to the OS.
@@ -32,6 +33,9 @@ pub fn run() {
             auth::google_logout,
             auth::google_is_signed_in,
             auth::google_has_credentials,
+            icloud::icloud_connect,
+            icloud::icloud_connection_status,
+            icloud::icloud_disconnect,
             open_os_uninstall,
         ])
         .run(tauri::generate_context!())
