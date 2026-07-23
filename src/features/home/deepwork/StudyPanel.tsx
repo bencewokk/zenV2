@@ -403,11 +403,12 @@ function useNow(intervalMs = 30000): number {
  * Generation and revision are AI-driven (calendar-native) — the buttons here send
  * the assistant a request; the panel just reflects the stored plan.
  */
-function PlanSection({ now }: { now: number }) {
+export function PlanSection({ now }: { now: number }) {
   const plan = useDeepWork((s) => s.plan);
   const backbone = useDeepWork((s) => s.backbone);
   const streaming = useAI((s) => s.streaming);
-  const aiActionsDisabled = streaming || aiBlocked(useAiAccess((s) => s.access));
+  const aiAccess = useAiAccess((s) => s.access);
+  const aiActionsDisabled = streaming || aiBlocked(aiAccess);
   // Reactive sign-in so the "Connect Google" hint updates when auth changes.
   const [signedIn, setSignedIn] = useState(isSignedIn());
   useEffect(() => onAuthChange(setSignedIn), []);

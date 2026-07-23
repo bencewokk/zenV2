@@ -5,6 +5,7 @@ import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
 import { syncOnce } from "@/services/sync/engine";
 import { listVaultConnections } from "@/services/connections/vault";
 import { loadCanvasSettings, saveCanvasSettings } from "@/services/canvas/settings";
+import { CANVAS_DISABLED_MESSAGE, CANVAS_INTEGRATION_ENABLED } from "@/services/canvas/availability";
 import { loadExternalConnectionSettings, saveExternalConnectionSettings } from "@/services/connections/settings";
 import { loadProfile, saveProfile } from "@/services/memory";
 import { notify } from "@/shared/ui/notify";
@@ -14,21 +15,23 @@ import "./SparkIntro.css";
 
 /**
  * First-run "Spark Intro": a focused setup path. A spark ignites, the user
- * picks an app look, then chooses the account, sync, source, and profile
- * defaults that make the dashboard useful immediately.
+ * picks an app look, opts into the capabilities they actually want, then
+ * configures only those choices.
  */
 
-type Kind = "ignite" | "title" | "look" | "setup";
+type Kind = "ignite" | "title" | "look" | "features" | "setup";
 interface Beat { kind: Kind; hold: number }
 
 const BEATS: Beat[] = [
   { kind: "ignite", hold: 2000 },
   { kind: "title", hold: 2800 },
   { kind: "look", hold: 0 },
+  { kind: "features", hold: 0 },
   { kind: "setup", hold: 0 },
 ];
 
 const LOOK = BEATS.findIndex((b) => b.kind === "look");
+const FEATURES = BEATS.findIndex((b) => b.kind === "features");
 const READY = BEATS.length - 1;
 
 export function SparkIntro() {
@@ -38,6 +41,7 @@ export function SparkIntro() {
   const [leaving, setLeaving] = useState(false);
   const [look, setLook] = useState<AppLook>(() => loadAppearance().appLook);
   const [lookPicked, setLookPicked] = useState(false);
+  const [features, setFeatures] = useState<SetupFeature[]>(() => selectedFeaturesFromCurrentSetup());
   const reduceMotion = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,6 +51,7 @@ export function SparkIntro() {
     setLeaving(false);
     setLookPicked(false);
     setLook(loadAppearance().appLook);
+    setFeatures(selectedFeaturesFromCurrentSetup());
     setBeat(reduceMotion.current ? LOOK : 0);
   }, [open]);
 
@@ -54,7 +59,7 @@ export function SparkIntro() {
   useEffect(() => {
     if (!open || reduceMotion.current) return;
     const b = BEATS[beat];
-    if (b.kind === "look" || b.kind === "setup") return;
+    if (b.kind === "look" || b.kind === "features" || b.kind === "setup") return;
     timer.current = setTimeout(() => setBeat((v) => Math.min(v + 1, READY)), b.hold);
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, [open, beat]);
@@ -137,59 +142,155 @@ export function SparkIntro() {
         </div>
       )}
 
-      {b.kind === "setup" && <SetupStage onContinue={handOff} />}
+      {b.kind === "features" && (
+        <FeatureStage
+          selected={features}
+          onToggle={(id) => setFeatures((current) => (
+            current.includes(id) ? current.filter((feature) => feature !== id) : [...current, id]
+          ))}
+          onContinue={advance}
+        />
+      )}
+
+      {b.kind === "setup" && (
+        <SetupStage
+          selected={features}
+          onBack={() => setBeat(FEATURES)}
+          onContinue={handOff}
+        />
+      )}
     </div>
   );
 }
 
-type Decision = "connected" | "skipped";
-type Decisions = Record<string, Decision>;
+type SetupFeature = "google" | "sync" | "canvas" | "zotero" | "github" | "profile";
 
-function SetupStage({ onContinue }: { onContinue: () => void }) {
+const SETUP_FEATURES: Array<{
+  id: SetupFeature;
+  eyebrow: string;
+  title: string;
+  detail: string;
+  disabled?: boolean;
+}> = [
+  { id: "google", eyebrow: "GOOGLE", title: "Calendar, Mail & Drive", detail: "Bring your schedule, inbox, and files into Zen." },
+  { id: "sync", eyebrow: "SYNC", title: "Cloud sync", detail: "Keep notes and study state available across devices." },
+  {
+    id: "canvas",
+    eyebrow: "LMS",
+    title: "Canvas",
+    detail: "Import courses, assignments, modules, and files.",
+    disabled: !CANVAS_INTEGRATION_ENABLED,
+  },
+  { id: "zotero", eyebrow: "CITE", title: "Zotero", detail: "Use papers, collections, annotations, and citations." },
+  { id: "github", eyebrow: "CODE", title: "GitHub", detail: "Index repositories as searchable source material." },
+  { id: "profile", eyebrow: "YOU", title: "Personal context", detail: "Tell Zen what you study and what you are working toward." },
+];
+
+function selectedFeaturesFromCurrentSetup(): SetupFeature[] {
+  const selected: SetupFeature[] = [];
+  const external = loadExternalConnectionSettings();
+  const profile = loadProfile();
+  if (isSignedIn()) selected.push("google");
+  if (loadSyncSettings().enabled) selected.push("sync");
+  if (CANVAS_INTEGRATION_ENABLED && loadCanvasSettings().accessToken.trim()) selected.push("canvas");
+  if (external.zoteroApiKey.trim()) selected.push("zotero");
+  if (external.githubToken.trim()) selected.push("github");
+  if (profile.name.trim() || profile.about.trim()) selected.push("profile");
+  return selected;
+}
+
+function FeatureStage({
+  selected,
+  onToggle,
+  onContinue,
+}: {
+  selected: SetupFeature[];
+  onToggle: (id: SetupFeature) => void;
+  onContinue: () => void;
+}) {
+  return (
+    <div className="spark-intro__stage spark-feature-stage" onClick={(event) => event.stopPropagation()}>
+      <div>
+        <h2 className="spark-intro__steptitle">Choose what you'll use</h2>
+        <p className="spark-intro__subtitle spark-intro__subtitle--static">
+          Click the parts you want. Notes and Deep Work are always ready.
+        </p>
+      </div>
+      <div className="spark-feature-grid">
+        {SETUP_FEATURES.map((feature) => {
+          const disabled = feature.disabled === true;
+          const active = !disabled && selected.includes(feature.id);
+          return (
+            <button
+              key={feature.id}
+              type="button"
+              aria-pressed={active}
+              disabled={disabled}
+              className={`spark-feature-card${active ? " spark-feature-card--active" : ""}${disabled ? " spark-feature-card--disabled" : ""}`}
+              onClick={() => onToggle(feature.id)}
+            >
+              <span className="spark-feature-eyebrow">{feature.eyebrow}</span>
+              <span className="spark-feature-title">{feature.title}</span>
+              <span className="spark-feature-detail">{feature.detail}</span>
+              <span className="spark-feature-choice">
+                {disabled ? CANVAS_DISABLED_MESSAGE : active ? "Selected" : "Click to use"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <button className="zen-btn zen-shine spark-look-continue" onClick={onContinue}>
+        {selected.length ? `Set up ${selected.length} selection${selected.length === 1 ? "" : "s"}` : "Continue with local Zen"}
+      </button>
+    </div>
+  );
+}
+
+function SetupStage({
+  selected,
+  onBack,
+  onContinue,
+}: {
+  selected: SetupFeature[];
+  onBack: () => void;
+  onContinue: () => void;
+}) {
   const [signedIn, setSignedIn] = useState(() => isSignedIn());
-  const [decisions, setDecisions] = useState<Decisions>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [vault, setVault] = useState<string[]>([]);
   const [name, setName] = useState(() => loadProfile().name);
   const [about, setAbout] = useState(() => loadProfile().about);
+  const [profileSaved, setProfileSaved] = useState(() => {
+    const profile = loadProfile();
+    return !!(profile.name.trim() || profile.about.trim());
+  });
   const [canvasDraft, setCanvasDraft] = useState(() => loadCanvasSettings());
   const [externalDraft, setExternalDraft] = useState(() => loadExternalConnectionSettings());
 
   useEffect(() => onAuthChange(setSignedIn), []);
   useEffect(() => {
-    const profile = loadProfile();
-    setDecisions((current) => ({
-      ...current,
-      ...(isSignedIn() ? { google: "connected" as const } : {}),
-      ...(loadSyncSettings().enabled ? { sync: "connected" as const } : {}),
-      ...(profile.name.trim() || profile.about.trim() ? { profile: "connected" as const } : {}),
-    }));
-  }, []);
-  useEffect(() => {
     if (!signedIn) return;
-    setDecisions((current) => ({ ...current, google: "connected" }));
     void listVaultConnections().then((items) => setVault(items.map((item) => item.provider))).catch(() => {});
   }, [signedIn]);
 
-  const decide = (key: string, value: Decision) => setDecisions((current) => ({ ...current, [key]: value }));
+  const wants = (feature: SetupFeature) => selected.includes(feature);
+  const needsGoogle = wants("google") || wants("sync");
   const syncEnabled = loadSyncSettings().enabled;
-  const sourceRows = [
-    { id: "drive", label: "Drive", ready: signedIn },
-    { id: "canvas", label: "Canvas", ready: !!canvasDraft.accessToken || vault.includes("canvas") },
-    { id: "zotero", label: "Zotero", ready: !!externalDraft.zoteroApiKey || vault.includes("zotero") },
-    { id: "github", label: "GitHub", ready: !!externalDraft.githubToken || vault.includes("github") },
-  ];
-  const sourcesReviewed = sourceRows.every((source) => source.ready || decisions[`source:${source.id}`] === "skipped");
-  const googleResolved = signedIn || !!decisions.google;
-  const syncResolved = syncEnabled || !!decisions.sync;
-  const profileResolved = !!decisions.profile;
-  const canContinue = googleResolved && syncResolved && sourcesReviewed && profileResolved;
+  const canvasReady = !!canvasDraft.accessToken.trim() || vault.includes("canvas");
+  const zoteroReady = !!externalDraft.zoteroApiKey.trim() || vault.includes("zotero");
+  const githubReady = !!externalDraft.githubToken.trim() || vault.includes("github");
+  const canContinue =
+    (!needsGoogle || signedIn)
+    && (!wants("sync") || syncEnabled)
+    && (!wants("canvas") || canvasReady)
+    && (!wants("zotero") || zoteroReady)
+    && (!wants("github") || githubReady)
+    && (!wants("profile") || profileSaved);
 
   async function connectGoogle() {
     setBusy("google");
     try {
       await signIn();
-      decide("google", "connected");
       notify.success("Google account connected");
     } catch (error) {
       notify.error((error as Error).message || "Google sign-in failed");
@@ -203,7 +304,6 @@ function SetupStage({ onContinue }: { onContinue: () => void }) {
     try {
       saveSyncSettings({ ...loadSyncSettings(), enabled: true });
       await syncOnce();
-      decide("sync", "connected");
       notify.success("Cloud sync enabled");
     } catch (error) {
       notify.error((error as Error).message || "Sync failed");
@@ -212,14 +312,9 @@ function SetupStage({ onContinue }: { onContinue: () => void }) {
     }
   }
 
-  function keepLocal() {
-    saveSyncSettings({ ...loadSyncSettings(), enabled: false });
-    decide("sync", "skipped");
-  }
-
   function savePrivateProfile() {
     saveProfile({ ...loadProfile(), name: name.trim(), about: about.trim() });
-    decide("profile", "connected");
+    setProfileSaved(true);
     notify.success("Profile saved");
   }
 
@@ -227,7 +322,6 @@ function SetupStage({ onContinue }: { onContinue: () => void }) {
     const next = { baseUrl: canvasDraft.baseUrl.trim(), accessToken: canvasDraft.accessToken.trim() };
     saveCanvasSettings(next);
     setCanvasDraft(next);
-    decide("source:canvas", "connected");
     notify.success("Canvas settings saved");
   }
 
@@ -239,7 +333,6 @@ function SetupStage({ onContinue }: { onContinue: () => void }) {
     };
     saveExternalConnectionSettings(next);
     setExternalDraft(next);
-    decide("source:zotero", "connected");
     notify.success("Zotero settings saved");
   }
 
@@ -247,109 +340,120 @@ function SetupStage({ onContinue }: { onContinue: () => void }) {
     const next = { ...externalDraft, githubToken: externalDraft.githubToken.trim() };
     saveExternalConnectionSettings(next);
     setExternalDraft(next);
-    decide("source:github", "connected");
     notify.success("GitHub token saved");
   }
 
   return (
     <div className="spark-intro__stage spark-setup" onClick={(e) => e.stopPropagation()}>
       <div>
-        <h2 className="spark-intro__steptitle">Set your foundation</h2>
+        <h2 className="spark-intro__steptitle">{selected.length ? "Connect your choices" : "You're ready"}</h2>
         <p className="spark-intro__subtitle spark-intro__subtitle--static">
-          Pick what Zen may connect now. You can finish or revise every choice in Settings later.
+          {selected.length
+            ? "Only the features you selected are shown here."
+            : "Notes, Deep Work, PDFs, and local AI settings are available without an account."}
         </p>
       </div>
       <div className="spark-setup-grid">
-        <SetupCard
-          done={signedIn || decisions.google === "skipped"}
-          title="Google identity"
-          detail={signedIn ? "Connected for account, sync, Drive, Calendar, and Mail." : decisions.google === "skipped" ? "Skipped for now. Zen will stay local." : "Optional, but needed for cloud features."}
-          action={signedIn ? <span className="spark-setup-status">Connected</span> : (
-            <div className="spark-setup-actions">
+        {needsGoogle && (
+          <SetupCard
+            done={signedIn}
+            title="Google sign-in"
+            detail={wants("google")
+              ? "Required for Calendar, Mail, and Drive. It also anchors your Zen account."
+              : "Required to identify your account for cloud sync."}
+            action={signedIn ? <span className="spark-setup-status">Connected</span> : (
               <button className="zen-btn" disabled={busy === "google" || !isConfigured()} onClick={() => void connectGoogle()}>
-                {busy === "google" ? "Connecting..." : "Connect"}
+                {busy === "google" ? "Connecting..." : "Connect Google"}
               </button>
-              <button className="zen-btn-ghost" onClick={() => decide("google", "skipped")}>Local-only</button>
-            </div>
-          )}
-        />
-        <SetupCard
-          done={syncEnabled || !!decisions.sync}
-          title="Sync"
-          detail="Choose whether notes, study state, PDFs, and settings can follow you."
-          action={(
-            <div className="spark-setup-actions">
+            )}
+          />
+        )}
+        {wants("sync") && (
+          <SetupCard
+            done={syncEnabled}
+            title="Cloud sync"
+            detail="Let notes, study state, PDFs, and settings follow you across devices."
+            action={syncEnabled ? <span className="spark-setup-status">Enabled</span> : (
               <button className="zen-btn" disabled={!signedIn || busy === "sync"} onClick={() => void enableSync()}>
-                {busy === "sync" ? "Syncing..." : "Enable"}
+                {busy === "sync" ? "Syncing..." : "Enable sync"}
               </button>
-              <button className="zen-btn-ghost" onClick={keepLocal}>Keep local</button>
-            </div>
-          )}
-        />
-        <SetupCard
-          done={sourcesReviewed}
-          title="Sources"
-          detail="Drive follows Google. Add Canvas, Zotero, and GitHub now, or mark each one for later."
-          action={(
-            <div className="spark-source-setup">
-              <div className="spark-source-list">
-                {sourceRows.map((source) => (
-                  <button
-                    key={source.id}
-                    className={`spark-source-pill${source.ready ? " spark-source-pill--ready" : ""}`}
-                    onClick={() => !source.ready && decide(`source:${source.id}`, "skipped")}
-                  >
-                    {source.label}: {source.ready ? "on" : decisions[`source:${source.id}`] === "skipped" ? "later" : "later?"}
-                  </button>
-                ))}
+            )}
+          />
+        )}
+        {wants("canvas") && (
+          <SetupCard
+            done={canvasReady}
+            title="Canvas"
+            detail={vault.includes("canvas") && !canvasDraft.accessToken
+              ? "A saved Canvas connection is available in your Zen account vault."
+              : "Connect your institution to import courses, assignments, modules, and files."}
+            action={canvasReady ? <span className="spark-setup-status">Ready</span> : (
+              <div className="spark-profile">
+                <input className="zen-input" value={canvasDraft.baseUrl} onChange={(event) => setCanvasDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://school.instructure.com" />
+                <input className="zen-input" type="password" value={canvasDraft.accessToken} onChange={(event) => setCanvasDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder="Canvas access token" />
+                <button className="zen-btn" disabled={!canvasDraft.baseUrl.trim() || !canvasDraft.accessToken.trim()} onClick={saveCanvas}>Save Canvas</button>
               </div>
-              <div className="spark-source-fields">
-                <div className="spark-source-field">
-                  <span>Canvas</span>
-                  <input className="zen-input" value={canvasDraft.baseUrl} onChange={(event) => setCanvasDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://school.instructure.com" />
-                  <input className="zen-input" type="password" value={canvasDraft.accessToken} onChange={(event) => setCanvasDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder="Canvas access token" />
-                  <button className="zen-btn-ghost" disabled={!canvasDraft.baseUrl.trim() || !canvasDraft.accessToken.trim()} onClick={saveCanvas}>Save Canvas</button>
+            )}
+          />
+        )}
+        {wants("zotero") && (
+          <SetupCard
+            done={zoteroReady}
+            title="Zotero"
+            detail={vault.includes("zotero") && !externalDraft.zoteroApiKey
+              ? "A saved Zotero connection is available in your Zen account vault."
+              : "Connect a user or group library for papers, annotations, and citations."}
+            action={zoteroReady ? <span className="spark-setup-status">Ready</span> : (
+              <div className="spark-profile">
+                <div className="grid grid-cols-[88px_1fr] gap-2">
+                  <select className="zen-input" value={externalDraft.zoteroLibraryType} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroLibraryType: event.target.value as "user" | "group" }))}>
+                    <option value="user">User</option>
+                    <option value="group">Group</option>
+                  </select>
+                  <input className="zen-input" value={externalDraft.zoteroLibraryId} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroLibraryId: event.target.value }))} placeholder="Library ID" />
                 </div>
-                <div className="spark-source-field">
-                  <span>Zotero</span>
-                  <div className="grid grid-cols-[88px_1fr] gap-2">
-                    <select className="zen-input" value={externalDraft.zoteroLibraryType} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroLibraryType: event.target.value as "user" | "group" }))}>
-                      <option value="user">User</option>
-                      <option value="group">Group</option>
-                    </select>
-                    <input className="zen-input" value={externalDraft.zoteroLibraryId} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroLibraryId: event.target.value }))} placeholder="Library ID" />
-                  </div>
-                  <input className="zen-input" type="password" value={externalDraft.zoteroApiKey} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroApiKey: event.target.value }))} placeholder="Zotero API key" />
-                  <button className="zen-btn-ghost" disabled={!externalDraft.zoteroLibraryId.trim() || !externalDraft.zoteroApiKey.trim()} onClick={saveZotero}>Save Zotero</button>
-                </div>
-                <div className="spark-source-field">
-                  <span>GitHub</span>
-                  <input className="zen-input" type="password" value={externalDraft.githubToken} onChange={(event) => setExternalDraft((current) => ({ ...current, githubToken: event.target.value }))} placeholder="GitHub token" />
-                  <button className="zen-btn-ghost" disabled={!externalDraft.githubToken.trim()} onClick={saveGitHub}>Save GitHub</button>
-                </div>
+                <input className="zen-input" type="password" value={externalDraft.zoteroApiKey} onChange={(event) => setExternalDraft((current) => ({ ...current, zoteroApiKey: event.target.value }))} placeholder="Zotero API key" />
+                <button className="zen-btn" disabled={!externalDraft.zoteroLibraryId.trim() || !externalDraft.zoteroApiKey.trim()} onClick={saveZotero}>Save Zotero</button>
               </div>
-            </div>
-          )}
-        />
-        <SetupCard
-          done={!!decisions.profile}
-          title="Private profile"
-          detail="A small memory seed helps Zen speak to your actual classes and goals."
-          action={(
-            <div className="spark-profile">
-              <input className="zen-input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" />
-              <textarea className="zen-input" rows={2} value={about} onChange={(event) => setAbout(event.target.value)} placeholder="What are you studying?" />
-              <div className="spark-setup-actions">
-                <button className="zen-btn-ghost" onClick={() => decide("profile", "skipped")}>Skip</button>
-                <button className="zen-btn" disabled={!name.trim() && !about.trim()} onClick={savePrivateProfile}>Save</button>
+            )}
+          />
+        )}
+        {wants("github") && (
+          <SetupCard
+            done={githubReady}
+            title="GitHub"
+            detail={vault.includes("github") && !externalDraft.githubToken
+              ? "A saved GitHub connection is available in your Zen account vault."
+              : "Add a fine-grained token to index repositories as source material."}
+            action={githubReady ? <span className="spark-setup-status">Ready</span> : (
+              <div className="spark-profile">
+                <input className="zen-input" type="password" value={externalDraft.githubToken} onChange={(event) => setExternalDraft((current) => ({ ...current, githubToken: event.target.value }))} placeholder="GitHub token" />
+                <button className="zen-btn" disabled={!externalDraft.githubToken.trim()} onClick={saveGitHub}>Save GitHub</button>
               </div>
-            </div>
-          )}
-        />
+            )}
+          />
+        )}
+        {wants("profile") && (
+          <SetupCard
+            done={profileSaved}
+            title="Personal context"
+            detail="A private memory seed helps Zen speak to your actual classes and goals."
+            action={profileSaved ? <span className="spark-setup-status">Saved</span> : (
+              <div className="spark-profile">
+                <input className="zen-input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" />
+                <textarea className="zen-input" rows={2} value={about} onChange={(event) => setAbout(event.target.value)} placeholder="What are you studying?" />
+                <button className="zen-btn" disabled={!name.trim() && !about.trim()} onClick={savePrivateProfile}>Save profile</button>
+              </div>
+            )}
+          />
+        )}
       </div>
-      <button className="zen-btn zen-shine spark-look-continue" disabled={!canContinue} onClick={onContinue}>
-        {canContinue ? "Continue" : "Choose or skip each setup item"}
-      </button>
+      <div className="spark-setup-footer">
+        <button className="zen-btn-ghost" onClick={onBack}>Change choices</button>
+        <button className="zen-btn zen-shine" disabled={!canContinue} onClick={onContinue}>
+          {canContinue ? "Enter Zen" : "Finish the selected setup"}
+        </button>
+      </div>
     </div>
   );
 }

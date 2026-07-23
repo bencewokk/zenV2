@@ -1,4 +1,5 @@
 import { loadCanvasSettings } from "@/services/canvas/settings";
+import { CANVAS_INTEGRATION_ENABLED } from "@/services/canvas/availability";
 import { isSignedIn } from "@/services/google/auth";
 import { loadExternalConnectionSettings } from "@/services/connections/settings";
 import { refreshCanvasSources } from "./canvas";
@@ -11,7 +12,7 @@ export async function refreshAllSources(): Promise<SourceRefreshResult[]> {
   const external = loadExternalConnectionSettings();
   const jobs: Array<Promise<SourceRefreshResult>> = [];
   const canvas = loadCanvasSettings();
-  if (canvas.baseUrl && canvas.accessToken) jobs.push(refreshCanvasSources());
+  if (CANVAS_INTEGRATION_ENABLED && canvas.baseUrl && canvas.accessToken) jobs.push(refreshCanvasSources());
   if (isSignedIn()) jobs.push(refreshDriveSources());
   if (external.zoteroLibraryId && external.zoteroApiKey) jobs.push(refreshZoteroSources());
   if (external.githubToken) jobs.push(refreshGitHubSources());

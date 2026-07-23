@@ -1,5 +1,6 @@
 import { listCanvasPlanner, type CanvasPlannerItem } from "./client";
 import { loadCanvasSettings } from "./settings";
+import { CANVAS_INTEGRATION_ENABLED } from "./availability";
 
 /**
  * Ambient Canvas deadlines for the AI's dynamic context. The chat can't await a
@@ -56,6 +57,7 @@ let inflight = false;
 /** Fire-and-forget refresh; skips when Canvas isn't connected, the cache is
  *  fresh, or a fetch is already running. Never throws. */
 export function refreshCanvasUpcoming(): void {
+  if (!CANVAS_INTEGRATION_ENABLED) return;
   if (inflight) return;
   if (!loadCanvasSettings().accessToken.trim()) return;
   const cache = readCache();
@@ -97,6 +99,7 @@ export function formatUpcoming(items: UpcomingItem[], now: number): string {
 
 /** The context block from the cache — instant, empty string when nothing to say. */
 export function canvasContextBlock(): string {
+  if (!CANVAS_INTEGRATION_ENABLED) return "";
   const cache = readCache();
   if (!cache) return "";
   return formatUpcoming(cache.items, Date.now());

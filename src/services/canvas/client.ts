@@ -1,5 +1,6 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { loadCanvasSettings } from "./settings";
+import { CANVAS_DISABLED_MESSAGE, CANVAS_INTEGRATION_ENABLED } from "./availability";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const httpFetch: typeof fetch = IS_TAURI ? (tauriFetch as typeof fetch) : fetch;
@@ -126,6 +127,7 @@ function describeError(status: number, body: string): string {
 }
 
 async function request<T>(pathOrUrl: string, signal?: AbortSignal): Promise<{ data: T; next: string | null }> {
+  if (!CANVAS_INTEGRATION_ENABLED) throw new Error(`Canvas integration is ${CANVAS_DISABLED_MESSAGE.toLowerCase()}.`);
   const settings = loadCanvasSettings();
   if (!settings.accessToken.trim()) throw new Error("Canvas is not connected. Open Settings → Connections.");
   const root = rootUrl(settings.baseUrl);

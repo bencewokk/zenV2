@@ -168,7 +168,87 @@
 .spark-look-hint { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
 .spark-look-continue { margin-top: 14px; }
 
-/* ── Surface mocks inside the schematic ──────────────────────────────────── */
+/* ── Opt-in feature chooser ──────────────────────────────────────────────── */
+.spark-feature-stage {
+  width: min(880px, 94vw);
+}
+.spark-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+}
+.spark-feature-card {
+  position: relative;
+  display: flex;
+  min-height: 150px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 15px;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elev) 82%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 200ms var(--ease-out), background 200ms var(--ease-out),
+    transform 220ms var(--ease-spring), box-shadow 200ms var(--ease-out);
+  animation: spark-fade-up 520ms var(--ease-out) both;
+}
+.spark-feature-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--text-dim) 55%, var(--border));
+}
+.spark-feature-card:disabled,
+.spark-feature-card:disabled:hover {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+  border-color: var(--border);
+}
+.spark-feature-card--active {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  background: color-mix(in srgb, var(--accent-dim) 42%, var(--bg-elev));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.spark-feature-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+}
+.spark-feature-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+.spark-feature-detail {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.spark-feature-choice {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.spark-feature-card--active .spark-feature-choice {
+  color: var(--accent);
+}
+.spark-feature-card--disabled .spark-feature-choice {
+  color: var(--text-dim);
+}
+@media (max-width: 760px) {
+  .spark-feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .spark-feature-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Selected feature setup ──────────────────────────────────────────────── */
 .spark-setup {
   width: min(920px, 94vw);
 }
@@ -191,9 +271,6 @@
   padding: 14px;
   text-align: left;
   animation: spark-fade-up 520ms var(--ease-out) both;
-}
-.spark-setup-card:nth-child(3) {
-  grid-column: 1 / -1;
 }
 .spark-setup-card--done {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -238,66 +315,18 @@
   font-size: 12px;
   color: var(--ok);
 }
-.spark-source-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-.spark-source-setup {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.spark-source-pill {
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  padding: 5px 9px;
-  color: var(--text-dim);
-  font-size: 11px;
-  cursor: pointer;
-}
-.spark-source-pill--ready {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-  color: var(--accent);
-  cursor: default;
-}
-.spark-source-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(170px, 1fr));
-  gap: 8px;
-}
-.spark-source-field {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 7px;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-}
-.spark-source-field input,
-.spark-source-field select,
-.spark-source-field button,
-.spark-source-field > .grid {
-  min-width: 0;
-  width: 100%;
-}
-.spark-source-field span {
-  font-size: 11px;
-  font-weight: 650;
-  color: var(--text);
-}
-@media (max-width: 900px) {
-  .spark-source-fields {
-    grid-template-columns: 1fr;
-  }
-}
 .spark-profile {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.spark-setup-footer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .spark-intro__skip {

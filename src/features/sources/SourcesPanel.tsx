@@ -6,6 +6,7 @@ import { ensureSourcesLoaded, useSources } from "@/services/sources/store";
 import type { ConnectedSource, SourceProvider } from "@/services/sources/types";
 import { useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import MagicBento from "@/shared/ui/reactbits/MagicBento";
+import { CANVAS_INTEGRATION_ENABLED } from "@/services/canvas/availability";
 
 /** A "course" record is the grouping, not study material — everything else can
  *  be pulled onto a Deep Work canvas as a source window. */
@@ -73,7 +74,20 @@ export function SourcesPanel() {
         </div>
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-1">
-        {PROVIDERS.map((item) => <button key={item.id} className={provider === item.id ? "zen-btn" : "zen-btn-ghost"} onClick={() => setProvider(item.id)}>{item.label}{item.id === "all" ? ` · ${Object.keys(sources).length}` : ""}</button>)}
+        {PROVIDERS.map((item) => {
+          const disabled = item.id === "canvas" && !CANVAS_INTEGRATION_ENABLED;
+          return (
+            <button
+              key={item.id}
+              className={provider === item.id ? "zen-btn" : "zen-btn-ghost"}
+              disabled={disabled}
+              title={disabled ? "Canvas is disabled for now" : undefined}
+              onClick={() => setProvider(item.id)}
+            >
+              {item.label}{disabled ? " · Disabled" : item.id === "all" ? ` · ${Object.keys(sources).length}` : ""}
+            </button>
+          );
+        })}
         <input className="zen-input ml-auto min-w-52" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sources…" />
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(240px,0.38fr)_minmax(0,1fr)] overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--bg)]">
@@ -100,7 +114,12 @@ function SourcesHub({ onPick }: { onPick: (provider: "all" | SourceProvider) => 
       <p className="mb-4 mt-1 text-xs text-[var(--text-dim)]">Course material, research, files, and the web — all searchable in one place.</p>
       <MagicBento
         cards={[
-          { label: "LMS", title: "Canvas", description: "Courses, assignments, modules, and files", onClick: () => onPick("canvas") },
+          {
+            label: "LMS",
+            title: "Canvas",
+            description: CANVAS_INTEGRATION_ENABLED ? "Courses, assignments, modules, and files" : "Disabled for now",
+            onClick: CANVAS_INTEGRATION_ENABLED ? () => onPick("canvas") : undefined,
+          },
           { label: "Files", title: "Google Drive", description: "Every file you allow, read-only", onClick: () => onPick("drive") },
           { label: "Research", title: "Zotero", description: "Papers, annotations, and citations", onClick: () => onPick("zotero") },
           { label: "Code", title: "GitHub", description: "Repositories allowed by your token", onClick: () => onPick("github") },

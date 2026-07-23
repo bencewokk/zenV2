@@ -40,6 +40,7 @@ import {
   type CanvasAssignment, type CanvasCourse,
 } from "@/services/canvas/client";
 import { loadCanvasSettings } from "@/services/canvas/settings";
+import { CANVAS_INTEGRATION_ENABLED } from "@/services/canvas/availability";
 import { ensureSourcesLoaded, searchConnectedSources, useSources } from "@/services/sources/store";
 import { refreshAllSources } from "@/services/sources/refresh";
 import { createAssistantTask, loadAssistantTasks, setAssistantTaskDone } from "@/services/assistantTasks";
@@ -2238,7 +2239,7 @@ export function appStateBlock(): string {
  *  connected, and study tools only inside Deep Work). */
 export function isToolAvailable(name: string): boolean {
   if (GOOGLE_TOOLS.has(name)) return isSignedIn();
-  if (CANVAS_TOOLS.has(name)) return !!loadCanvasSettings().accessToken.trim();
+  if (CANVAS_TOOLS.has(name)) return CANVAS_INTEGRATION_ENABLED && !!loadCanvasSettings().accessToken.trim();
   if (STUDY_TOOLS.has(name)) return studyModeActive();
   return true;
 }

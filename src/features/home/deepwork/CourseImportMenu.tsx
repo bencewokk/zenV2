@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listCanvasCourses, type CanvasCourse } from "@/services/canvas/client";
 import { loadCanvasSettings } from "@/services/canvas/settings";
+import { CANVAS_INTEGRATION_ENABLED } from "@/services/canvas/availability";
 import { useCourses, courseByCanvasId } from "@/features/home/deepwork/courseStore";
 import { canvasCourseSeed } from "@/features/home/deepwork/canvasCourses";
 import { fmtPlanDay } from "@/features/home/deepwork/studyPlan";
@@ -8,6 +9,7 @@ import { notify } from "@/shared/ui/notify";
 
 /** Whether Canvas is connected (ad-hoc, mirrors services/sources/refresh.ts). */
 export function canvasConnected(): boolean {
+  if (!CANVAS_INTEGRATION_ENABLED) return false;
   const s = loadCanvasSettings();
   return !!s.baseUrl.trim() && !!s.accessToken.trim();
 }

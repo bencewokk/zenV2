@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { isSignedIn, isConfigured, onAuthChange, signIn, signOut } from "@/services/google/auth";
 import { loadSyncSettings, saveSyncSettings } from "@/services/sync/settings";
-import { clearCanvasSettings, loadCanvasSettings, saveCanvasSettings } from "@/services/canvas/settings";
-import { getCanvasProfile, listCanvasCourses } from "@/services/canvas/client";
+import { CANVAS_DISABLED_MESSAGE } from "@/services/canvas/availability";
 import { loadExternalConnectionSettings, saveExternalConnectionSettings, splitConnectionList } from "@/services/connections/settings";
 import { refreshDriveSources } from "@/services/sources/drive";
 import { testZoteroConnection } from "@/services/sources/zotero";
@@ -27,10 +26,6 @@ export function Connections() {
   const [sync, setSync] = useState(() => loadSyncSettings());
   const [syncing, setSyncing] = useState(false);
   const syncStatus = useStatus((s) => s.sync);
-  const [canvas, setCanvas] = useState(() => loadCanvasSettings());
-  const [showCanvasToken, setShowCanvasToken] = useState(false);
-  const [testingCanvas, setTestingCanvas] = useState(false);
-  const [canvasIdentity, setCanvasIdentity] = useState<string | null>(null);
   const [external, setExternal] = useState(() => loadExternalConnectionSettings());
   const [showZoteroKey, setShowZoteroKey] = useState(false);
   const [showGitHubToken, setShowGitHubToken] = useState(false);
@@ -101,39 +96,6 @@ export function Connections() {
     }
   }
 
-  function saveCanvas() {
-    saveCanvasSettings({ baseUrl: canvas.baseUrl.trim(), accessToken: canvas.accessToken.trim() });
-    notify.success("Canvas settings saved");
-    if (signedIn) void refreshVaultQuietly().catch(() => {});
-  }
-
-  async function testCanvas() {
-    setTestingCanvas(true);
-    saveCanvasSettings({ baseUrl: canvas.baseUrl.trim(), accessToken: canvas.accessToken.trim() });
-    try {
-      const [profile, courses] = await Promise.all([getCanvasProfile(), listCanvasCourses()]);
-      setCanvasIdentity(profile.name);
-      if (signedIn) await refreshVaultQuietly();
-      notify.success(`Connected as ${profile.name} · ${courses.length} active course${courses.length === 1 ? "" : "s"}`);
-    } catch (e) {
-      setCanvasIdentity(null);
-      notify.error((e as Error).message || "Canvas connection failed");
-    } finally {
-      setTestingCanvas(false);
-    }
-  }
-
-  async function disconnectCanvas() {
-    clearCanvasSettings();
-    setCanvas({ baseUrl: "", accessToken: "" });
-    setCanvasIdentity(null);
-    if (signedIn && vaultConnections.some((connection) => connection.provider === "canvas")) {
-      await deleteVaultConnection("canvas").catch(() => {});
-      setVaultConnections(await listVaultConnections().catch(() => []));
-    }
-    notify.success("Canvas disconnected");
-  }
-
   function saveExternal() {
     saveExternalConnectionSettings(external);
     notify.success("Source connections saved");
@@ -185,7 +147,6 @@ export function Connections() {
     setVaultBusy(true);
     try {
       const restored = await restoreConnectionsFromVault();
-      setCanvas(loadCanvasSettings());
       setExternal(loadExternalConnectionSettings());
       notify.success(restored.length ? `Restored ${restored.join(", ")}` : "No saved provider connections");
     } catch (e) { setVaultError((e as Error).message || "Vault unavailable"); notify.error((e as Error).message || "Could not restore connections"); }
@@ -291,52 +252,15 @@ export function Connections() {
 
       <SettingsSection
         title="Canvas"
-        hint="Read-only access to your courses, assignments, modules, announcements, and files."
+        hint="Course and assignment integration."
       >
-        <Field label="Canvas URL" hint="Your institution root URL, without /api/v1.">
-          <input
-            value={canvas.baseUrl}
-            onChange={(e) => setCanvas({ ...canvas, baseUrl: e.target.value })}
-            placeholder="https://school.instructure.com"
-            className="zen-input w-full"
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="Access token" hint="Stored on this device and excluded from cloud sync.">
-          <div className="flex gap-2">
-            <input
-              type={showCanvasToken ? "text" : "password"}
-              value={canvas.accessToken}
-              onChange={(e) => setCanvas({ ...canvas, accessToken: e.target.value })}
-              placeholder="Canvas access token"
-              className="zen-input flex-1"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button className="zen-btn-ghost shrink-0" onClick={() => setShowCanvasToken((s) => !s)}>
-              {showCanvasToken ? "Hide" : "Show"}
-            </button>
-          </div>
-        </Field>
-        <p className="text-xs text-[var(--text-dim)]">
-          Personal tokens support initial testing. A public Zen release should use institution-approved Canvas OAuth.
-        </p>
-        <div className="flex items-center gap-2">
-          <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ background: canvasIdentity ? "var(--ok)" : "var(--text-dim)" }}
-          />
-          <span className="text-xs text-[var(--text-dim)]">
-            {canvasIdentity ? `Connected as ${canvasIdentity}` : canvas.baseUrl && canvas.accessToken ? "Saved · not verified this session" : "Not connected"}
-          </span>
-          <div className="ml-auto flex gap-2">
-            {(canvas.baseUrl || canvas.accessToken) && (
-              <button className="zen-btn-ghost" onClick={() => void disconnectCanvas()}>Disconnect</button>
-            )}
-            <button className="zen-btn-ghost" onClick={saveCanvas}>Save</button>
-            <button className="zen-btn" onClick={testCanvas} disabled={testingCanvas || !canvas.baseUrl.trim() || !canvas.accessToken.trim()}>
-              {testingCanvas ? "Testing…" : "Test connection"}
-            </button>
+        <div className="flex items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--bg)] px-3 py-3">
+          <span className="inline-block h-2 w-2 rounded-full bg-[var(--text-dim)]" />
+          <div>
+            <div className="text-sm font-medium text-[var(--text)]">{CANVAS_DISABLED_MESSAGE}</div>
+            <p className="mt-0.5 text-xs text-[var(--text-dim)]">
+              Canvas connections and imports are temporarily unavailable.
+            </p>
           </div>
         </div>
       </SettingsSection>
