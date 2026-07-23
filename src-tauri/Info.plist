@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Zen uses your Mac calendars to show your schedule and add events you request.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Zen uses your Mac calendars to show your schedule and add events you request.</string>
+</dict>
+</plist>

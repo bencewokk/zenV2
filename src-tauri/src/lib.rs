@@ -1,5 +1,6 @@
 mod auth;
 mod icloud;
+mod macos_calendar;
 
 /// Opens the OS "installed apps" page so the user can finish uninstalling Zen.
 /// The app can't remove its own installer entry, so this hands off to the OS.
@@ -36,6 +37,10 @@ pub fn run() {
             icloud::icloud_connect,
             icloud::icloud_connection_status,
             icloud::icloud_disconnect,
+            macos_calendar::apple_calendar_connection_mode,
+            macos_calendar::macos_calendar_connection_status,
+            macos_calendar::macos_calendar_request_access,
+            macos_calendar::macos_calendar_open_settings,
             open_os_uninstall,
         ])
         .run(tauri::generate_context!())

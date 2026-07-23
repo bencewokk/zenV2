@@ -9,9 +9,14 @@ import { testGitHubConnection } from "@/services/sources/github";
 import {
   connectICloudCalendar,
   disconnectICloudCalendar,
+  getAppleCalendarConnectionMode,
   getICloudConnectionStatus,
-  isICloudConnectionAvailable,
+  getMacOSCalendarConnectionStatus,
+  openMacOSCalendarSettings,
+  requestMacOSCalendarAccess,
+  type AppleCalendarConnectionMode,
   type ICloudConnectionStatus,
+  type SystemCalendarStatus,
 } from "@/services/icloud/auth";
 import { backupConnectionsToVault, deleteVaultConnection, listVaultConnections, restoreConnectionsFromVault, type VaultConnectionStatus, type VaultProvider } from "@/services/connections/vault";
 import { syncOnce, clearSyncState } from "@/services/sync/engine";
@@ -38,21 +43,47 @@ export function Connections() {
   const [icloudPassword, setIcloudPassword] = useState("");
   const [showIcloudPassword, setShowIcloudPassword] = useState(false);
   const [icloudBusy, setIcloudBusy] = useState(false);
-  const icloudAvailable = isICloudConnectionAvailable();
+  const [appleCalendarMode, setAppleCalendarMode] = useState<
+    AppleCalendarConnectionMode | "loading"
+  >("loading");
+  const [systemCalendar, setSystemCalendar] = useState<SystemCalendarStatus>({
+    connected: false,
+    authorization: "unknown",
+  });
+  const [appleCalendarError, setAppleCalendarError] = useState<string | null>(null);
 
   useEffect(() => onAuthChange(setSignedIn), []);
   useEffect(() => {
-    if (!icloudAvailable) return;
-    void getICloudConnectionStatus()
-      .then((status) => {
-        setIcloud(status);
-        if (status.email) setIcloudEmail(status.email);
+    let cancelled = false;
+
+    void getAppleCalendarConnectionMode()
+      .then(async (mode) => {
+        if (cancelled) return;
+        setAppleCalendarMode(mode);
+
+        if (mode === "system") {
+          const status = await getMacOSCalendarConnectionStatus();
+          if (!cancelled) setSystemCalendar(status);
+          return;
+        }
+
+        if (mode === "credentials") {
+          const status = await getICloudConnectionStatus();
+          if (cancelled) return;
+          setIcloud(status);
+          if (status.email) setIcloudEmail(status.email);
+        }
       })
-      .catch(() => {
-        // A missing or unavailable credential store is surfaced when the user
-        // explicitly attempts to connect.
+      .catch((error) => {
+        if (cancelled) return;
+        setAppleCalendarMode("unavailable");
+        setAppleCalendarError((error as Error).message || "Could not check Calendar access");
       });
-  }, [icloudAvailable]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     if (!signedIn) { setVaultConnections([]); setVaultError(null); return; }
     void listVaultConnections().then((items) => { setVaultConnections(items); setVaultError(null); }).catch((error) => setVaultError((error as Error).message || "Vault unavailable"));
@@ -93,6 +124,31 @@ export function Connections() {
       notify.error((e as Error).message || "Could not disconnect iCloud Calendar");
     } finally {
       setIcloudBusy(false);
+    }
+  }
+
+  async function connectSystemCalendar() {
+    setIcloudBusy(true);
+    try {
+      const status = await requestMacOSCalendarAccess();
+      setSystemCalendar(status);
+      if (status.connected) {
+        notify.success("Apple Calendar access allowed");
+      } else {
+        notify.error("Calendar access was not allowed");
+      }
+    } catch (e) {
+      notify.error((e as Error).message || "Could not request Apple Calendar access");
+    } finally {
+      setIcloudBusy(false);
+    }
+  }
+
+  async function manageSystemCalendar() {
+    try {
+      await openMacOSCalendarSettings();
+    } catch (e) {
+      notify.error((e as Error).message || "Could not open Calendar settings");
     }
   }
 
@@ -266,16 +322,85 @@ export function Connections() {
       </SettingsSection>
 
       <SettingsSection
-        title="iCloud Calendar"
-        hint="Connect an Apple Account on Windows using an app-specific password."
+        title={appleCalendarMode === "system" ? "Apple Calendar" : "iCloud Calendar"}
+        hint={
+          appleCalendarMode === "system"
+            ? "Use calendars already connected to this Mac, including iCloud."
+            : "Connect an Apple Account on Windows using an app-specific password."
+        }
       >
-        <p className="text-xs text-[var(--text-dim)]">
-          Zen verifies the connection directly with iCloud Calendar. Your normal Apple Account password is never requested, and the app-specific password stays in Windows Credential Manager on this device.
-        </p>
-        {!icloudAvailable ? (
+        {appleCalendarMode === "credentials" && (
           <p className="text-xs text-[var(--text-dim)]">
-            iCloud Calendar connection is available in the Zen desktop app.
+            Zen verifies the connection directly with iCloud Calendar. Your normal Apple Account password is never requested, and the app-specific password stays in Windows Credential Manager on this device.
           </p>
+        )}
+        {appleCalendarMode === "loading" ? (
+          <p className="text-xs text-[var(--text-dim)]">
+            Checking Calendar access…
+          </p>
+        ) : appleCalendarMode === "unavailable" ? (
+          <p className={`text-xs ${appleCalendarError ? "text-[var(--danger)]" : "text-[var(--text-dim)]"}`}>
+            {appleCalendarError ||
+              "Apple Calendar connection is available in the Zen desktop app for macOS and Windows."}
+          </p>
+        ) : appleCalendarMode === "system" ? (
+          <>
+            <p className="text-xs text-[var(--text-dim)]">
+              Zen uses macOS Calendar access. Your Apple Account stays connected to your Mac, so Zen never asks for your Apple password.
+            </p>
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-block h-2 w-2 rounded-full"
+                style={{
+                  background: systemCalendar.connected
+                    ? "var(--ok)"
+                    : systemCalendar.authorization === "denied" ||
+                        systemCalendar.authorization === "restricted"
+                      ? "var(--danger)"
+                      : "var(--text-dim)",
+                }}
+              />
+              <span className="text-xs text-[var(--text-dim)]">
+                {systemCalendar.connected
+                  ? "Calendar access allowed"
+                  : systemCalendar.authorization === "denied"
+                    ? "Calendar access denied"
+                    : systemCalendar.authorization === "restricted"
+                      ? "Calendar access restricted"
+                      : systemCalendar.authorization === "write_only"
+                        ? "Full Calendar access required"
+                        : "Calendar access not allowed"}
+              </span>
+              {systemCalendar.connected ||
+              systemCalendar.authorization === "denied" ||
+              systemCalendar.authorization === "restricted" ||
+              systemCalendar.authorization === "write_only" ? (
+                <button
+                  className="zen-btn-ghost ml-auto"
+                  disabled={icloudBusy}
+                  onClick={() => void manageSystemCalendar()}
+                >
+                  Open System Settings
+                </button>
+              ) : (
+                <button
+                  className="zen-btn ml-auto"
+                  disabled={icloudBusy}
+                  onClick={() => void connectSystemCalendar()}
+                >
+                  {icloudBusy ? "Waiting for macOS…" : "Allow Calendar access"}
+                </button>
+              )}
+            </div>
+            {!systemCalendar.connected &&
+              (systemCalendar.authorization === "denied" ||
+                systemCalendar.authorization === "restricted" ||
+                systemCalendar.authorization === "write_only") && (
+                <p className="text-xs text-[var(--text-dim)]">
+                  Allow Zen under System Settings → Privacy &amp; Security → Calendars.
+                </p>
+              )}
+          </>
         ) : icloud.connected ? (
           <div className="flex items-center gap-2">
             <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--ok)" }} />
