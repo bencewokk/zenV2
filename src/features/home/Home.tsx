@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   buildActionGroups,
   parseBriefItems,
@@ -7,9 +7,9 @@ import {
 } from "@/features/home/store";
 import { DeepWorkV2 } from "@/features/home/deepwork/DeepWorkV2";
 import { useFocusSession } from "@/features/home/deepwork/useFocusSession";
-import { nextToReview, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
+import { nextToReview, isConceptDue, readinessColor, sessionList, useDeepWork } from "@/features/home/deepwork/deepworkStore";
 import {
-  reconcilePlan as reconcilePlanPure, nextSession, planHealth,
+  reconcilePlan as reconcilePlanPure, nextSession, planHealth, planSessionStart,
   fmtPlanDay, fmtStartMin, verdictColor, verdictLabel, KIND_META,
 } from "@/features/home/deepwork/studyPlan";
 import { pickExamHero } from "@/features/home/deepwork/courseRollup";
@@ -19,8 +19,10 @@ import { StudyGoal } from "@/features/home/deepwork/StudyGoal";
 import { useAiAccess, aiBlocked, aiBlockedMessage } from "@/features/ai/access";
 import { navigate } from "@/shared/stores/navigate";
 import { useNotes } from "@/features/notes/store";
+import { usePdfs } from "@/features/pdfs/store";
 import { renderMarkdownInline } from "@/shared/lib/renderMarkdown";
 import { Masonry } from "@/shared/ui/Masonry";
+import { AssistantConnect } from "@/features/home/AssistantConnect";
 import { DashboardTutorial } from "@/features/onboarding/DashboardTutorial";
 
 type AdminFocus = "calendar" | "mail";
@@ -148,6 +150,15 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
               {/* Most urgent exam — self-styled, renders nothing when nothing qualifies */}
               <ExamFocusHero now={now.getTime()} className="bento-item" />
 
+              {/* Next scheduled study sessions across every plan */}
+              <UpNextTile now={now.getTime()} />
+
+              {/* Spaced-repetition concepts due for review */}
+              <ReviewDueTile now={now.getTime()} />
+
+              {/* Every upcoming exam, nearest first */}
+              <ExamCountdownTile now={now.getTime()} />
+
               {/* Deep Work — the hero's fallback, always renders */}
               <DeepWorkRecommendations now={now.getTime()} className="bento-item" />
 
@@ -232,7 +243,7 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                   <SectionLabel>Action Feed</SectionLabel>
                   <span className="zen-meta text-xs">Chronological</span>
                 </div>
-                <div className="zen-stagger space-y-4">
+                <div className="zen-panel-scroll zen-stagger max-h-[340px] space-y-4 overflow-y-auto pr-1">
                   {groups.length === 0 ? (
                     <EmptyState
                       title="Nothing needs attention yet"
@@ -283,6 +294,20 @@ export function Home({ deepWork = false, onOpenAdmin }: HomeProps) {
                   )}
                 </div>
               </div>
+              {/* Tasks, captures and routine results synced from the phone (or a QR to link one) */}
+              <div className="bento-tile">
+                <SectionLabel>From Your Phone</SectionLabel>
+                <div className="mt-3">
+                  <AssistantConnect />
+                </div>
+              </div>
+
+              {/* Jump back into recently edited notes */}
+              <RecentNotesTile />
+
+              {/* Drop or pick a PDF straight onto the canvas */}
+              <PdfUploadTile />
+
               {/* Clock, streak and the weekly study chart */}
               <DailyFocusTile focusTime={focusTime} focusDate={focusDate} />
             </Masonry>
@@ -578,6 +603,270 @@ function DeepWorkRecommendations({ now, className = "" }: { now: number; classNa
       )}
     </div>
   );
+}
+
+/** The nearest upcoming planned study sessions across every plan, soonest first. */
+function UpNextTile({ now }: { now: number }) {
+  const sessions = useDeepWork((s) => s.sessions);
+  const order = useDeepWork((s) => s.order);
+
+  const upcoming = useMemo(() => {
+    return sessionList({ sessions, order })
+      .filter((s) => !s.archived && s.plan)
+      .map((s) => {
+        const plan = reconcilePlanPure(s.plan!, now).plan;
+        const next = nextSession(plan, now);
+        if (!next) return null;
+        return {
+          id: s.id,
+          name: s.name,
+          next,
+          h: planHealth(plan, s.backbone, now),
+          at: planSessionStart(next).getTime(),
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .sort((a, b) => a.at - b.at)
+      .slice(0, 4);
+  }, [sessions, order, now]);
+
+  if (upcoming.length === 0) return null;
+
+  return (
+    <div className="bento-tile">
+      <SectionLabel>Up Next</SectionLabel>
+      <div className="mt-3 space-y-1.5">
+        {upcoming.map((r) => (
+          <button
+            key={r.id}
+            className="flex w-full items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.01)] px-3 py-2 text-left transition hover:translate-x-1 hover:border-[rgba(var(--accent-rgb),0.3)] hover:bg-[rgba(var(--accent-rgb),0.06)]"
+            onClick={() => navigate({ view: "deepwork", sessionId: r.id })}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-[var(--text)]">{r.name}</span>
+              <span className="block truncate text-xs" style={{ color: verdictColor(r.h) }}>
+                {fmtPlanDay(r.next.date, now)} {fmtStartMin(r.next.startMin)} · {KIND_META[r.next.kind].label}
+                {r.h.drift ? " · adjust" : ""}
+              </span>
+            </span>
+            <span className="shrink-0 text-sm text-[var(--text-dim)]">→</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Spaced-repetition concepts due for review, across every session. */
+function ReviewDueTile({ now }: { now: number }) {
+  const sessions = useDeepWork((s) => s.sessions);
+  const order = useDeepWork((s) => s.order);
+
+  const due = useMemo(() => {
+    const rows: { sessionId: string; sessionName: string; title: string; mastery: number; due: number }[] = [];
+    for (const s of sessionList({ sessions, order })) {
+      if (s.archived || !s.backbone) continue;
+      for (const c of s.backbone.concepts) {
+        if (isConceptDue(c, now)) {
+          rows.push({ sessionId: s.id, sessionName: s.name, title: c.title, mastery: c.mastery, due: c.due ?? 0 });
+        }
+      }
+    }
+    // Most overdue first (oldest due time), then lowest mastery — mirrors nextToReview.
+    return rows.sort((a, b) => a.due - b.due || a.mastery - b.mastery);
+  }, [sessions, order, now]);
+
+  if (due.length === 0) return null;
+  const shown = due.slice(0, 5);
+
+  return (
+    <div className="bento-tile">
+      <div className="flex items-center justify-between gap-3">
+        <SectionLabel>Review Due</SectionLabel>
+        <span className="zen-meta text-xs tabular-nums">{due.length}</span>
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {shown.map((r, i) => (
+          <button
+            key={`${r.sessionId}:${r.title}:${i}`}
+            className="flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left transition hover:translate-x-1 hover:bg-[rgba(255,255,255,0.03)]"
+            onClick={() => navigate({ view: "deepwork", sessionId: r.sessionId })}
+          >
+            <span className="mt-0.5 h-8 w-1 shrink-0 rounded-full" style={{ background: readinessColor(r.mastery) }} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-[var(--text)]">{r.title}</span>
+              <span className="zen-meta block truncate text-xs">{r.sessionName} · {r.mastery}% mastery</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      {due.length > shown.length && (
+        <div className="zen-meta mt-2 text-xs">+{due.length - shown.length} more due</div>
+      )}
+    </div>
+  );
+}
+
+/** Every upcoming exam across sessions, nearest deadline first. */
+function ExamCountdownTile({ now }: { now: number }) {
+  const sessions = useDeepWork((s) => s.sessions);
+  const order = useDeepWork((s) => s.order);
+
+  const exams = useMemo(() => {
+    return sessionList({ sessions, order })
+      .filter((s) => !s.archived && s.plan?.examDate && s.backbone)
+      .map((s) => {
+        const plan = reconcilePlanPure(s.plan!, now).plan;
+        return { id: s.id, name: s.name, h: planHealth(plan, s.backbone, now) };
+      })
+      .filter((r) => r.h.daysLeft >= 0)
+      .sort((a, b) => a.h.daysLeft - b.h.daysLeft)
+      .slice(0, 5);
+  }, [sessions, order, now]);
+
+  if (exams.length === 0) return null;
+
+  return (
+    <div className="bento-tile">
+      <SectionLabel>Exam Countdown</SectionLabel>
+      <div className="mt-3 space-y-1.5">
+        {exams.map((r) => {
+          const color = verdictColor(r.h);
+          const label = r.h.daysLeft === 0 ? "today" : r.h.daysLeft === 1 ? "1 day" : `${r.h.daysLeft} days`;
+          return (
+            <button
+              key={r.id}
+              className="flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition hover:translate-x-1 hover:bg-[rgba(255,255,255,0.03)]"
+              onClick={() => navigate({ view: "deepwork", sessionId: r.id })}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-[var(--text)]">{r.name}</span>
+                <span className="zen-meta block truncate text-xs">{r.h.effectiveReadiness}% ready · {verdictLabel(r.h)}</span>
+              </span>
+              <span
+                className="shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+                style={{ color, border: `1px solid ${color}` }}
+              >
+                {label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The most recently edited notes, for quick re-entry. */
+function RecentNotesTile() {
+  const notes = useNotes((s) => s.notes);
+  const recent = useMemo(
+    () => Object.values(notes).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5),
+    [notes]
+  );
+  if (recent.length === 0) return null;
+
+  return (
+    <div className="bento-tile">
+      <SectionLabel>Recent Notes</SectionLabel>
+      <div className="mt-3 space-y-1.5">
+        {recent.map((n) => (
+          <button
+            key={n.id}
+            className="flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left transition hover:translate-x-1 hover:bg-[rgba(255,255,255,0.03)]"
+            onClick={() => navigate({ view: "note", id: n.id })}
+          >
+            <span className="shrink-0 text-xs text-[var(--accent)]">✎</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-[var(--text)]">{n.title || "Untitled"}</span>
+              <span className="zen-meta block truncate text-xs">
+                {fmtRelative(n.updatedAt)}{n.tags.length ? ` · ${n.tags.join(", ")}` : ""}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Drop or choose a PDF; it's stored and offered straight to a Deep Work session. */
+function PdfUploadTile() {
+  const add = usePdfs((s) => s.add);
+  const pdfs = usePdfs((s) => s.pdfs);
+  const requestAdd = useDeepWork((s) => s.requestAdd);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const recent = useMemo(
+    () => Object.values(pdfs).sort((a, b) => b.addedAt - a.addedAt).slice(0, 3),
+    [pdfs]
+  );
+
+  async function ingest(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    setBusy(true);
+    const id = await add(file);
+    setBusy(false);
+    if (id) requestAdd({ type: "pdf", id });
+  }
+
+  return (
+    <div className="bento-tile">
+      <SectionLabel>PDF</SectionLabel>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        className="hidden"
+        onChange={(e) => { void ingest(e.target.files); e.target.value = ""; }}
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); void ingest(e.dataTransfer.files); }}
+        className={`mt-3 flex w-full flex-col items-center justify-center gap-1 rounded-[12px] border border-dashed px-4 py-6 text-center transition ${
+          dragging ? "border-[var(--accent)] bg-[rgba(var(--accent-rgb),0.06)]" : "border-[var(--border)] hover:border-[var(--text-dim)]"
+        }`}
+      >
+        <span className="text-lg">📄</span>
+        <span className="text-sm text-[var(--text)]">{busy ? "Adding…" : "Drop a PDF or click to choose"}</span>
+        <span className="zen-meta text-xs">Opens straight into a Deep Work session</span>
+      </button>
+      {recent.length > 0 && (
+        <div className="mt-3 space-y-1">
+          {recent.map((p) => (
+            <button
+              key={p.id}
+              className="flex w-full items-center gap-2 rounded-[10px] px-2 py-1.5 text-left transition hover:bg-[rgba(255,255,255,0.03)]"
+              onClick={() => requestAdd({ type: "pdf", id: p.id })}
+              title="Add to Deep Work"
+            >
+              <span className="shrink-0 text-xs">📄</span>
+              <span className="min-w-0 flex-1 truncate text-sm text-[var(--text)]">{p.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Compact relative time ("just now", "3h ago", "2d ago", else a date). */
+function fmtRelative(ts: number, now: number = Date.now()): string {
+  const diff = Math.max(0, now - ts);
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {
